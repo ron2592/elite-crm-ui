@@ -5,9 +5,12 @@
     "start": "next start"
   },
   "dependencies": {
+    "@radix-ui/react-avatar": "latest",
     "@radix-ui/react-checkbox": "latest",
     "@radix-ui/react-dialog": "latest",
+    "@radix-ui/react-progress": "latest",
     "@radix-ui/react-scroll-area": "latest",
+    "@radix-ui/react-separator": "latest",
     "@radix-ui/react-slot": "latest",
     "class-variance-authority": "latest",
     "clsx": "latest",
@@ -17,8 +20,7 @@
     "react-dom": "^19.0.0",
     "recharts": "latest",
     "tailwind-merge": "latest",
-    "tailwindcss-animate": "latest",
-    "@radix-ui/react-avatar": "latest"
+    "tailwindcss-animate": "latest"
   },
   "devDependencies": {
     "@types/node": "latest",
