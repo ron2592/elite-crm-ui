@@ -9,7 +9,6 @@
     "@radix-ui/react-dialog": "latest",
     "@radix-ui/react-scroll-area": "latest",
     "@radix-ui/react-slot": "latest",
-    "@tailwindcss/postcss": "latest",
     "class-variance-authority": "latest",
     "clsx": "latest",
     "lucide-react": "latest",
@@ -28,7 +27,7 @@
     "eslint": "latest",
     "eslint-config-next": "latest",
     "postcss": "latest",
-    "tailwindcss": "latest",
+    ""tailwindcss": "^3.4.17",
     "typescript": "latest"
   }
 }
