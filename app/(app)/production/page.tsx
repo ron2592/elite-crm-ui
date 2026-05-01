@@ -79,7 +79,7 @@ export default function ProductionPage() {
   }
 
   useEffect(() => {
-    fetchJobs();
+    fetchJobs().finally(() => setLoading(false));
   }, []);
 
   const handleStageUpdate = async (jobId: string, newStage: string) => {
