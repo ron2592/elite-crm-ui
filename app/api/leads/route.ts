@@ -12,11 +12,14 @@ export async function POST(req: Request) {
   const { data, error } = await supabase.from("leads").insert([
     {
       lead_name: body.lead_name,
+      first_name: body.first_name,
+      last_name: body.last_name,
       phone: body.phone,
       email: body.email,
       address_line_1: body.address_line_1,
       city: body.city,
       state: body.state,
+      zip: body.zip,
       source_email: body.source_email,
       pipeline_stage_id: "f54efb42-a10a-44b7-81b3-de852e0a4197",
       status: "new",
@@ -24,6 +27,12 @@ export async function POST(req: Request) {
       appointment_set: false,
       estimate_sent: false,
       follow_up_count: 0,
+      archived: false,
+      metadata: {
+        salesperson: body.salesperson || null,
+        job_type: body.job_type || null,
+        notes: body.notes || null,
+      },
     },
   ]);
 
