@@ -15,15 +15,6 @@ const STAGES: LeadStatus[] = [
   "closed_lost",
 ];
 
-const STAGE_LABELS: Record<LeadStatus, string> = {
-  new: "New Lead",
-  contacted: "Qualified",
-  appointment_set: "Appointment Set",
-  estimate_sent: "Estimate Sent",
-  closed_won: "Closed Won",
-  closed_lost: "Cancelled",
-};
-
 function normalizeStatus(lead: any): LeadStatus {
   if (lead.status === "open") return "new";
   if (lead.status === "new") return "new";
@@ -71,11 +62,15 @@ export default function LeadsPage() {
   };
 
   const handleStageChange = async (leadId: string, newStatus: LeadStatus) => {
+    setLeads((prev) =>
+      prev.map((l) =>
+        (l as any).id === leadId ? { ...l, status: newStatus } : l
+      )
+    );
     await supabase
       .from("leads")
       .update({ status: newStatus })
       .eq("id", leadId);
-    await fetchLeads();
   };
 
   const leadsByStage = STAGES.reduce<Record<LeadStatus, Lead[]>>(
@@ -117,6 +112,7 @@ export default function LeadsPage() {
               status={stage}
               leads={leadsByStage[stage]}
               onLeadClick={handleLeadClick}
+              onDropLead={handleStageChange}
             />
           ))}
         </div>
