@@ -1,12 +1,12 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL ?? "",
-  process.env.SUPABASE_SERVICE_ROLE_KEY ?? ""
-);
-
 export async function POST(req: Request) {
+  const supabase = createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!
+  );
+
   const body = await req.json();
 
   const { data, error } = await supabase.from("leads").insert([
@@ -18,11 +18,9 @@ export async function POST(req: Request) {
       city: body.city,
       state: body.state,
       source_email: body.source_email,
-
       pipeline_stage_id: "f54efb42-a10a-44b7-81b3-de852e0a4197",
       status: "new",
       lead_received_at: new Date(),
-
       appointment_set: false,
       estimate_sent: false,
       follow_up_count: 0,
