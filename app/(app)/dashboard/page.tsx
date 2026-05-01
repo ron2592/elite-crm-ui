@@ -1,44 +1,46 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import { supabase } from "@/lib/supabaseClient";
 import { Users, CalendarCheck, TrendingUp, DollarSign } from "lucide-react";
 import KpiCard from "@/components/dashboard/KpiCard";
 import RevenueChart from "@/components/dashboard/RevenueChart";
 import PipelineSummary from "@/components/dashboard/PipelineSummary";
 import RecentLeads from "@/components/dashboard/RecentLeads";
-import { supabase } from "@/lib/supabaseClient";
 
-export const dynamic = 'force-dynamic';
+export default function DashboardPage() {
+  const [totalLeads, setTotalLeads] = useState(0);
+  const [appointments, setAppointments] = useState(0);
+  const [closeRate, setCloseRate] = useState(0);
+  const [revenue, setRevenue] = useState(0);
 
-export default async function DashboardPage() {
-  const { data: leads, error } = await supabase
-    .from("leads")
-    .select("*");
+  useEffect(() => {
+    async function fetchStats() {
+      const { data: leads } = await supabase
+        .from("leads")
+        .select("status, appointment_set, closed_amount, estimated_amount");
 
-  if (error) {
-    console.error("Supabase error:", error.message);
-  }
+      if (!leads) return;
 
-  const totalLeads = leads?.length || 0;
+      const total = leads.length;
+      const appts = leads.filter((l: any) => l.appointment_set === true).length;
+      const won = leads.filter((l: any) =>
+        l.status === "closed_won" || l.status === "won"
+      );
+      const rate = total > 0 ? Math.round((won.length / total) * 100) : 0;
+      const rev = won.reduce(
+        (sum: number, l: any) =>
+          sum + Number(l.closed_amount || l.estimated_amount || 0),
+        0
+      );
 
-  const appointments =
-    leads?.filter((lead: any) => lead.appointment_set === true).length || 0;
-
-  // Count all closed/won statuses
-  const wonDeals =
-    leads?.filter((lead: any) =>
-      lead.status === "won" ||
-      lead.status === "closed_won"
-    ) || [];
-
-  const closeRate =
-    totalLeads > 0
-      ? Math.round((wonDeals.length / totalLeads) * 100)
-      : 0;
-
-  // Revenue = sum of closed_amount for all won deals
-  const revenue = wonDeals.reduce(
-    (sum: number, deal: any) =>
-      sum + Number(deal.closed_amount || deal.estimated_amount || 0),
-    0
-  );
+      setTotalLeads(total);
+      setAppointments(appts);
+      setCloseRate(rate);
+      setRevenue(rev);
+    }
+    fetchStats();
+  }, []);
 
   return (
     <div className="space-y-6 max-w-7xl">
