@@ -15,17 +15,19 @@ const STAGES: LeadStatus[] = [
   "closed_lost",
 ];
 
-function normalizeStatus(lead: any): LeadStatus {
-  if (lead.status === "open") return "new";
-  if (lead.status === "new") return "new";
-  if (lead.status === "won") return "closed_won";
-  if (lead.status === "lost") return "closed_lost";
-  if (lead.status === "contacted") return "contacted";
-  if (lead.status === "appointment_set") return "appointment_set";
-  if (lead.status === "estimate_sent") return "estimate_sent";
-  if (lead.status === "closed_won") return "closed_won";
-  if (lead.status === "closed_lost") return "closed_lost";
-  return "new";
+function normalizeStatus(raw: string): LeadStatus {
+  const map: Record<string, LeadStatus> = {
+    open: "new",
+    new: "new",
+    won: "closed_won",
+    lost: "closed_lost",
+    contacted: "contacted",
+    appointment_set: "appointment_set",
+    estimate_sent: "estimate_sent",
+    closed_won: "closed_won",
+    closed_lost: "closed_lost",
+  };
+  return map[raw] ?? "new";
 }
 
 export default function LeadsPage() {
@@ -46,7 +48,7 @@ export default function LeadsPage() {
 
     const normalizedLeads = (data || []).map((lead: any) => ({
       ...lead,
-      status: normalizeStatus(lead),
+      status: normalizeStatus(lead.status ?? "new"),
     }));
 
     setLeads(normalizedLeads as Lead[]);
@@ -54,6 +56,22 @@ export default function LeadsPage() {
 
   useEffect(() => {
     fetchLeads();
+
+    // Real-time subscription — any INSERT, UPDATE, DELETE refreshes the board
+    const channel = supabase
+      .channel("leads-realtime")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "leads" },
+        () => {
+          fetchLeads();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   const handleLeadClick = (lead: Lead) => {
@@ -62,15 +80,24 @@ export default function LeadsPage() {
   };
 
   const handleStageChange = async (leadId: string, newStatus: LeadStatus) => {
+    // Optimistic update so the card moves instantly on screen
     setLeads((prev) =>
       prev.map((l) =>
         (l as any).id === leadId ? { ...l, status: newStatus } : l
       )
     );
-    await supabase
+
+    const { error } = await supabase
       .from("leads")
       .update({ status: newStatus })
       .eq("id", leadId);
+
+    if (error) {
+      console.error("Failed to update lead status:", error.message);
+      // Revert optimistic update if save failed
+      fetchLeads();
+    }
+    // Real-time subscription will trigger fetchLeads on success automatically
   };
 
   const leadsByStage = STAGES.reduce<Record<LeadStatus, Lead[]>>(
