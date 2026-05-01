@@ -28,8 +28,15 @@ const statusLabels: Record<string, string> = {
 
 const PAYMENT_TYPES = ["Deposit", "Progress Payment", "Final", "Installment"];
 const PAYMENT_METHODS = ["Cash", "Check", "Zelle", "Credit Card", "Sunlight Financial", "Upgrade"];
-const JOB_TYPES = ["Roofing", "Siding", "Windows", "Gutters", "Doors", "General Contracting", "Other"];
-const SALESPERSONS = ["Jamie Davis", "Ron", "Other"];
+const JOB_TYPES = ["Roof Replacement", "Roof Repair", "Deck", "Siding", "Windows", "Painting", "Masonry", "Stucco", "Chimney", "Other"];
+const SALESPERSONS = ["Ron", "Ray", "Other (Phone)"];
+
+function formatPhone(value: string) {
+  const digits = value.replace(/\D/g, "").slice(0, 10);
+  if (digits.length <= 3) return digits;
+  if (digits.length <= 6) return `(${digits.slice(0, 3)}) ${digits.slice(3)}`;
+  return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`;
+}
 
 interface Payment {
   id: string;
@@ -87,6 +94,7 @@ export default function LeadDetailDialog({
   });
   const [editSaving, setEditSaving] = useState(false);
   const [archiving, setArchiving] = useState(false);
+  const [zipLooking, setZipLooking] = useState(false);
 
   const leadId = (lead as any)?.id;
 
@@ -108,7 +116,7 @@ export default function LeadDetailDialog({
         address_line_1: l.address_line_1 || "",
         city: l.city || "",
         state: l.state || "",
-        zip: l.zip || "",
+        zip: l.zip || l.postal_code || "",
         source_id: l.source_id || "",
         job_type: l.metadata?.job_type || l.job_type || "",
         salesperson: l.metadata?.salesperson || l.salesperson || "",
@@ -129,6 +137,26 @@ export default function LeadDetailDialog({
   async function fetchLeadSources() {
     const { data } = await supabase.from("lead_sources").select("id, name").order("name");
     setLeadSources(data || []);
+  }
+
+  async function handleZipLookup(zip: string) {
+    if (zip.length !== 5) return;
+    setZipLooking(true);
+    try {
+      const res = await fetch(`https://api.zippopotam.us/us/${zip}`);
+      if (res.ok) {
+        const data = await res.json();
+        const place = data.places?.[0];
+        if (place) {
+          setEditFields((prev) => ({
+            ...prev,
+            city: place["place name"] || prev.city,
+            state: place["state abbreviation"] || prev.state,
+          }));
+        }
+      }
+    } catch (_) {}
+    setZipLooking(false);
   }
 
   if (!lead) return null;
@@ -332,7 +360,8 @@ export default function LeadDetailDialog({
                   <label className="text-xs text-muted-foreground block mb-1">Phone</label>
                   <input
                     value={editFields.phone}
-                    onChange={(e) => setEditFields({ ...editFields, phone: e.target.value })}
+                    onChange={(e) => setEditFields({ ...editFields, phone: formatPhone(e.target.value) })}
+                    placeholder="(201) 555-0000"
                     className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
                   />
                 </div>
@@ -355,10 +384,27 @@ export default function LeadDetailDialog({
               </div>
               <div className="grid grid-cols-3 gap-2">
                 <div>
+                  <label className="text-xs text-muted-foreground block mb-1">
+                    Zip {zipLooking && <span className="text-blue-500">...</span>}
+                  </label>
+                  <input
+                    value={editFields.zip}
+                    maxLength={5}
+                    placeholder="07011"
+                    onChange={(e) => {
+                      const val = e.target.value.replace(/\D/g, "").slice(0, 5);
+                      setEditFields({ ...editFields, zip: val });
+                      if (val.length === 5) handleZipLookup(val);
+                    }}
+                    className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
+                  />
+                </div>
+                <div>
                   <label className="text-xs text-muted-foreground block mb-1">City</label>
                   <input
                     value={editFields.city}
                     onChange={(e) => setEditFields({ ...editFields, city: e.target.value })}
+                    placeholder="Auto-filled"
                     className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
                   />
                 </div>
@@ -367,14 +413,7 @@ export default function LeadDetailDialog({
                   <input
                     value={editFields.state}
                     onChange={(e) => setEditFields({ ...editFields, state: e.target.value })}
-                    className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
-                  />
-                </div>
-                <div>
-                  <label className="text-xs text-muted-foreground block mb-1">Zip</label>
-                  <input
-                    value={editFields.zip}
-                    onChange={(e) => setEditFields({ ...editFields, zip: e.target.value })}
+                    placeholder="Auto-filled"
                     className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
                   />
                 </div>
