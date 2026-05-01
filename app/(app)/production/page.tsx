@@ -44,7 +44,7 @@ export default function ProductionPage() {
   async function fetchJobs() {
     const { data, error } = await supabase
       .from("leads")
-      .select("id, lead_name, salesperson, job_type, initial_contract_value, closed_amount, estimated_amount, production_stage, address_line_1, city, state, created_at, phone")
+      .select("id, lead_name, initial_contract_value, closed_amount, estimated_amount, production_stage, address_line_1, city, state, created_at, phone, source_email, metadata")
       .eq("status", "closed_won")
       .order("created_at", { ascending: false });
 
@@ -53,7 +53,6 @@ export default function ProductionPage() {
       return;
     }
 
-    // Get payments for each job
     const jobIds = (data || []).map((j: any) => j.id);
     let paymentsMap: Record<string, number> = {};
 
@@ -72,10 +71,11 @@ export default function ProductionPage() {
       ...job,
       totalCollected: paymentsMap[job.id] || Number(job.closed_amount) || 0,
       contract: Number(job.initial_contract_value) || Number(job.estimated_amount) || 0,
+      salesperson: job.metadata?.salesperson || null,
+      job_type: job.metadata?.job_type || null,
     }));
 
     setJobs(enriched);
-    setLoading(false);
   }
 
   useEffect(() => {
@@ -110,7 +110,6 @@ export default function ProductionPage() {
 
   return (
     <div className="space-y-6 max-w-7xl">
-      {/* Header Stats */}
       <div className="grid grid-cols-3 gap-4">
         <div className="rounded-xl border bg-card p-4">
           <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">Total Jobs</p>
@@ -128,7 +127,6 @@ export default function ProductionPage() {
         </div>
       </div>
 
-      {/* Filters */}
       <div className="flex items-center gap-2">
         {[
           { key: "all", label: "All Jobs" },
@@ -152,7 +150,6 @@ export default function ProductionPage() {
         <span className="ml-auto text-xs text-muted-foreground">{filteredJobs.length} jobs</span>
       </div>
 
-      {/* Table */}
       <div className="rounded-xl border overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
