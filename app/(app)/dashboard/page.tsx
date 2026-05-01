@@ -9,16 +9,24 @@ import PipelineSummary from "@/components/dashboard/PipelineSummary";
 import RecentLeads from "@/components/dashboard/RecentLeads";
 
 export default function DashboardPage() {
-  const [totalLeads, setTotalLeads] = useState(0);
-  const [appointments, setAppointments] = useState(0);
-  const [closeRate, setCloseRate] = useState(0);
-  const [revenue, setRevenue] = useState(0);
+  const [stats, setStats] = useState({
+    totalLeads: 0,
+    appointments: 0,
+    closeRate: 0,
+    revenue: 0,
+    loaded: false,
+  });
 
   useEffect(() => {
     async function fetchStats() {
-      const { data: leads } = await supabase
+      const { data: leads, error } = await supabase
         .from("leads")
-        .select("status, appointment_set, closed_amount, estimated_amount");
+        .select("*");
+
+      if (error) {
+        console.error("Dashboard fetch error:", error.message);
+        return;
+      }
 
       if (!leads) return;
 
@@ -34,10 +42,13 @@ export default function DashboardPage() {
         0
       );
 
-      setTotalLeads(total);
-      setAppointments(appts);
-      setCloseRate(rate);
-      setRevenue(rev);
+      setStats({
+        totalLeads: total,
+        appointments: appts,
+        closeRate: rate,
+        revenue: rev,
+        loaded: true,
+      });
     }
     fetchStats();
   }, []);
@@ -47,7 +58,7 @@ export default function DashboardPage() {
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <KpiCard
           title="Total Leads"
-          value={String(totalLeads)}
+          value={stats.loaded ? String(stats.totalLeads) : "..."}
           change="+12%"
           trend="up"
           icon={Users}
@@ -57,7 +68,7 @@ export default function DashboardPage() {
         />
         <KpiCard
           title="Appointments Set"
-          value={String(appointments)}
+          value={stats.loaded ? String(stats.appointments) : "..."}
           change="+4%"
           trend="up"
           icon={CalendarCheck}
@@ -67,7 +78,7 @@ export default function DashboardPage() {
         />
         <KpiCard
           title="Close Rate"
-          value={`${closeRate}%`}
+          value={stats.loaded ? `${stats.closeRate}%` : "..."}
           change="-2%"
           trend="down"
           icon={TrendingUp}
@@ -77,7 +88,7 @@ export default function DashboardPage() {
         />
         <KpiCard
           title="Revenue"
-          value={`$${revenue.toLocaleString()}`}
+          value={stats.loaded ? `$${stats.revenue.toLocaleString()}` : "..."}
           change="+18%"
           trend="up"
           icon={DollarSign}
