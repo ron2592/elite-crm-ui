@@ -31,7 +31,9 @@ export default function DashboardPage() {
       if (!leads) return;
 
       const total = leads.length;
-      const appts = leads.filter((l: any) => l.appointment_set === true).length;
+      const appts = leads.filter((l: any) => 
+        l.appointment_set === true || l.status === "appointment_set"
+    ).length;
       const won = leads.filter((l: any) =>
         l.status === "closed_won" || l.status === "won"
       );
