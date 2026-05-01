@@ -5,6 +5,8 @@ import PipelineSummary from "@/components/dashboard/PipelineSummary";
 import RecentLeads from "@/components/dashboard/RecentLeads";
 import { supabase } from "@/lib/supabaseClient";
 
+export const dynamic = 'force-dynamic';
+
 export default async function DashboardPage() {
   const { data: leads, error } = await supabase
     .from("leads")
