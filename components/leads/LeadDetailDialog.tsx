@@ -76,7 +76,7 @@ export default function LeadDetailDialog({
   // Balance = contract value - closed amount
   const contractForBalance = contractValue !== "" ? Number(contractValue) : currentContract;
   const closedForBalance = closedAmount !== "" ? Number(closedAmount) : currentClosed;
-  const balance = contractForBalance - closedForBalance;
+  const balance = contractForBalance > 0 ? contractForBalance - closedForBalance : 0;
 
   const handleSaveAmounts = async () => {
     setSaving(true);

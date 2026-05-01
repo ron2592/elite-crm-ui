@@ -1,3 +1,6 @@
+"use client";
+
+import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 
@@ -13,30 +16,38 @@ const stageMap: Record<string, string> = {
   won: "Won",
 };
 
-export default async function PipelineSummary() {
-  const { data: leads } = await supabase
-    .from("leads")
-    .select("status, closed_amount, estimated_amount, initial_contract_value");
+export default function PipelineSummary() {
+  const [pipelineData, setPipelineData] = useState<{ stage: string; count: number; value: number }[]>([]);
 
-  const stages: Record<string, { count: number; value: number }> = {
-    New: { count: 0, value: 0 },
-    Contacted: { count: 0, value: 0 },
-    "Appt Set": { count: 0, value: 0 },
-    Estimate: { count: 0, value: 0 },
-    Won: { count: 0, value: 0 },
-  };
+  useEffect(() => {
+    async function fetchData() {
+      const { data: leads } = await supabase
+        .from("leads")
+        .select("status, closed_amount, estimated_amount, initial_contract_value");
 
-  (leads || []).forEach((lead: any) => {
-    const stageName = stageMap[lead.status];
-    if (stageName && stages[stageName]) {
-      stages[stageName].count += 1;
-      stages[stageName].value += Number(
-        lead.closed_amount || lead.estimated_amount || lead.initial_contract_value || 0
-      );
+      const stages: Record<string, { count: number; value: number }> = {
+        New: { count: 0, value: 0 },
+        Contacted: { count: 0, value: 0 },
+        "Appt Set": { count: 0, value: 0 },
+        Estimate: { count: 0, value: 0 },
+        Won: { count: 0, value: 0 },
+      };
+
+      (leads || []).forEach((lead: any) => {
+        const stageName = stageMap[lead.status];
+        if (stageName && stages[stageName]) {
+          stages[stageName].count += 1;
+          stages[stageName].value += Number(
+            lead.closed_amount || lead.estimated_amount || lead.initial_contract_value || 0
+          );
+        }
+      });
+
+      setPipelineData(Object.entries(stages).map(([stage, vals]) => ({ stage, ...vals })));
     }
-  });
+    fetchData();
+  }, []);
 
-  const pipelineData = Object.entries(stages).map(([stage, vals]) => ({ stage, ...vals }));
   const maxCount = Math.max(...pipelineData.map((s) => s.count), 1);
 
   return (
