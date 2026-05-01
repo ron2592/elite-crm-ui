@@ -1,17 +1,43 @@
+import { supabase } from "@/lib/supabaseClient";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { mockPipelineData } from "@/lib/mock-data";
-import { Progress } from "@/components/ui/progress";
 
-const stageColors = [
-  "bg-blue-500",
-  "bg-indigo-500",
-  "bg-violet-500",
-  "bg-amber-500",
-  "bg-emerald-500",
-];
+const stageColors = ["bg-blue-500", "bg-indigo-500", "bg-violet-500", "bg-amber-500", "bg-emerald-500"];
 
-export default function PipelineSummary() {
-  const maxCount = Math.max(...mockPipelineData.map((s) => s.count));
+const stageMap: Record<string, string> = {
+  new: "New",
+  open: "New",
+  contacted: "Contacted",
+  appointment_set: "Appt Set",
+  estimate_sent: "Estimate",
+  closed_won: "Won",
+  won: "Won",
+};
+
+export default async function PipelineSummary() {
+  const { data: leads } = await supabase
+    .from("leads")
+    .select("status, closed_amount, estimated_amount, initial_contract_value");
+
+  const stages: Record<string, { count: number; value: number }> = {
+    New: { count: 0, value: 0 },
+    Contacted: { count: 0, value: 0 },
+    "Appt Set": { count: 0, value: 0 },
+    Estimate: { count: 0, value: 0 },
+    Won: { count: 0, value: 0 },
+  };
+
+  (leads || []).forEach((lead: any) => {
+    const stageName = stageMap[lead.status];
+    if (stageName && stages[stageName]) {
+      stages[stageName].count += 1;
+      stages[stageName].value += Number(
+        lead.closed_amount || lead.estimated_amount || lead.initial_contract_value || 0
+      );
+    }
+  });
+
+  const pipelineData = Object.entries(stages).map(([stage, vals]) => ({ stage, ...vals }));
+  const maxCount = Math.max(...pipelineData.map((s) => s.count), 1);
 
   return (
     <Card>
@@ -20,7 +46,7 @@ export default function PipelineSummary() {
         <CardDescription>Leads by stage this month</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        {mockPipelineData.map((stage, idx) => (
+        {pipelineData.map((stage, idx) => (
           <div key={stage.stage} className="space-y-1.5">
             <div className="flex items-center justify-between text-sm">
               <span className="font-medium text-foreground">{stage.stage}</span>
