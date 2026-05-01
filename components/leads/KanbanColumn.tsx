@@ -11,7 +11,9 @@ const columnConfig: Record<LeadStatus, { label: string; dot: string }> = {
   appointment_set: { label: "Appointment Set", dot: "bg-violet-500" },
   estimate_sent: { label: "Estimate Sent", dot: "bg-amber-500" },
   closed_won: { label: "Closed Won", dot: "bg-emerald-500" },
-  closed_lost: { label: "Cancelled", dot: "bg-red-400" },
+  cancelled_appointment: { label: "Cancelled Appt", dot: "bg-orange-400" },
+  lost: { label: "Lost", dot: "bg-red-500" },
+  not_qualified: { label: "Not Qualified", dot: "bg-gray-400" },
 };
 
 interface KanbanColumnProps {
@@ -58,7 +60,7 @@ export default function KanbanColumn({ status, leads, onLeadClick, onDropLead }:
         </div>
       )}
 
-      <ScrollArea className="flex-1 max-h-[calc(100vh-280px)]">
+      <ScrollArea className="flex-1 max-h-[calc(100vh-320px)]">
         <div className="space-y-2.5 p-3">
           {leads.length === 0 ? (
             <div className={`flex items-center justify-center py-8 text-sm transition-colors ${isDragOver ? "text-primary/60" : "text-muted-foreground/50"}`}>

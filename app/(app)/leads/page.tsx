@@ -6,26 +6,35 @@ import { Lead, LeadStatus } from "@/types";
 import KanbanColumn from "@/components/leads/KanbanColumn";
 import LeadDetailDialog from "@/components/leads/LeadDetailDialog";
 
-const STAGES: LeadStatus[] = [
+const SALES_STAGES: LeadStatus[] = [
   "new",
   "contacted",
   "appointment_set",
   "estimate_sent",
   "closed_won",
-  "closed_lost",
 ];
+
+const DEAD_STAGES: LeadStatus[] = [
+  "cancelled_appointment",
+  "lost",
+  "not_qualified",
+];
+
+const ALL_STAGES = [...SALES_STAGES, ...DEAD_STAGES];
 
 function normalizeStatus(raw: string): LeadStatus {
   const map: Record<string, LeadStatus> = {
     open: "new",
     new: "new",
     won: "closed_won",
-    lost: "closed_lost",
+    lost: "lost",
     contacted: "contacted",
     appointment_set: "appointment_set",
     estimate_sent: "estimate_sent",
     closed_won: "closed_won",
-    closed_lost: "closed_lost",
+    closed_lost: "cancelled_appointment",
+    cancelled_appointment: "cancelled_appointment",
+    not_qualified: "not_qualified",
   };
   return map[raw] ?? "new";
 }
@@ -57,21 +66,14 @@ export default function LeadsPage() {
   useEffect(() => {
     fetchLeads();
 
-    // Real-time subscription — any INSERT, UPDATE, DELETE refreshes the board
     const channel = supabase
       .channel("leads-realtime")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "leads" },
-        () => {
-          fetchLeads();
-        }
-      )
+      .on("postgres_changes", { event: "*", schema: "public", table: "leads" }, () => {
+        fetchLeads();
+      })
       .subscribe();
 
-    return () => {
-      supabase.removeChannel(channel);
-    };
+    return () => { supabase.removeChannel(channel); };
   }, []);
 
   const handleLeadClick = (lead: Lead) => {
@@ -80,11 +82,8 @@ export default function LeadsPage() {
   };
 
   const handleStageChange = async (leadId: string, newStatus: LeadStatus) => {
-    // Optimistic update so the card moves instantly on screen
     setLeads((prev) =>
-      prev.map((l) =>
-        (l as any).id === leadId ? { ...l, status: newStatus } : l
-      )
+      prev.map((l) => (l as any).id === leadId ? { ...l, status: newStatus } : l)
     );
 
     const { error } = await supabase
@@ -94,13 +93,11 @@ export default function LeadsPage() {
 
     if (error) {
       console.error("Failed to update lead status:", error.message);
-      // Revert optimistic update if save failed
       fetchLeads();
     }
-    // Real-time subscription will trigger fetchLeads on success automatically
   };
 
-  const leadsByStage = STAGES.reduce<Record<LeadStatus, Lead[]>>(
+  const leadsByStage = ALL_STAGES.reduce<Record<LeadStatus, Lead[]>>(
     (acc, stage) => {
       acc[stage] = leads.filter((lead) => lead.status === stage);
       return acc;
@@ -108,22 +105,17 @@ export default function LeadsPage() {
     {} as Record<LeadStatus, Lead[]>
   );
 
-  const pipelineValue = leads.reduce((sum, lead: any) => {
-    return sum + Number(
-      lead.estimated_amount ||
-      lead.closed_amount ||
-      lead.initial_contract_value ||
-      0
-    );
-  }, 0);
+  const pipelineValue = leads
+    .filter((l) => SALES_STAGES.includes(l.status as LeadStatus))
+    .reduce((sum, lead: any) => {
+      return sum + Number(lead.estimated_amount || lead.closed_amount || lead.initial_contract_value || 0);
+    }, 0);
 
   return (
     <>
       <div className="mb-4 flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <span className="text-sm text-muted-foreground">
-            {leads.length} total leads
-          </span>
+          <span className="text-sm text-muted-foreground">{leads.length} total leads</span>
           <span className="text-sm text-muted-foreground">·</span>
           <span className="text-sm font-medium text-emerald-600">
             ${pipelineValue.toLocaleString()} pipeline value
@@ -131,17 +123,43 @@ export default function LeadsPage() {
         </div>
       </div>
 
-      <div className="overflow-x-auto pb-6">
-        <div className="flex gap-4 min-w-max">
-          {STAGES.map((stage) => (
-            <KanbanColumn
-              key={stage}
-              status={stage}
-              leads={leadsByStage[stage]}
-              onLeadClick={handleLeadClick}
-              onDropLead={handleStageChange}
-            />
-          ))}
+      {/* Sales Pipeline */}
+      <div className="mb-2">
+        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">
+          Sales Pipeline
+        </p>
+        <div className="overflow-x-auto pb-4">
+          <div className="flex gap-4 min-w-max">
+            {SALES_STAGES.map((stage) => (
+              <KanbanColumn
+                key={stage}
+                status={stage}
+                leads={leadsByStage[stage]}
+                onLeadClick={handleLeadClick}
+                onDropLead={handleStageChange}
+              />
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Dead Leads */}
+      <div>
+        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">
+          Dead Leads
+        </p>
+        <div className="overflow-x-auto pb-6">
+          <div className="flex gap-4 min-w-max">
+            {DEAD_STAGES.map((stage) => (
+              <KanbanColumn
+                key={stage}
+                status={stage}
+                leads={leadsByStage[stage]}
+                onLeadClick={handleLeadClick}
+                onDropLead={handleStageChange}
+              />
+            ))}
+          </div>
         </div>
       </div>
 

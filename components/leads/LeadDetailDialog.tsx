@@ -20,8 +20,10 @@ const statusLabels: Record<string, string> = {
   estimate_sent: "Estimate Sent",
   closed_won: "Closed Won",
   won: "Closed Won",
-  closed_lost: "Cancelled",
-  lost: "Cancelled",
+  closed_lost: "Cancelled Appt",
+  cancelled_appointment: "Cancelled Appt",
+  lost: "Lost",
+  not_qualified: "Not Qualified",
 };
 
 const PAYMENT_TYPES = ["Deposit", "Progress Payment", "Final", "Installment"];
@@ -431,7 +433,7 @@ export default function LeadDetailDialog({
             <div>
               <p className="text-xs text-muted-foreground mb-2">Move to stage</p>
               <div className="flex flex-wrap gap-2">
-                {["new", "contacted", "appointment_set", "estimate_sent", "closed_won", "closed_lost"].map((s) => (
+                {["new", "contacted", "appointment_set", "estimate_sent", "closed_won", "cancelled_appointment", "lost", "not_qualified"].map((s) => (
                   <button
                     key={s}
                     onClick={() => { onStageChange((lead as any).id, s); onOpenChange(false); }}

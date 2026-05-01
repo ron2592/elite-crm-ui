@@ -4,7 +4,9 @@ export type LeadStatus =
   | "appointment_set"
   | "estimate_sent"
   | "closed_won"
-  | "closed_lost";
+  | "cancelled_appointment"
+  | "lost"
+  | "not_qualified";
 
 export type TaskPriority = "low" | "medium" | "high";
 export type TaskStatus = "pending" | "completed";
