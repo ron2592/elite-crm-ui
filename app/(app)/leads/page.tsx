@@ -15,17 +15,26 @@ const STAGES: LeadStatus[] = [
   "closed_lost",
 ];
 
-function normalizeStatus(lead: any): LeadStatus {
-  if (lead.pipeline_stage_id === "f54efb42-a10a-44b7-81b3-de852e0a4197") {
-    return "new";
-  }
+const STAGE_LABELS: Record<LeadStatus, string> = {
+  new: "New Lead",
+  contacted: "Qualified",
+  appointment_set: "Appointment Set",
+  estimate_sent: "Estimate Sent",
+  closed_won: "Closed Won",
+  closed_lost: "Cancelled",
+};
 
+function normalizeStatus(lead: any): LeadStatus {
   if (lead.status === "open") return "new";
   if (lead.status === "new") return "new";
   if (lead.status === "won") return "closed_won";
   if (lead.status === "lost") return "closed_lost";
-
-  return lead.status || "new";
+  if (lead.status === "contacted") return "contacted";
+  if (lead.status === "appointment_set") return "appointment_set";
+  if (lead.status === "estimate_sent") return "estimate_sent";
+  if (lead.status === "closed_won") return "closed_won";
+  if (lead.status === "closed_lost") return "closed_lost";
+  return "new";
 }
 
 export default function LeadsPage() {
@@ -33,32 +42,40 @@ export default function LeadsPage() {
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
 
-  useEffect(() => {
-    async function fetchLeads() {
-      const { data, error } = await supabase
-        .from("leads")
-        .select("*")
-        .order("created_at", { ascending: false });
+  async function fetchLeads() {
+    const { data, error } = await supabase
+      .from("leads")
+      .select("*")
+      .order("created_at", { ascending: false });
 
-      if (error) {
-        console.error("Error fetching leads:", error.message);
-        return;
-      }
-
-      const normalizedLeads = (data || []).map((lead: any) => ({
-        ...lead,
-        status: normalizeStatus(lead),
-      }));
-
-      setLeads(normalizedLeads as Lead[]);
+    if (error) {
+      console.error("Error fetching leads:", error.message);
+      return;
     }
 
+    const normalizedLeads = (data || []).map((lead: any) => ({
+      ...lead,
+      status: normalizeStatus(lead),
+    }));
+
+    setLeads(normalizedLeads as Lead[]);
+  }
+
+  useEffect(() => {
     fetchLeads();
   }, []);
 
   const handleLeadClick = (lead: Lead) => {
     setSelectedLead(lead);
     setDialogOpen(true);
+  };
+
+  const handleStageChange = async (leadId: string, newStatus: LeadStatus) => {
+    await supabase
+      .from("leads")
+      .update({ status: newStatus })
+      .eq("id", leadId);
+    await fetchLeads();
   };
 
   const leadsByStage = STAGES.reduce<Record<LeadStatus, Lead[]>>(
@@ -70,14 +87,11 @@ export default function LeadsPage() {
   );
 
   const pipelineValue = leads.reduce((sum, lead: any) => {
-    return (
-      sum +
-      Number(
-        lead.estimated_amount ||
-          lead.closed_amount ||
-          lead.initial_contract_value ||
-          0
-      )
+    return sum + Number(
+      lead.estimated_amount ||
+      lead.closed_amount ||
+      lead.initial_contract_value ||
+      0
     );
   }, 0);
 
@@ -111,7 +125,11 @@ export default function LeadsPage() {
       <LeadDetailDialog
         lead={selectedLead}
         open={dialogOpen}
-        onOpenChange={setDialogOpen}
+        onOpenChange={(open) => {
+          setDialogOpen(open);
+          if (!open) fetchLeads();
+        }}
+        onStageChange={handleStageChange}
       />
     </>
   );
