@@ -128,7 +128,7 @@ export const mockLeads: Lead[] = [
     phone: "(555) 234-1012",
     email: "olivia.grant@email.com",
     source: "Website",
-    status: "closed_lost",
+    status: "lost",
     value: 3200,
     createdAt: "2024-05-20",
     tags: ["Lost"],
