@@ -21,14 +21,19 @@ export default async function DashboardPage() {
   const appointments =
     leads?.filter((lead: any) => lead.appointment_set === true).length || 0;
 
+  // Count all closed/won statuses
   const wonDeals =
-    leads?.filter((lead: any) => lead.status === "won") || [];
+    leads?.filter((lead: any) =>
+      lead.status === "won" ||
+      lead.status === "closed_won"
+    ) || [];
 
   const closeRate =
     totalLeads > 0
       ? Math.round((wonDeals.length / totalLeads) * 100)
       : 0;
 
+  // Revenue = sum of closed_amount for all won deals
   const revenue = wonDeals.reduce(
     (sum: number, deal: any) =>
       sum + Number(deal.closed_amount || deal.estimated_amount || 0),
