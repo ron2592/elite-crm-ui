@@ -11,12 +11,14 @@ import {
   Settings,
   Zap,
   ChevronRight,
+  HardHat,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/leads", label: "Leads", icon: Users },
+  { href: "/production", label: "Production", icon: HardHat },
   { href: "/calendar", label: "Calendar", icon: CalendarDays },
   { href: "/tasks", label: "Tasks", icon: CheckSquare },
   { href: "/activities", label: "Activities", icon: Activity },
