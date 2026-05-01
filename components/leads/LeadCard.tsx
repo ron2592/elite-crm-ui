@@ -10,7 +10,7 @@ export default function LeadCard({ lead, onClick }: LeadCardProps) {
   const l = lead as any;
   const name = l.lead_name || l.first_name || "Unnamed Lead";
   const phone = l.phone || "No phone";
-  const source = l.lead_source || l.source_email || "No source";
+  const source = l.lead_sources?.name || l.source_email || l.metadata?.lead_source || "No source";
   const value = Number(l.estimated_amount || l.closed_amount || l.initial_contract_value || 0);
   const createdAt = l.created_at || l.createdAt;
   const initials = name.split(" ").map((n: string) => n[0]).join("").slice(0, 2).toUpperCase();

@@ -47,7 +47,8 @@ export default function LeadsPage() {
   async function fetchLeads() {
     const { data, error } = await supabase
       .from("leads")
-      .select("*")
+      .select("*, lead_sources(name)")
+      .neq("archived", true)
       .order("created_at", { ascending: false });
 
     if (error) {
