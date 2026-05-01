@@ -40,15 +40,12 @@ interface Payment {
   notes: string;
 }
 
-interface LeadSource {
-  name: string;
-}
-
 interface LeadDetailDialogProps {
   lead: Lead | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onStageChange?: (leadId: string, newStatus: any) => void;
+  onLeadUpdated?: (leadId: string) => void;
 }
 
 export default function LeadDetailDialog({
@@ -56,6 +53,7 @@ export default function LeadDetailDialog({
   open,
   onOpenChange,
   onStageChange,
+  onLeadUpdated,
 }: LeadDetailDialogProps) {
   const [estimatedAmount, setEstimatedAmount] = useState("");
   const [contractValue, setContractValue] = useState("");
@@ -72,8 +70,6 @@ export default function LeadDetailDialog({
   });
   const [addingPayment, setAddingPayment] = useState(false);
   const [leadSources, setLeadSources] = useState<{ id: string; name: string }[]>([]);
-
-  // Edit mode state
   const [editMode, setEditMode] = useState(false);
   const [editFields, setEditFields] = useState({
     first_name: "",
@@ -198,7 +194,11 @@ export default function LeadDetailDialog({
     const { error } = await supabase.from("leads").update(updates).eq("id", leadId);
     if (!error) {
       setEditMode(false);
-      onOpenChange(false);
+      if (onLeadUpdated) {
+        onLeadUpdated(leadId);
+      } else {
+        onOpenChange(false);
+      }
     }
     setEditSaving(false);
   };
@@ -279,7 +279,6 @@ export default function LeadDetailDialog({
                 </DialogDescription>
               </div>
             </div>
-            {/* Edit + Archive buttons */}
             <div className="flex items-center gap-2 mr-6">
               <button
                 onClick={() => setEditMode(!editMode)}

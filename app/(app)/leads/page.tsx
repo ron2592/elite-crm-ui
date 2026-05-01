@@ -64,6 +64,30 @@ export default function LeadsPage() {
     setLeads(normalizedLeads as Lead[]);
   }
 
+  async function fetchSingleLead(leadId: string) {
+    const { data, error } = await supabase
+      .from("leads")
+      .select("*, lead_sources(name)")
+      .eq("id", leadId)
+      .single();
+
+    if (error) {
+      console.error("Error fetching lead:", error.message);
+      return;
+    }
+
+    if (data) {
+      const normalized = {
+        ...data,
+        status: normalizeStatus(data.status ?? "new"),
+      };
+      setSelectedLead(normalized as Lead);
+      setLeads((prev) =>
+        prev.map((l) => (l as any).id === leadId ? normalized as Lead : l)
+      );
+    }
+  }
+
   useEffect(() => {
     fetchLeads();
 
@@ -172,6 +196,7 @@ export default function LeadsPage() {
           if (!open) fetchLeads();
         }}
         onStageChange={handleStageChange}
+        onLeadUpdated={(leadId) => fetchSingleLead(leadId)}
       />
     </>
   );
