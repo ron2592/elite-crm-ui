@@ -202,8 +202,6 @@ export default function LeadDetailDialog({
     setEditSaving(true);
     const fullName = `${editFields.first_name} ${editFields.last_name}`.trim();
     const updates: any = {
-      first_name: editFields.first_name,
-      last_name: editFields.last_name,
       lead_name: fullName,
       phone: editFields.phone,
       email: editFields.email,
@@ -337,14 +335,12 @@ export default function LeadDetailDialog({
 
         <div className="space-y-4 pt-2">
 
-          {/* Success Toast */}
           {saveEditSuccess && (
             <div className="flex items-center gap-2 rounded-md bg-emerald-500/10 border border-emerald-500/30 px-3 py-2 text-sm text-emerald-600 font-medium">
               ✓ Lead updated successfully
             </div>
           )}
 
-          {/* EDIT MODE FORM */}
           {editMode && (
             <div className="rounded-lg border border-primary/30 bg-primary/5 p-4 space-y-3">
               <p className="text-xs font-semibold text-primary uppercase tracking-wide">Edit Lead Info</p>
@@ -498,7 +494,6 @@ export default function LeadDetailDialog({
             </div>
           )}
 
-          {/* Status + Salesperson */}
           {!editMode && (
             <div className="grid grid-cols-2 gap-3">
               <div className="rounded-lg bg-muted/50 p-3">
@@ -520,7 +515,6 @@ export default function LeadDetailDialog({
             </div>
           )}
 
-          {/* Contract */}
           <div className="rounded-lg border border-border p-4 space-y-3">
             <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1">
               <DollarSign className="h-3 w-3" /> Contract
@@ -563,7 +557,6 @@ export default function LeadDetailDialog({
             </button>
           </div>
 
-          {/* Payments */}
           <div className="rounded-lg border border-border p-4 space-y-3">
             <div className="flex items-center justify-between">
               <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1">
@@ -700,7 +693,6 @@ export default function LeadDetailDialog({
             )}
           </div>
 
-          {/* Contact Info */}
           {!editMode && (
             <div className="space-y-2.5">
               <div className="flex items-center gap-2.5 text-sm">
@@ -724,7 +716,6 @@ export default function LeadDetailDialog({
             </div>
           )}
 
-          {/* Notes */}
           {!editMode && notes && (
             <div className="rounded-lg bg-muted/50 p-3">
               <p className="text-xs text-muted-foreground mb-1">Notes</p>
@@ -732,7 +723,6 @@ export default function LeadDetailDialog({
             </div>
           )}
 
-          {/* Move Stage */}
           {!editMode && onStageChange && (
             <div>
               <p className="text-xs text-muted-foreground mb-2">Move to stage</p>
