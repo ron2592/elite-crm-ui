@@ -84,6 +84,7 @@ export default function LeadDetailDialog({
 }: LeadDetailDialogProps) {
   const [estimatedAmount, setEstimatedAmount] = useState("");
   const [contractValue, setContractValue] = useState("");
+  const [initialContractDescription, setInitialContractDescription] = useState("");
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [payments, setPayments] = useState<Payment[]>([]);
@@ -254,6 +255,12 @@ export default function LeadDetailDialog({
     const updates: any = {};
     if (estimatedAmount !== "") updates.estimated_amount = Number(estimatedAmount);
     if (contractValue !== "") updates.initial_contract_value = Number(contractValue);
+    if (initialContractDescription !== "") {
+      updates.metadata = {
+        ...l.metadata,
+        initial_contract_description: initialContractDescription,
+      };
+    }
     if (Object.keys(updates).length > 0) {
       await supabase.from("leads").update(updates).eq("id", leadId);
     }
@@ -402,6 +409,7 @@ export default function LeadDetailDialog({
     if (!val) {
       setEstimatedAmount("");
       setContractValue("");
+      setInitialContractDescription("");
       setSaved(false);
       setShowAddPayment(false);
       setEditMode(false);
@@ -586,12 +594,22 @@ export default function LeadDetailDialog({
               <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1">
                 <DollarSign className="h-3 w-3" /> Initial Contract
               </p>
-              {jobType && (
-                <span className="text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 font-medium">
-                  {jobType}
-                </span>
-              )}
+              <div className="flex items-center gap-2">
+                {jobType && (
+                  <span className="text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 font-medium">
+                    {jobType}
+                  </span>
+                )}
+              </div>
             </div>
+
+            {/* Show saved description if exists */}
+            {l.metadata?.initial_contract_description && (
+              <p className="text-xs text-muted-foreground italic">
+                {l.metadata.initial_contract_description}
+              </p>
+            )}
+
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="text-xs text-muted-foreground mb-1 block">
@@ -606,7 +624,24 @@ export default function LeadDetailDialog({
                 <input type="number" placeholder={String(Number(l.initial_contract_value || 0))} value={contractValue} onChange={(e) => setContractValue(e.target.value)} className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" />
               </div>
             </div>
-            <button onClick={handleSaveAmounts} disabled={saving || (estimatedAmount === "" && contractValue === "")} className="w-full flex items-center justify-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+
+            {/* Description field */}
+            <div>
+              <label className="text-xs text-muted-foreground mb-1 block">Description</label>
+              <input
+                type="text"
+                placeholder={l.metadata?.initial_contract_description || "e.g. Full roof replacement, 28 squares..."}
+                value={initialContractDescription}
+                onChange={(e) => setInitialContractDescription(e.target.value)}
+                className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
+              />
+            </div>
+
+            <button
+              onClick={handleSaveAmounts}
+              disabled={saving || (estimatedAmount === "" && contractValue === "" && initialContractDescription === "")}
+              className="w-full flex items-center justify-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            >
               <Save className="h-4 w-4" />
               {saving ? "Saving..." : saved ? "Saved ✓" : "Save Contract"}
             </button>
@@ -713,11 +748,7 @@ export default function LeadDetailDialog({
                     </span>
                   </div>
                   <div className="flex items-center gap-2">
-                    <select
-                      value={co.status}
-                      onChange={(e) => handleUpdateCOStatus(co.id, e.target.value as any)}
-                      className="text-xs rounded-md border border-border bg-background px-2 py-1 focus:outline-none focus:ring-2 focus:ring-primary/40"
-                    >
+                    <select value={co.status} onChange={(e) => handleUpdateCOStatus(co.id, e.target.value as any)} className="text-xs rounded-md border border-border bg-background px-2 py-1 focus:outline-none focus:ring-2 focus:ring-primary/40">
                       <option value="pending">Pending</option>
                       <option value="won">Won</option>
                       <option value="lost">Lost</option>
@@ -727,17 +758,11 @@ export default function LeadDetailDialog({
                     </button>
                   </div>
                 </div>
-
                 <div className="flex items-center gap-3 flex-wrap">
-                  {co.job_type && (
-                    <span className="text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 font-medium">{co.job_type}</span>
-                  )}
-                  {co.description && (
-                    <span className="text-xs text-muted-foreground">{co.description}</span>
-                  )}
+                  {co.job_type && <span className="text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 font-medium">{co.job_type}</span>}
+                  {co.description && <span className="text-xs text-muted-foreground">{co.description}</span>}
                   <span className="text-sm font-bold ml-auto">${Number(co.amount).toLocaleString()}</span>
                 </div>
-
                 {isExpanded && (
                   <div className="space-y-2 pt-1">
                     <div className="grid grid-cols-3 gap-2 text-center">
@@ -754,7 +779,6 @@ export default function LeadDetailDialog({
                         <p className={`font-bold text-sm ${coBalance > 0 ? "text-red-500" : "text-emerald-600"}`}>${coBalance.toLocaleString()}</p>
                       </div>
                     </div>
-
                     <div className="flex items-center justify-between">
                       <p className="text-xs font-medium text-muted-foreground">Payment History</p>
                       {co.status === "won" && (
@@ -763,7 +787,6 @@ export default function LeadDetailDialog({
                         </button>
                       )}
                     </div>
-
                     {showAddCOPayment === co.id && (
                       <div className="rounded-md border border-border p-3 space-y-2 bg-muted/20">
                         <div className="grid grid-cols-2 gap-2">
@@ -799,7 +822,6 @@ export default function LeadDetailDialog({
                         </div>
                       </div>
                     )}
-
                     {co.payments.length > 0 ? (
                       <div className="space-y-1.5">
                         {co.payments.map((p) => (
@@ -832,10 +854,7 @@ export default function LeadDetailDialog({
 
           {/* ADD CHANGE ORDER */}
           {!showAddChangeOrder ? (
-            <button
-              onClick={() => setShowAddChangeOrder(true)}
-              className="w-full flex items-center justify-center gap-2 rounded-lg border border-dashed border-border py-2.5 text-xs text-muted-foreground hover:border-primary/40 hover:text-primary transition-colors"
-            >
+            <button onClick={() => setShowAddChangeOrder(true)} className="w-full flex items-center justify-center gap-2 rounded-lg border border-dashed border-border py-2.5 text-xs text-muted-foreground hover:border-primary/40 hover:text-primary transition-colors">
               <Plus className="h-3.5 w-3.5" /> Add Change Order
             </button>
           ) : (
