@@ -78,6 +78,7 @@ export default function LeadDetailDialog({
   const [addingPayment, setAddingPayment] = useState(false);
   const [leadSources, setLeadSources] = useState<{ id: string; name: string }[]>([]);
   const [editMode, setEditMode] = useState(false);
+  const [saveEditSuccess, setSaveEditSuccess] = useState(false);
   const [editFields, setEditFields] = useState({
     first_name: "",
     last_name: "",
@@ -220,15 +221,17 @@ export default function LeadDetailDialog({
     if (editFields.source_id) updates.source_id = editFields.source_id;
 
     const { error } = await supabase.from("leads").update(updates).eq("id", leadId);
-    if (!error) {
-      setEditMode(false);
-      if (onLeadUpdated) {
-        onLeadUpdated(leadId);
-      } else {
-        onOpenChange(false);
-      }
-    }
     setEditSaving(false);
+
+    if (error) {
+      alert("Failed to save: " + error.message);
+      return;
+    }
+
+    setEditMode(false);
+    setSaveEditSuccess(true);
+    setTimeout(() => setSaveEditSuccess(false), 3000);
+    if (onLeadUpdated) onLeadUpdated(leadId);
   };
 
   const handleArchive = async () => {
@@ -280,6 +283,7 @@ export default function LeadDetailDialog({
       setSaved(false);
       setShowAddPayment(false);
       setEditMode(false);
+      setSaveEditSuccess(false);
     }
     onOpenChange(val);
   };
@@ -332,6 +336,13 @@ export default function LeadDetailDialog({
         </DialogHeader>
 
         <div className="space-y-4 pt-2">
+
+          {/* Success Toast */}
+          {saveEditSuccess && (
+            <div className="flex items-center gap-2 rounded-md bg-emerald-500/10 border border-emerald-500/30 px-3 py-2 text-sm text-emerald-600 font-medium">
+              ✓ Lead updated successfully
+            </div>
+          )}
 
           {/* EDIT MODE FORM */}
           {editMode && (
