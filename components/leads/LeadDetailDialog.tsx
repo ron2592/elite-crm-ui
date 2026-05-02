@@ -210,7 +210,7 @@ export default function LeadDetailDialog({
       address_line_1: editFields.address_line_1,
       city: editFields.city,
       state: editFields.state,
-      zip: editFields.zip,
+      postal_code: editFields.zip,
       metadata: {
         ...l.metadata,
         job_type: editFields.job_type || null,

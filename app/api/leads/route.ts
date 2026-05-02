@@ -19,7 +19,7 @@ export async function POST(req: Request) {
       address_line_1: body.address_line_1,
       city: body.city,
       state: body.state,
-      zip: body.zip,
+      postal_code: body.postal_code || body.zip || null,
       source_email: body.source_email,
       pipeline_stage_id: "f54efb42-a10a-44b7-81b3-de852e0a4197",
       status: "new",
