@@ -4,6 +4,9 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 
 const PRODUCTION_STAGES = [
+  "Pending - Check",
+  "Pending - Financing",
+  "Pending - Deposit",
   "Deposit Collected",
   "Materials Ordered",
   "Permit Submitted",
@@ -20,6 +23,9 @@ const PRODUCTION_STAGES = [
 ];
 
 const stageColors: Record<string, string> = {
+  "Pending - Check": "bg-slate-100 text-slate-600",
+  "Pending - Financing": "bg-slate-100 text-slate-600",
+  "Pending - Deposit": "bg-slate-100 text-slate-600",
   "Deposit Collected": "bg-blue-100 text-blue-700",
   "Materials Ordered": "bg-indigo-100 text-indigo-700",
   "Permit Submitted": "bg-violet-100 text-violet-700",
@@ -57,7 +63,6 @@ export default function ProductionPage() {
   const [filter, setFilter] = useState("all");
 
   async function fetchJobs() {
-    // Fetch closed won leads
     const { data: leads, error } = await supabase
       .from("leads")
       .select("id, lead_name, initial_contract_value, closed_amount, estimated_amount, production_stage, address_line_1, city, state, metadata")
@@ -68,56 +73,32 @@ export default function ProductionPage() {
 
     const leadIds = (leads || []).map((j: any) => j.id);
 
-    // Fetch payments for leads
     let paymentsMap: Record<string, number> = {};
     if (leadIds.length > 0) {
-      const { data: payments } = await supabase
-        .from("payments")
-        .select("lead_id, amount")
-        .in("lead_id", leadIds);
-      (payments || []).forEach((p: any) => {
-        paymentsMap[p.lead_id] = (paymentsMap[p.lead_id] || 0) + Number(p.amount);
-      });
+      const { data: payments } = await supabase.from("payments").select("lead_id, amount").in("lead_id", leadIds);
+      (payments || []).forEach((p: any) => { paymentsMap[p.lead_id] = (paymentsMap[p.lead_id] || 0) + Number(p.amount); });
     }
 
-    // Fetch won change orders for these leads
     let changeOrders: any[] = [];
     if (leadIds.length > 0) {
-      const { data: cos } = await supabase
-        .from("change_orders")
-        .select("*")
-        .eq("status", "won")
-        .in("lead_id", leadIds)
-        .order("order_number", { ascending: true });
+      const { data: cos } = await supabase.from("change_orders").select("*").eq("status", "won").in("lead_id", leadIds).order("order_number", { ascending: true });
       changeOrders = cos || [];
     }
 
-    // Fetch change order payments
     const coIds = changeOrders.map((co: any) => co.id);
     let coPaymentsMap: Record<string, number> = {};
     if (coIds.length > 0) {
-      const { data: coPayments } = await supabase
-        .from("change_order_payments")
-        .select("change_order_id, amount")
-        .in("change_order_id", coIds);
-      (coPayments || []).forEach((p: any) => {
-        coPaymentsMap[p.change_order_id] = (coPaymentsMap[p.change_order_id] || 0) + Number(p.amount);
-      });
+      const { data: coPayments } = await supabase.from("change_order_payments").select("change_order_id, amount").in("change_order_id", coIds);
+      (coPayments || []).forEach((p: any) => { coPaymentsMap[p.change_order_id] = (coPaymentsMap[p.change_order_id] || 0) + Number(p.amount); });
     }
 
-    // Build lead name map for change order rows
     const leadNameMap: Record<string, any> = {};
     (leads || []).forEach((l: any) => { leadNameMap[l.id] = l; });
 
-    // Build job rows from leads
     const leadRows: JobRow[] = (leads || []).map((job: any) => ({
-      id: job.id,
-      type: "lead",
-      leadId: job.id,
+      id: job.id, type: "lead", leadId: job.id,
       clientName: job.lead_name || "Unnamed",
-      address: job.address_line_1
-        ? `${job.address_line_1}${job.city ? ", " + job.city : ""}`
-        : job.city || "No address",
+      address: job.address_line_1 ? `${job.address_line_1}${job.city ? ", " + job.city : ""}` : job.city || "No address",
       jobType: job.metadata?.job_type || null,
       description: job.metadata?.initial_contract_description || null,
       salesperson: job.metadata?.salesperson || null,
@@ -126,17 +107,12 @@ export default function ProductionPage() {
       production_stage: job.production_stage || null,
     }));
 
-    // Build job rows from won change orders
     const coRows: JobRow[] = changeOrders.map((co: any) => {
       const parentLead = leadNameMap[co.lead_id];
       return {
-        id: co.id,
-        type: "change_order",
-        leadId: co.lead_id,
+        id: co.id, type: "change_order", leadId: co.lead_id,
         clientName: parentLead?.lead_name || "Unnamed",
-        address: parentLead?.address_line_1
-          ? `${parentLead.address_line_1}${parentLead.city ? ", " + parentLead.city : ""}`
-          : parentLead?.city || "No address",
+        address: parentLead?.address_line_1 ? `${parentLead.address_line_1}${parentLead.city ? ", " + parentLead.city : ""}` : parentLead?.city || "No address",
         jobType: co.job_type || null,
         description: co.description || null,
         salesperson: parentLead?.metadata?.salesperson || null,
@@ -150,9 +126,7 @@ export default function ProductionPage() {
     setJobs([...leadRows, ...coRows]);
   }
 
-  useEffect(() => {
-    fetchJobs().finally(() => setLoading(false));
-  }, []);
+  useEffect(() => { fetchJobs().finally(() => setLoading(false)); }, []);
 
   const handleStageUpdate = async (row: JobRow, newStage: string) => {
     const key = `${row.type}-${row.id}`;
@@ -166,8 +140,11 @@ export default function ProductionPage() {
     setUpdating(null);
   };
 
+  const isPending = (stage: string | null) => stage?.startsWith("Pending") || false;
+
   const filteredJobs = filter === "all" ? jobs
-    : filter === "active" ? jobs.filter(j => j.production_stage && !["Completed", "Completed with Balance", "Cancelled Before Start", "Cancelled Mid-Job"].includes(j.production_stage))
+    : filter === "pending" ? jobs.filter(j => isPending(j.production_stage))
+    : filter === "active" ? jobs.filter(j => j.production_stage && !isPending(j.production_stage) && !["Completed", "Completed with Balance", "Cancelled Before Start", "Cancelled Mid-Job"].includes(j.production_stage))
     : filter === "completed" ? jobs.filter(j => j.production_stage?.startsWith("Completed"))
     : filter === "cancelled" ? jobs.filter(j => j.production_stage?.startsWith("Cancelled"))
     : filter === "balance" ? jobs.filter(j => (j.contract - j.totalCollected) > 0)
@@ -176,6 +153,7 @@ export default function ProductionPage() {
   const totalContract = jobs.reduce((sum, j) => sum + j.contract, 0);
   const totalCollected = jobs.reduce((sum, j) => sum + j.totalCollected, 0);
   const totalBalance = totalContract - totalCollected;
+  const pendingCount = jobs.filter(j => isPending(j.production_stage)).length;
 
   return (
     <div className="space-y-6 max-w-7xl">
@@ -183,6 +161,9 @@ export default function ProductionPage() {
         <div className="rounded-xl border bg-card p-4">
           <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">Total Jobs</p>
           <p className="text-2xl font-bold mt-1">{jobs.length}</p>
+          {pendingCount > 0 && (
+            <p className="text-xs text-slate-500 mt-1">{pendingCount} pending</p>
+          )}
         </div>
         <div className="rounded-xl border bg-card p-4">
           <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">Total Collected</p>
@@ -196,9 +177,10 @@ export default function ProductionPage() {
         </div>
       </div>
 
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 flex-wrap">
         {[
           { key: "all", label: "All Jobs" },
+          { key: "pending", label: "Pending" },
           { key: "active", label: "Active" },
           { key: "completed", label: "Completed" },
           { key: "cancelled", label: "Cancelled" },
@@ -208,12 +190,13 @@ export default function ProductionPage() {
             key={f.key}
             onClick={() => setFilter(f.key)}
             className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
-              filter === f.key
-                ? "bg-primary text-primary-foreground"
-                : "bg-secondary text-secondary-foreground hover:bg-secondary/80"
+              filter === f.key ? "bg-primary text-primary-foreground" : "bg-secondary text-secondary-foreground hover:bg-secondary/80"
             }`}
           >
             {f.label}
+            {f.key === "pending" && pendingCount > 0 && (
+              <span className="ml-1.5 bg-slate-600 text-white rounded-full px-1.5 py-0.5 text-xs">{pendingCount}</span>
+            )}
           </button>
         ))}
         <span className="ml-auto text-xs text-muted-foreground">{filteredJobs.length} jobs</span>
@@ -234,74 +217,73 @@ export default function ProductionPage() {
             </thead>
             <tbody>
               {loading ? (
-                <tr>
-                  <td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">Loading jobs...</td>
-                </tr>
+                <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">Loading jobs...</td></tr>
               ) : filteredJobs.length === 0 ? (
-                <tr>
-                  <td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">
-                    No jobs found. Move leads to Closed Won to see them here.
-                  </td>
-                </tr>
+                <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">No jobs found.</td></tr>
               ) : (
                 filteredJobs.map((job) => {
                   const balance = job.contract - job.totalCollected;
                   const rowKey = `${job.type}-${job.id}`;
                   const isUpdating = updating === rowKey;
+                  const rowBg = isPending(job.production_stage)
+                    ? "bg-slate-50/50 dark:bg-slate-900/20"
+                    : job.type === "change_order"
+                    ? "bg-blue-50/30 dark:bg-blue-950/10"
+                    : "";
 
                   return (
-                    <tr
-                      key={rowKey}
-                      className={`border-b hover:bg-muted/30 transition-colors ${
-                        job.type === "change_order" ? "bg-blue-50/30 dark:bg-blue-950/10" : ""
-                      }`}
-                    >
+                    <tr key={rowKey} className={`border-b hover:bg-muted/30 transition-colors ${rowBg}`}>
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-2">
                           {job.type === "change_order" && (
-                            <span className="text-xs px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 font-medium shrink-0">
-                              CO#{job.orderNumber}
-                            </span>
+                            <span className="text-xs px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 font-medium shrink-0">CO#{job.orderNumber}</span>
                           )}
                           <div>
                             <p className="font-medium">{job.clientName}</p>
                             <p className="text-xs text-muted-foreground">{job.address}</p>
                             <div className="flex items-center gap-1.5 mt-0.5">
-                              {job.jobType && (
-                                <span className="text-xs text-primary">{job.jobType}</span>
-                              )}
-                              {job.description && (
-                                <span className="text-xs text-muted-foreground">· {job.description}</span>
-                              )}
+                              {job.jobType && <span className="text-xs text-primary">{job.jobType}</span>}
+                              {job.description && <span className="text-xs text-muted-foreground">· {job.description}</span>}
                             </div>
                           </div>
                         </div>
                       </td>
-                      <td className="px-4 py-3 text-muted-foreground">
-                        {job.salesperson || "—"}
-                      </td>
-                      <td className="px-4 py-3 text-right font-medium">
-                        ${job.contract.toLocaleString()}
-                      </td>
-                      <td className="px-4 py-3 text-right font-medium text-emerald-600">
-                        ${job.totalCollected.toLocaleString()}
-                      </td>
+                      <td className="px-4 py-3 text-muted-foreground">{job.salesperson || "—"}</td>
+                      <td className="px-4 py-3 text-right font-medium">${job.contract.toLocaleString()}</td>
+                      <td className="px-4 py-3 text-right font-medium text-emerald-600">${job.totalCollected.toLocaleString()}</td>
                       <td className="px-4 py-3 text-right">
-                        <span className={`font-bold ${balance > 0 ? "text-red-500" : "text-emerald-600"}`}>
-                          ${balance.toLocaleString()}
-                        </span>
+                        <span className={`font-bold ${balance > 0 ? "text-red-500" : "text-emerald-600"}`}>${balance.toLocaleString()}</span>
                       </td>
                       <td className="px-4 py-3">
                         <select
                           value={job.production_stage || ""}
                           onChange={(e) => handleStageUpdate(job, e.target.value)}
                           disabled={isUpdating}
-                          className="text-xs rounded-md border border-border bg-background px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-primary/40 disabled:opacity-50 min-w-[180px]"
+                          className="text-xs rounded-md border border-border bg-background px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-primary/40 disabled:opacity-50 min-w-[190px]"
                         >
                           <option value="">— Set Stage —</option>
-                          {PRODUCTION_STAGES.map((s) => (
-                            <option key={s} value={s}>{s}</option>
-                          ))}
+                          <optgroup label="Pending">
+                            <option value="Pending - Check">Pending - Check</option>
+                            <option value="Pending - Financing">Pending - Financing</option>
+                            <option value="Pending - Deposit">Pending - Deposit</option>
+                          </optgroup>
+                          <optgroup label="Active">
+                            <option value="Deposit Collected">Deposit Collected</option>
+                            <option value="Materials Ordered">Materials Ordered</option>
+                            <option value="Permit Submitted">Permit Submitted</option>
+                            <option value="Permit Approved">Permit Approved</option>
+                            <option value="Scheduled to Start">Scheduled to Start</option>
+                            <option value="Job In Progress">Job In Progress</option>
+                            <option value="Rough Inspection">Rough Inspection</option>
+                            <option value="Final Inspection">Final Inspection</option>
+                            <option value="Inspection Approved">Inspection Approved</option>
+                          </optgroup>
+                          <optgroup label="Closed">
+                            <option value="Completed">Completed</option>
+                            <option value="Completed with Balance">Completed with Balance</option>
+                            <option value="Cancelled Before Start">Cancelled Before Start</option>
+                            <option value="Cancelled Mid-Job">Cancelled Mid-Job</option>
+                          </optgroup>
                         </select>
                         {job.production_stage && (
                           <div className="mt-1">
