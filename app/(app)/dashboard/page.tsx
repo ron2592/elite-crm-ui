@@ -2,18 +2,26 @@
 
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
-import { Users, CalendarCheck, TrendingUp, DollarSign, FileSignature, X } from "lucide-react";
+import { Users, CalendarCheck, TrendingUp, DollarSign, FileSignature, X, ChevronLeft, ChevronRight } from "lucide-react";
 import KpiCard from "@/components/dashboard/KpiCard";
 import RevenueChart from "@/components/dashboard/RevenueChart";
 import PipelineSummary from "@/components/dashboard/PipelineSummary";
 import RecentLeads from "@/components/dashboard/RecentLeads";
 
+const MONTH_NAMES = ["January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December"];
+
 export default function DashboardPage() {
+  const now = new Date();
+  const [selectedMonth, setSelectedMonth] = useState(now.getMonth());
+  const [selectedYear, setSelectedYear] = useState(now.getFullYear());
+
   const [stats, setStats] = useState({
     totalLeads: 0,
     appointments: 0,
     closeRate: 0,
     actualRevenue: 0,
+    actualRevenueAllTime: 0,
     contractedRevenue: 0,
     initialVolume: 0,
     changeOrderVolume: 0,
@@ -22,11 +30,30 @@ export default function DashboardPage() {
 
   const [showContractedBreakdown, setShowContractedBreakdown] = useState(false);
 
+  const isCurrentMonth = selectedMonth === now.getMonth() && selectedYear === now.getFullYear();
+
+  function goToPrevMonth() {
+    if (selectedMonth === 0) {
+      setSelectedMonth(11);
+      setSelectedYear(y => y - 1);
+    } else {
+      setSelectedMonth(m => m - 1);
+    }
+  }
+
+  function goToNextMonth() {
+    const nextMonth = selectedMonth === 11 ? 0 : selectedMonth + 1;
+    const nextYear = selectedMonth === 11 ? selectedYear + 1 : selectedYear;
+    // Don't go past current month
+    if (nextYear > now.getFullYear() || (nextYear === now.getFullYear() && nextMonth > now.getMonth())) return;
+    setSelectedMonth(nextMonth);
+    setSelectedYear(nextYear);
+  }
+
   useEffect(() => {
     async function fetchStats() {
-      const now = new Date();
-      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
-      const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59).toISOString();
+      const monthStart = new Date(selectedYear, selectedMonth, 1).toISOString();
+      const monthEnd = new Date(selectedYear, selectedMonth + 1, 0, 23, 59, 59).toISOString();
 
       // Fetch all leads (not archived)
       const { data: leads, error: leadsError } = await supabase
@@ -39,16 +66,25 @@ export default function DashboardPage() {
         return;
       }
 
-      // Fetch payments for this month
-      const { data: payments, error: paymentsError } = await supabase
+      // Fetch payments for selected month
+      const { data: payments } = await supabase
         .from("payments")
         .select("amount, paid_at")
         .gte("paid_at", monthStart)
         .lte("paid_at", monthEnd);
 
-      if (paymentsError) {
-        console.error("Dashboard payments error:", paymentsError?.message);
-      }
+      // Fetch ALL payments for all-time total
+      const { data: allPayments } = await supabase
+        .from("payments")
+        .select("amount");
+
+      // Fetch won change orders for selected month
+      const { data: changeOrders } = await supabase
+        .from("change_orders")
+        .select("amount, status, signed_at")
+        .eq("status", "won")
+        .gte("signed_at", monthStart)
+        .lte("signed_at", monthEnd);
 
       const total = leads.length;
 
@@ -62,25 +98,31 @@ export default function DashboardPage() {
 
       const rate = total > 0 ? Math.round((won.length / total) * 100) : 0;
 
-      // Actual Revenue = sum of payments received this month
+      // Actual Revenue = payments received in selected month
       const actualRevenue = (payments || []).reduce(
-        (sum: number, p: any) => sum + Number(p.amount || 0),
-        0
+        (sum: number, p: any) => sum + Number(p.amount || 0), 0
       );
 
-      // Contracted Revenue = closed_amount on Closed Won leads created this month
+      // All-time actual revenue
+      const actualRevenueAllTime = (allPayments || []).reduce(
+        (sum: number, p: any) => sum + Number(p.amount || 0), 0
+      );
+
+      // Contracted Revenue = closed_amount on Closed Won leads received in selected month
       const wonThisMonth = won.filter((l: any) => {
-        const created = l.lead_received_at || l.created_at;
-        return created >= monthStart && created <= monthEnd;
+        const received = l.lead_received_at || l.created_at;
+        return received >= monthStart && received <= monthEnd;
       });
 
       const initialVolume = wonThisMonth.reduce(
-        (sum: number, l: any) => sum + Number(l.closed_amount || l.initial_contract_value || 0),
-        0
+        (sum: number, l: any) => sum + Number(l.closed_amount || l.initial_contract_value || 0), 0
       );
 
-      // Change order volume — $0 until change_orders table is built
-      const changeOrderVolume = 0;
+      // Change order volume for selected month
+      const changeOrderVolume = (changeOrders || []).reduce(
+        (sum: number, co: any) => sum + Number(co.amount || 0), 0
+      );
+
       const contractedRevenue = initialVolume + changeOrderVolume;
 
       setStats({
@@ -88,6 +130,7 @@ export default function DashboardPage() {
         appointments: appts,
         closeRate: rate,
         actualRevenue,
+        actualRevenueAllTime,
         contractedRevenue,
         initialVolume,
         changeOrderVolume,
@@ -96,10 +139,55 @@ export default function DashboardPage() {
     }
 
     fetchStats();
-  }, []);
+  }, [selectedMonth, selectedYear]);
+
+  const isNextDisabled = selectedMonth === now.getMonth() && selectedYear === now.getFullYear();
 
   return (
     <div className="space-y-6 max-w-7xl">
+
+      {/* Month Selector */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <button
+            onClick={goToPrevMonth}
+            className="flex h-8 w-8 items-center justify-center rounded-md border border-border hover:bg-muted transition-colors"
+          >
+            <ChevronLeft className="h-4 w-4" />
+          </button>
+          <div className="text-center min-w-[160px]">
+            <p className="font-semibold text-sm">
+              {MONTH_NAMES[selectedMonth]} {selectedYear}
+            </p>
+            {isCurrentMonth && (
+              <p className="text-xs text-muted-foreground">Current month</p>
+            )}
+          </div>
+          <button
+            onClick={goToNextMonth}
+            disabled={isNextDisabled}
+            className="flex h-8 w-8 items-center justify-center rounded-md border border-border hover:bg-muted transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+          >
+            <ChevronRight className="h-4 w-4" />
+          </button>
+          {!isCurrentMonth && (
+            <button
+              onClick={() => { setSelectedMonth(now.getMonth()); setSelectedYear(now.getFullYear()); }}
+              className="text-xs px-2.5 py-1 rounded-md bg-primary/10 text-primary hover:bg-primary/20 transition-colors font-medium"
+            >
+              Back to current
+            </button>
+          )}
+        </div>
+
+        {/* All-time revenue quick view */}
+        <div className="text-right">
+          <p className="text-xs text-muted-foreground">All-time actual revenue</p>
+          <p className="text-sm font-bold text-emerald-600">
+            {stats.loaded ? `$${stats.actualRevenueAllTime.toLocaleString()}` : "..."}
+          </p>
+        </div>
+      </div>
 
       {/* KPI Cards */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
@@ -134,7 +222,7 @@ export default function DashboardPage() {
           delay={150}
         />
         <KpiCard
-          title="Actual Revenue"
+          title={`Actual Revenue · ${MONTH_NAMES[selectedMonth].slice(0, 3)}`}
           value={stats.loaded ? `$${stats.actualRevenue.toLocaleString()}` : "..."}
           change="+18%"
           trend="up"
@@ -158,7 +246,7 @@ export default function DashboardPage() {
               </div>
               <div>
                 <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                  Contracted Revenue <span className="normal-case">(this month)</span>
+                  Contracted Revenue <span className="normal-case">· {MONTH_NAMES[selectedMonth]} {selectedYear}</span>
                 </p>
                 <p className="text-2xl font-bold mt-0.5">
                   {stats.loaded ? `$${stats.contractedRevenue.toLocaleString()}` : "..."}
@@ -174,15 +262,13 @@ export default function DashboardPage() {
           </div>
         </button>
 
-        {/* Breakdown Panel */}
         {showContractedBreakdown && (
           <div className="mt-2 rounded-xl border border-border bg-card p-4 shadow-sm space-y-3">
             <div className="flex items-center justify-between mb-1">
-              <p className="text-sm font-semibold">Contracted Revenue Breakdown</p>
-              <button
-                onClick={() => setShowContractedBreakdown(false)}
-                className="text-muted-foreground hover:text-foreground"
-              >
+              <p className="text-sm font-semibold">
+                Contracted Revenue — {MONTH_NAMES[selectedMonth]} {selectedYear}
+              </p>
+              <button onClick={() => setShowContractedBreakdown(false)} className="text-muted-foreground hover:text-foreground">
                 <X className="h-4 w-4" />
               </button>
             </div>
@@ -192,18 +278,14 @@ export default function DashboardPage() {
                 <p className="text-xl font-bold text-foreground">
                   ${stats.initialVolume.toLocaleString()}
                 </p>
-                <p className="text-xs text-muted-foreground mt-1">
-                  Original signed agreements this month
-                </p>
+                <p className="text-xs text-muted-foreground mt-1">Original signed agreements</p>
               </div>
               <div className="rounded-lg bg-muted/50 p-3">
                 <p className="text-xs text-muted-foreground mb-1">Change Order Volume</p>
                 <p className="text-xl font-bold text-foreground">
                   ${stats.changeOrderVolume.toLocaleString()}
                 </p>
-                <p className="text-xs text-muted-foreground mt-1">
-                  Additional signed work this month
-                </p>
+                <p className="text-xs text-muted-foreground mt-1">Additional signed work</p>
               </div>
             </div>
             <div className="rounded-lg bg-primary/5 border border-primary/20 p-3 flex items-center justify-between">
