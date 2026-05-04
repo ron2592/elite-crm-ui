@@ -49,8 +49,6 @@ interface LeadDetailDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onStageChange?: (leadId: string, newStatus: any) => void;
-  onLeadUpdated?: (leadId: string) => void;
-  onLeadDeleted?: () => void;
 }
 
 export default function LeadDetailDialog({
@@ -58,8 +56,6 @@ export default function LeadDetailDialog({
   open,
   onOpenChange,
   onStageChange,
-  onLeadUpdated,
-  onLeadDeleted,
 }: LeadDetailDialogProps) {
   const [estimatedAmount, setEstimatedAmount] = useState("");
   const [contractValue, setContractValue] = useState("");
