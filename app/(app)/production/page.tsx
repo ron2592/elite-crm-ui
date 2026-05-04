@@ -35,73 +35,142 @@ const stageColors: Record<string, string> = {
   "Cancelled Mid-Job": "bg-rose-100 text-rose-700",
 };
 
+interface JobRow {
+  id: string;
+  type: "lead" | "change_order";
+  leadId: string;
+  clientName: string;
+  address: string;
+  jobType: string | null;
+  description: string | null;
+  salesperson: string | null;
+  contract: number;
+  totalCollected: number;
+  production_stage: string | null;
+  orderNumber?: number;
+}
+
 export default function ProductionPage() {
-  const [jobs, setJobs] = useState<any[]>([]);
+  const [jobs, setJobs] = useState<JobRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [updating, setUpdating] = useState<string | null>(null);
   const [filter, setFilter] = useState("all");
 
   async function fetchJobs() {
-    const { data, error } = await supabase
+    // Fetch closed won leads
+    const { data: leads, error } = await supabase
       .from("leads")
-      .select("id, lead_name, initial_contract_value, closed_amount, estimated_amount, production_stage, address_line_1, city, state, created_at, phone, source_email, metadata")
+      .select("id, lead_name, initial_contract_value, closed_amount, estimated_amount, production_stage, address_line_1, city, state, metadata")
       .eq("status", "closed_won")
       .order("created_at", { ascending: false });
 
-    if (error) {
-      console.error("Error fetching jobs:", error.message);
-      return;
-    }
+    if (error) { console.error("Error fetching jobs:", error.message); return; }
 
-    const jobIds = (data || []).map((j: any) => j.id);
+    const leadIds = (leads || []).map((j: any) => j.id);
+
+    // Fetch payments for leads
     let paymentsMap: Record<string, number> = {};
-
-    if (jobIds.length > 0) {
+    if (leadIds.length > 0) {
       const { data: payments } = await supabase
         .from("payments")
         .select("lead_id, amount")
-        .in("lead_id", jobIds);
-
+        .in("lead_id", leadIds);
       (payments || []).forEach((p: any) => {
         paymentsMap[p.lead_id] = (paymentsMap[p.lead_id] || 0) + Number(p.amount);
       });
     }
 
-    const enriched = (data || []).map((job: any) => ({
-      ...job,
-      totalCollected: paymentsMap[job.id] || Number(job.closed_amount) || 0,
-      contract: Number(job.initial_contract_value) || Number(job.estimated_amount) || 0,
+    // Fetch won change orders for these leads
+    let changeOrders: any[] = [];
+    if (leadIds.length > 0) {
+      const { data: cos } = await supabase
+        .from("change_orders")
+        .select("*")
+        .eq("status", "won")
+        .in("lead_id", leadIds)
+        .order("order_number", { ascending: true });
+      changeOrders = cos || [];
+    }
+
+    // Fetch change order payments
+    const coIds = changeOrders.map((co: any) => co.id);
+    let coPaymentsMap: Record<string, number> = {};
+    if (coIds.length > 0) {
+      const { data: coPayments } = await supabase
+        .from("change_order_payments")
+        .select("change_order_id, amount")
+        .in("change_order_id", coIds);
+      (coPayments || []).forEach((p: any) => {
+        coPaymentsMap[p.change_order_id] = (coPaymentsMap[p.change_order_id] || 0) + Number(p.amount);
+      });
+    }
+
+    // Build lead name map for change order rows
+    const leadNameMap: Record<string, any> = {};
+    (leads || []).forEach((l: any) => { leadNameMap[l.id] = l; });
+
+    // Build job rows from leads
+    const leadRows: JobRow[] = (leads || []).map((job: any) => ({
+      id: job.id,
+      type: "lead",
+      leadId: job.id,
+      clientName: job.lead_name || "Unnamed",
+      address: job.address_line_1
+        ? `${job.address_line_1}${job.city ? ", " + job.city : ""}`
+        : job.city || "No address",
+      jobType: job.metadata?.job_type || null,
+      description: job.metadata?.initial_contract_description || null,
       salesperson: job.metadata?.salesperson || null,
-      job_type: job.metadata?.job_type || null,
+      contract: Number(job.initial_contract_value) || Number(job.estimated_amount) || 0,
+      totalCollected: paymentsMap[job.id] || Number(job.closed_amount) || 0,
+      production_stage: job.production_stage || null,
     }));
 
-    setJobs(enriched);
+    // Build job rows from won change orders
+    const coRows: JobRow[] = changeOrders.map((co: any) => {
+      const parentLead = leadNameMap[co.lead_id];
+      return {
+        id: co.id,
+        type: "change_order",
+        leadId: co.lead_id,
+        clientName: parentLead?.lead_name || "Unnamed",
+        address: parentLead?.address_line_1
+          ? `${parentLead.address_line_1}${parentLead.city ? ", " + parentLead.city : ""}`
+          : parentLead?.city || "No address",
+        jobType: co.job_type || null,
+        description: co.description || null,
+        salesperson: parentLead?.metadata?.salesperson || null,
+        contract: Number(co.amount) || 0,
+        totalCollected: coPaymentsMap[co.id] || 0,
+        production_stage: co.production_stage || null,
+        orderNumber: co.order_number,
+      };
+    });
+
+    setJobs([...leadRows, ...coRows]);
   }
 
   useEffect(() => {
     fetchJobs().finally(() => setLoading(false));
   }, []);
 
-  const handleStageUpdate = async (jobId: string, newStage: string) => {
-    setUpdating(jobId);
-    await supabase
-      .from("leads")
-      .update({ production_stage: newStage })
-      .eq("id", jobId);
+  const handleStageUpdate = async (row: JobRow, newStage: string) => {
+    const key = `${row.type}-${row.id}`;
+    setUpdating(key);
+    if (row.type === "lead") {
+      await supabase.from("leads").update({ production_stage: newStage }).eq("id", row.id);
+    } else {
+      await supabase.from("change_orders").update({ production_stage: newStage }).eq("id", row.id);
+    }
     await fetchJobs();
     setUpdating(null);
   };
 
-  const filteredJobs = filter === "all"
-    ? jobs
-    : filter === "active"
-    ? jobs.filter(j => j.production_stage && !["Completed", "Completed with Balance", "Cancelled Before Start", "Cancelled Mid-Job"].includes(j.production_stage))
-    : filter === "completed"
-    ? jobs.filter(j => j.production_stage?.startsWith("Completed"))
-    : filter === "cancelled"
-    ? jobs.filter(j => j.production_stage?.startsWith("Cancelled"))
-    : filter === "balance"
-    ? jobs.filter(j => (j.contract - j.totalCollected) > 0)
+  const filteredJobs = filter === "all" ? jobs
+    : filter === "active" ? jobs.filter(j => j.production_stage && !["Completed", "Completed with Balance", "Cancelled Before Start", "Cancelled Mid-Job"].includes(j.production_stage))
+    : filter === "completed" ? jobs.filter(j => j.production_stage?.startsWith("Completed"))
+    : filter === "cancelled" ? jobs.filter(j => j.production_stage?.startsWith("Cancelled"))
+    : filter === "balance" ? jobs.filter(j => (j.contract - j.totalCollected) > 0)
     : jobs;
 
   const totalContract = jobs.reduce((sum, j) => sum + j.contract, 0);
@@ -166,9 +235,7 @@ export default function ProductionPage() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">
-                    Loading jobs...
-                  </td>
+                  <td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">Loading jobs...</td>
                 </tr>
               ) : filteredJobs.length === 0 ? (
                 <tr>
@@ -179,18 +246,36 @@ export default function ProductionPage() {
               ) : (
                 filteredJobs.map((job) => {
                   const balance = job.contract - job.totalCollected;
-                  const address = job.address_line_1
-                    ? `${job.address_line_1}${job.city ? ", " + job.city : ""}`
-                    : job.city || "No address";
+                  const rowKey = `${job.type}-${job.id}`;
+                  const isUpdating = updating === rowKey;
 
                   return (
-                    <tr key={job.id} className="border-b hover:bg-muted/30 transition-colors">
+                    <tr
+                      key={rowKey}
+                      className={`border-b hover:bg-muted/30 transition-colors ${
+                        job.type === "change_order" ? "bg-blue-50/30 dark:bg-blue-950/10" : ""
+                      }`}
+                    >
                       <td className="px-4 py-3">
-                        <p className="font-medium">{job.lead_name || "Unnamed"}</p>
-                        <p className="text-xs text-muted-foreground">{address}</p>
-                        {job.job_type && (
-                          <span className="text-xs text-primary">{job.job_type}</span>
-                        )}
+                        <div className="flex items-center gap-2">
+                          {job.type === "change_order" && (
+                            <span className="text-xs px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 font-medium shrink-0">
+                              CO#{job.orderNumber}
+                            </span>
+                          )}
+                          <div>
+                            <p className="font-medium">{job.clientName}</p>
+                            <p className="text-xs text-muted-foreground">{job.address}</p>
+                            <div className="flex items-center gap-1.5 mt-0.5">
+                              {job.jobType && (
+                                <span className="text-xs text-primary">{job.jobType}</span>
+                              )}
+                              {job.description && (
+                                <span className="text-xs text-muted-foreground">· {job.description}</span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
                       </td>
                       <td className="px-4 py-3 text-muted-foreground">
                         {job.salesperson || "—"}
@@ -209,8 +294,8 @@ export default function ProductionPage() {
                       <td className="px-4 py-3">
                         <select
                           value={job.production_stage || ""}
-                          onChange={(e) => handleStageUpdate(job.id, e.target.value)}
-                          disabled={updating === job.id}
+                          onChange={(e) => handleStageUpdate(job, e.target.value)}
+                          disabled={isUpdating}
                           className="text-xs rounded-md border border-border bg-background px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-primary/40 disabled:opacity-50 min-w-[180px]"
                         >
                           <option value="">— Set Stage —</option>
