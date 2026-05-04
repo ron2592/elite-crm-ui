@@ -10,7 +10,7 @@ import {
   DialogTitle,
   DialogDescription,
 } from "@/components/ui/dialog";
-import { Phone, Mail, MapPin, Calendar, DollarSign, Save, Plus, X, Pencil, Archive, ChevronDown, ChevronUp } from "lucide-react";
+import { Phone, Mail, MapPin, Calendar, DollarSign, Save, Plus, X, Pencil, Archive, ChevronDown, ChevronUp, Trash2 } from "lucide-react";
 
 const statusLabels: Record<string, string> = {
   new: "New Lead",
@@ -73,6 +73,7 @@ interface LeadDetailDialogProps {
   onOpenChange: (open: boolean) => void;
   onStageChange?: (leadId: string, newStatus: any) => void;
   onLeadUpdated?: (leadId: string) => void;
+  onLeadDeleted?: () => void;
 }
 
 export default function LeadDetailDialog({
@@ -81,6 +82,7 @@ export default function LeadDetailDialog({
   onOpenChange,
   onStageChange,
   onLeadUpdated,
+  onLeadDeleted,
 }: LeadDetailDialogProps) {
   const [estimatedAmount, setEstimatedAmount] = useState("");
   const [contractValue, setContractValue] = useState("");
@@ -116,9 +118,9 @@ export default function LeadDetailDialog({
   });
   const [editSaving, setEditSaving] = useState(false);
   const [archiving, setArchiving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [zipLooking, setZipLooking] = useState(false);
 
-  // Change orders state
   const [changeOrders, setChangeOrders] = useState<ChangeOrder[]>([]);
   const [showAddChangeOrder, setShowAddChangeOrder] = useState(false);
   const [newChangeOrder, setNewChangeOrder] = useState({
@@ -311,6 +313,19 @@ export default function LeadDetailDialog({
     onOpenChange(false);
   };
 
+  const handleDelete = async () => {
+    if (!confirm(`Permanently delete "${displayName}"? This will also delete all payments and change orders. This cannot be undone.`)) return;
+    if (!confirm("Are you sure? This is permanent and cannot be recovered.")) return;
+    setDeleting(true);
+    await supabase.from("change_order_payments").delete().eq("lead_id", leadId);
+    await supabase.from("change_orders").delete().eq("lead_id", leadId);
+    await supabase.from("payments").delete().eq("lead_id", leadId);
+    await supabase.from("leads").delete().eq("id", leadId);
+    setDeleting(false);
+    onOpenChange(false);
+    if (onLeadDeleted) onLeadDeleted();
+  };
+
   const handleAddPayment = async () => {
     if (!newPayment.amount || Number(newPayment.amount) <= 0) return;
     setAddingPayment(true);
@@ -475,6 +490,15 @@ export default function LeadDetailDialog({
                 <Archive className="h-3 w-3" />
                 {archiving ? "..." : "Archive"}
               </button>
+              <button
+                onClick={handleDelete}
+                disabled={deleting}
+                className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-md border border-border hover:bg-red-100 hover:text-red-700 hover:border-red-400 transition-colors disabled:opacity-40"
+                title="Permanently delete this lead"
+              >
+                <Trash2 className="h-3 w-3" />
+                {deleting ? "..." : "Delete"}
+              </button>
             </div>
           </div>
         </DialogHeader>
@@ -594,16 +618,13 @@ export default function LeadDetailDialog({
               <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1">
                 <DollarSign className="h-3 w-3" /> Initial Contract
               </p>
-              <div className="flex items-center gap-2">
-                {jobType && (
-                  <span className="text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 font-medium">
-                    {jobType}
-                  </span>
-                )}
-              </div>
+              {jobType && (
+                <span className="text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 font-medium">
+                  {jobType}
+                </span>
+              )}
             </div>
 
-            {/* Show saved description if exists */}
             {l.metadata?.initial_contract_description && (
               <p className="text-xs text-muted-foreground italic">
                 {l.metadata.initial_contract_description}
@@ -625,7 +646,6 @@ export default function LeadDetailDialog({
               </div>
             </div>
 
-            {/* Description field */}
             <div>
               <label className="text-xs text-muted-foreground mb-1 block">Description</label>
               <input
@@ -646,7 +666,6 @@ export default function LeadDetailDialog({
               {saving ? "Saving..." : saved ? "Saved ✓" : "Save Contract"}
             </button>
 
-            {/* Initial Contract Payments */}
             <div className="space-y-2 pt-1">
               <div className="flex items-center justify-between">
                 <p className="text-xs font-medium text-muted-foreground">Payments</p>
@@ -740,9 +759,7 @@ export default function LeadDetailDialog({
               <div key={co.id} className="rounded-lg border border-border p-4 space-y-3">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                      Change Order #{co.order_number}
-                    </p>
+                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Change Order #{co.order_number}</p>
                     <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${coStatusColors[co.status]}`}>
                       {co.status.charAt(0).toUpperCase() + co.status.slice(1)}
                     </span>
