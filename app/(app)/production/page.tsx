@@ -4,22 +4,11 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 
 const PRODUCTION_STAGES = [
-  "Pending - Check",
-  "Pending - Financing",
-  "Pending - Deposit",
-  "Deposit Collected",
-  "Materials Ordered",
-  "Permit Submitted",
-  "Permit Approved",
-  "Scheduled to Start",
-  "Job In Progress",
-  "Rough Inspection",
-  "Final Inspection",
-  "Inspection Approved",
-  "Completed",
-  "Completed with Balance",
-  "Cancelled Before Start",
-  "Cancelled Mid-Job",
+  "Pending - Check", "Pending - Financing", "Pending - Deposit",
+  "Deposit Collected", "Materials Ordered", "Permit Submitted", "Permit Approved",
+  "Scheduled to Start", "Job In Progress", "Rough Inspection", "Final Inspection",
+  "Inspection Approved", "Completed", "Completed with Balance",
+  "Cancelled Before Start", "Cancelled Mid-Job",
 ];
 
 const stageColors: Record<string, string> = {
@@ -53,6 +42,8 @@ interface JobRow {
   contract: number;
   totalCollected: number;
   production_stage: string | null;
+  production_stage_updated_at: string | null;
+  production_notes: string | null;
   orderNumber?: number;
 }
 
@@ -61,11 +52,13 @@ export default function ProductionPage() {
   const [loading, setLoading] = useState(true);
   const [updating, setUpdating] = useState<string | null>(null);
   const [filter, setFilter] = useState("all");
+  const [editingNotes, setEditingNotes] = useState<string | null>(null);
+  const [noteDraft, setNoteDraft] = useState("");
 
   async function fetchJobs() {
     const { data: leads, error } = await supabase
       .from("leads")
-      .select("id, lead_name, initial_contract_value, closed_amount, estimated_amount, production_stage, address_line_1, city, state, metadata")
+      .select("id, lead_name, initial_contract_value, closed_amount, estimated_amount, production_stage, production_stage_updated_at, production_notes, address_line_1, city, state, metadata")
       .eq("status", "closed_won")
       .order("created_at", { ascending: false });
 
@@ -105,6 +98,8 @@ export default function ProductionPage() {
       contract: Number(job.initial_contract_value) || Number(job.estimated_amount) || 0,
       totalCollected: paymentsMap[job.id] || Number(job.closed_amount) || 0,
       production_stage: job.production_stage || null,
+      production_stage_updated_at: job.production_stage_updated_at || null,
+      production_notes: job.production_notes || null,
     }));
 
     const coRows: JobRow[] = changeOrders.map((co: any) => {
@@ -119,6 +114,8 @@ export default function ProductionPage() {
         contract: Number(co.amount) || 0,
         totalCollected: coPaymentsMap[co.id] || 0,
         production_stage: co.production_stage || null,
+        production_stage_updated_at: co.production_stage_updated_at || null,
+        production_notes: co.production_notes || null,
         orderNumber: co.order_number,
       };
     });
@@ -131,13 +128,24 @@ export default function ProductionPage() {
   const handleStageUpdate = async (row: JobRow, newStage: string) => {
     const key = `${row.type}-${row.id}`;
     setUpdating(key);
+    const now = new Date().toISOString();
     if (row.type === "lead") {
-      await supabase.from("leads").update({ production_stage: newStage }).eq("id", row.id);
+      await supabase.from("leads").update({ production_stage: newStage, production_stage_updated_at: now }).eq("id", row.id);
     } else {
-      await supabase.from("change_orders").update({ production_stage: newStage }).eq("id", row.id);
+      await supabase.from("change_orders").update({ production_stage: newStage, production_stage_updated_at: now }).eq("id", row.id);
     }
     await fetchJobs();
     setUpdating(null);
+  };
+
+  const handleSaveNote = async (row: JobRow) => {
+    if (row.type === "lead") {
+      await supabase.from("leads").update({ production_notes: noteDraft }).eq("id", row.id);
+    } else {
+      await supabase.from("change_orders").update({ production_notes: noteDraft }).eq("id", row.id);
+    }
+    setEditingNotes(null);
+    await fetchJobs();
   };
 
   const isPending = (stage: string | null) => stage?.startsWith("Pending") || false;
@@ -156,14 +164,12 @@ export default function ProductionPage() {
   const pendingCount = jobs.filter(j => isPending(j.production_stage)).length;
 
   return (
-    <div className="space-y-6 max-w-7xl">
+    <div className="space-y-6 max-w-full">
       <div className="grid grid-cols-3 gap-4">
         <div className="rounded-xl border bg-card p-4">
           <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">Total Jobs</p>
           <p className="text-2xl font-bold mt-1">{jobs.length}</p>
-          {pendingCount > 0 && (
-            <p className="text-xs text-slate-500 mt-1">{pendingCount} pending</p>
-          )}
+          {pendingCount > 0 && <p className="text-xs text-slate-500 mt-1">{pendingCount} pending</p>}
         </div>
         <div className="rounded-xl border bg-card p-4">
           <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">Total Collected</p>
@@ -171,9 +177,7 @@ export default function ProductionPage() {
         </div>
         <div className="rounded-xl border bg-card p-4">
           <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">Total Balance Due</p>
-          <p className={`text-2xl font-bold mt-1 ${totalBalance > 0 ? "text-red-500" : "text-emerald-600"}`}>
-            ${totalBalance.toLocaleString()}
-          </p>
+          <p className={`text-2xl font-bold mt-1 ${totalBalance > 0 ? "text-red-500" : "text-emerald-600"}`}>${totalBalance.toLocaleString()}</p>
         </div>
       </div>
 
@@ -186,13 +190,8 @@ export default function ProductionPage() {
           { key: "cancelled", label: "Cancelled" },
           { key: "balance", label: "Has Balance" },
         ].map((f) => (
-          <button
-            key={f.key}
-            onClick={() => setFilter(f.key)}
-            className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
-              filter === f.key ? "bg-primary text-primary-foreground" : "bg-secondary text-secondary-foreground hover:bg-secondary/80"
-            }`}
-          >
+          <button key={f.key} onClick={() => setFilter(f.key)}
+            className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${filter === f.key ? "bg-primary text-primary-foreground" : "bg-secondary text-secondary-foreground hover:bg-secondary/80"}`}>
             {f.label}
             {f.key === "pending" && pendingCount > 0 && (
               <span className="ml-1.5 bg-slate-600 text-white rounded-full px-1.5 py-0.5 text-xs">{pendingCount}</span>
@@ -207,24 +206,27 @@ export default function ProductionPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b bg-muted/50">
-                <th className="text-left px-4 py-3 font-medium text-muted-foreground">Job / Client</th>
-                <th className="text-left px-4 py-3 font-medium text-muted-foreground">Salesperson</th>
-                <th className="text-right px-4 py-3 font-medium text-muted-foreground">Contract</th>
-                <th className="text-right px-4 py-3 font-medium text-muted-foreground">Collected</th>
-                <th className="text-right px-4 py-3 font-medium text-muted-foreground">Balance</th>
-                <th className="text-left px-4 py-3 font-medium text-muted-foreground">Production Stage</th>
+                <th className="text-left px-4 py-3 font-medium text-muted-foreground whitespace-nowrap">Job / Client</th>
+                <th className="text-left px-4 py-3 font-medium text-muted-foreground whitespace-nowrap">Salesperson</th>
+                <th className="text-right px-4 py-3 font-medium text-muted-foreground whitespace-nowrap">Contract</th>
+                <th className="text-right px-4 py-3 font-medium text-muted-foreground whitespace-nowrap">Collected</th>
+                <th className="text-right px-4 py-3 font-medium text-muted-foreground whitespace-nowrap">Balance</th>
+                <th className="text-left px-4 py-3 font-medium text-muted-foreground whitespace-nowrap">Production Stage</th>
+                <th className="text-left px-4 py-3 font-medium text-muted-foreground whitespace-nowrap">Stage Date</th>
+                <th className="text-left px-4 py-3 font-medium text-muted-foreground whitespace-nowrap">Notes</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">Loading jobs...</td></tr>
+                <tr><td colSpan={8} className="px-4 py-8 text-center text-muted-foreground">Loading jobs...</td></tr>
               ) : filteredJobs.length === 0 ? (
-                <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">No jobs found.</td></tr>
+                <tr><td colSpan={8} className="px-4 py-8 text-center text-muted-foreground">No jobs found.</td></tr>
               ) : (
                 filteredJobs.map((job) => {
                   const balance = job.contract - job.totalCollected;
                   const rowKey = `${job.type}-${job.id}`;
                   const isUpdating = updating === rowKey;
+                  const isEditingNote = editingNotes === rowKey;
                   const rowBg = isPending(job.production_stage)
                     ? "bg-slate-50/50 dark:bg-slate-900/20"
                     : job.type === "change_order"
@@ -248,10 +250,10 @@ export default function ProductionPage() {
                           </div>
                         </div>
                       </td>
-                      <td className="px-4 py-3 text-muted-foreground">{job.salesperson || "—"}</td>
-                      <td className="px-4 py-3 text-right font-medium">${job.contract.toLocaleString()}</td>
-                      <td className="px-4 py-3 text-right font-medium text-emerald-600">${job.totalCollected.toLocaleString()}</td>
-                      <td className="px-4 py-3 text-right">
+                      <td className="px-4 py-3 text-muted-foreground whitespace-nowrap">{job.salesperson || "—"}</td>
+                      <td className="px-4 py-3 text-right font-medium whitespace-nowrap">${job.contract.toLocaleString()}</td>
+                      <td className="px-4 py-3 text-right font-medium text-emerald-600 whitespace-nowrap">${job.totalCollected.toLocaleString()}</td>
+                      <td className="px-4 py-3 text-right whitespace-nowrap">
                         <span className={`font-bold ${balance > 0 ? "text-red-500" : "text-emerald-600"}`}>${balance.toLocaleString()}</span>
                       </td>
                       <td className="px-4 py-3">
@@ -290,6 +292,40 @@ export default function ProductionPage() {
                             <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${stageColors[job.production_stage] || "bg-gray-100 text-gray-700"}`}>
                               {job.production_stage}
                             </span>
+                          </div>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">
+                        {job.production_stage_updated_at
+                          ? new Date(job.production_stage_updated_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
+                          : "—"}
+                      </td>
+                      <td className="px-4 py-3 min-w-[180px]">
+                        {isEditingNote ? (
+                          <div className="space-y-1">
+                            <textarea
+                              value={noteDraft}
+                              onChange={(e) => setNoteDraft(e.target.value)}
+                              rows={2}
+                              autoFocus
+                              className="w-full rounded-md border border-border bg-background px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-primary/40 resize-none"
+                              placeholder="Add a note..."
+                            />
+                            <div className="flex gap-1">
+                              <button onClick={() => handleSaveNote(job)} className="text-xs px-2 py-0.5 rounded bg-primary text-primary-foreground hover:bg-primary/90">Save</button>
+                              <button onClick={() => setEditingNotes(null)} className="text-xs px-2 py-0.5 rounded border border-border hover:bg-muted">Cancel</button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div
+                            onClick={() => { setEditingNotes(rowKey); setNoteDraft(job.production_notes || ""); }}
+                            className="cursor-pointer group"
+                          >
+                            {job.production_notes ? (
+                              <p className="text-xs text-foreground group-hover:text-primary transition-colors">{job.production_notes}</p>
+                            ) : (
+                              <p className="text-xs text-muted-foreground/50 group-hover:text-primary transition-colors">+ Add note</p>
+                            )}
                           </div>
                         )}
                       </td>
