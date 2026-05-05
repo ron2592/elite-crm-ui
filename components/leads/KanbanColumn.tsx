@@ -21,16 +21,23 @@ interface KanbanColumnProps {
   leads: Lead[];
   onLeadClick?: (lead: Lead) => void;
   onDropLead?: (leadId: string, newStatus: LeadStatus) => void;
+  changeOrderTotals?: Record<string, number>;
 }
 
-export default function KanbanColumn({ status, leads, onLeadClick, onDropLead }: KanbanColumnProps) {
+export default function KanbanColumn({ status, leads, onLeadClick, onDropLead, changeOrderTotals = {} }: KanbanColumnProps) {
   const config = columnConfig[status];
   const [isDragOver, setIsDragOver] = useState(false);
 
-  const totalValue = leads.reduce(
-    (sum, lead: any) => sum + Number(lead.estimated_amount || lead.closed_amount || lead.initial_contract_value || 0),
-    0
-  );
+  const isClosedWon = status === "closed_won";
+
+  const totalValue = leads.reduce((sum, lead: any) => {
+    if (isClosedWon) {
+      const initial = Number(lead.initial_contract_value || lead.closed_amount || 0);
+      const coTotal = changeOrderTotals[lead.id] || 0;
+      return sum + initial + coTotal;
+    }
+    return sum + Number(lead.estimated_amount || lead.initial_contract_value || 0);
+  }, 0);
 
   return (
     <div
@@ -69,9 +76,10 @@ export default function KanbanColumn({ status, leads, onLeadClick, onDropLead }:
           ) : (
             leads.map((lead) => (
               <LeadCard
-                key={lead.id}
+                key={(lead as any).id}
                 lead={lead}
                 onClick={() => onLeadClick?.(lead)}
+                changeOrderTotal={changeOrderTotals[(lead as any).id] || 0}
               />
             ))
           )}

@@ -4,16 +4,18 @@ import { Lead } from "@/types";
 interface LeadCardProps {
   lead: Lead;
   onClick?: () => void;
+  changeOrderTotal?: number;
 }
 
-export default function LeadCard({ lead, onClick }: LeadCardProps) {
+export default function LeadCard({ lead, onClick, changeOrderTotal = 0 }: LeadCardProps) {
   const l = lead as any;
   const name = l.lead_name || l.first_name || "Unnamed Lead";
   const phone = l.phone || "No phone";
   const source = l.lead_sources?.name || l.source_email || l.metadata?.lead_source || "No source";
   const isClosedWon = l.status === "closed_won" || l.status === "won";
+  const initialContract = Number(l.initial_contract_value || l.closed_amount || 0);
   const value = isClosedWon
-    ? Number(l.initial_contract_value || l.closed_amount || 0)
+    ? initialContract + changeOrderTotal
     : Number(l.estimated_amount || l.initial_contract_value || 0);
   const createdAt = l.created_at || l.createdAt;
   const initials = name.split(" ").map((n: string) => n[0]).join("").slice(0, 2).toUpperCase();
@@ -35,9 +37,14 @@ export default function LeadCard({ lead, onClick }: LeadCardProps) {
           </div>
           <span className="text-sm font-semibold leading-tight">{name}</span>
         </div>
-        <span className="text-sm font-semibold text-emerald-600 shrink-0">
-          ${value.toLocaleString()}
-        </span>
+        <div className="text-right shrink-0">
+          <span className="text-sm font-semibold text-emerald-600">${value.toLocaleString()}</span>
+          {isClosedWon && changeOrderTotal > 0 && (
+            <p className="text-xs text-muted-foreground">
+              +${changeOrderTotal.toLocaleString()} CO
+            </p>
+          )}
+        </div>
       </div>
 
       <div className="space-y-1.5 text-xs text-muted-foreground">
