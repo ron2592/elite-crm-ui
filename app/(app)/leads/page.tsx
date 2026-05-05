@@ -33,6 +33,8 @@ export default function LeadsPage() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [selectedMonth, setSelectedMonth] = useState(now.getMonth());
   const [selectedYear, setSelectedYear] = useState(now.getFullYear());
+  const [viewAll, setViewAll] = useState(false);
+
   const isCurrentMonth = selectedMonth === now.getMonth() && selectedYear === now.getFullYear();
 
   function goToPrevMonth() {
@@ -62,7 +64,7 @@ export default function LeadsPage() {
     }));
     setAllLeads(normalizedLeads as Lead[]);
 
-    // Fetch won change order totals for all closed_won leads
+    // Fetch won change order totals for closed_won leads
     const closedWonIds = normalizedLeads
       .filter((l: any) => l.status === "closed_won")
       .map((l: any) => l.id);
@@ -107,18 +109,21 @@ export default function LeadsPage() {
     return () => { supabase.removeChannel(channel); };
   }, []);
 
-  // Filter leads by selected month
+  // Filter by month unless viewAll is on
   const monthStart = new Date(selectedYear, selectedMonth, 1);
   const monthEnd = new Date(selectedYear, selectedMonth + 1, 0, 23, 59, 59);
 
-  const leads = allLeads.filter((lead: any) => {
-    const received = new Date(lead.lead_received_at || lead.created_at);
-    return received >= monthStart && received <= monthEnd;
-  });
+  const leads = viewAll
+    ? allLeads
+    : allLeads.filter((lead: any) => {
+        const received = new Date(lead.lead_received_at || lead.created_at);
+        return received >= monthStart && received <= monthEnd;
+      });
 
   const handleLeadClick = (lead: Lead) => { setSelectedLead(lead); setDialogOpen(true); };
 
   const handleStageChange = async (leadId: string, newStatus: LeadStatus) => {
+    // Update locally across ALL leads regardless of month filter
     setAllLeads(prev => prev.map(l => (l as any).id === leadId ? { ...l, status: newStatus } : l));
     const { error } = await supabase.from("leads").update({ status: newStatus }).eq("id", leadId);
     if (error) { console.error("Failed to update lead status:", error.message); fetchLeads(); }
@@ -140,36 +145,64 @@ export default function LeadsPage() {
       return sum + initial + coTotal;
     }, 0);
 
+  const hiddenLeadsCount = allLeads.length - leads.length;
+
   return (
     <>
-      {/* Month selector */}
-      <div className="mb-4 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <button onClick={goToPrevMonth} className="flex h-8 w-8 items-center justify-center rounded-md border border-border hover:bg-muted transition-colors">
-            <ChevronLeft className="h-4 w-4" />
-          </button>
-          <div className="text-center min-w-[150px]">
-            <p className="font-semibold text-sm">{MONTH_NAMES[selectedMonth]} {selectedYear}</p>
-            {isCurrentMonth && <p className="text-xs text-muted-foreground">Current month</p>}
-          </div>
-          <button
-            onClick={goToNextMonth}
-            disabled={isCurrentMonth}
-            className="flex h-8 w-8 items-center justify-center rounded-md border border-border hover:bg-muted transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-          >
-            <ChevronRight className="h-4 w-4" />
-          </button>
-          {!isCurrentMonth && (
-            <button onClick={() => { setSelectedMonth(now.getMonth()); setSelectedYear(now.getFullYear()); }}
-              className="text-xs px-2.5 py-1 rounded-md bg-primary/10 text-primary hover:bg-primary/20 transition-colors font-medium">
-              Back to current
+      {/* Header row */}
+      <div className="mb-4 flex items-center justify-between flex-wrap gap-3">
+
+        {/* Month selector — hidden when viewAll is on */}
+        {!viewAll ? (
+          <div className="flex items-center gap-3">
+            <button onClick={goToPrevMonth} className="flex h-8 w-8 items-center justify-center rounded-md border border-border hover:bg-muted transition-colors">
+              <ChevronLeft className="h-4 w-4" />
             </button>
-          )}
-        </div>
+            <div className="text-center min-w-[150px]">
+              <p className="font-semibold text-sm">{MONTH_NAMES[selectedMonth]} {selectedYear}</p>
+              {isCurrentMonth && <p className="text-xs text-muted-foreground">Current month</p>}
+            </div>
+            <button
+              onClick={goToNextMonth}
+              disabled={isCurrentMonth}
+              className="flex h-8 w-8 items-center justify-center rounded-md border border-border hover:bg-muted transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+            >
+              <ChevronRight className="h-4 w-4" />
+            </button>
+            {!isCurrentMonth && (
+              <button onClick={() => { setSelectedMonth(now.getMonth()); setSelectedYear(now.getFullYear()); }}
+                className="text-xs px-2.5 py-1 rounded-md bg-primary/10 text-primary hover:bg-primary/20 transition-colors font-medium">
+                Back to current
+              </button>
+            )}
+          </div>
+        ) : (
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-semibold">All Leads</span>
+            <span className="text-xs text-muted-foreground">— all time</span>
+          </div>
+        )}
+
+        {/* Right side: stats + view all toggle */}
         <div className="flex items-center gap-3">
-          <span className="text-sm text-muted-foreground">{leads.length} leads this month</span>
+          <span className="text-sm text-muted-foreground">
+            {leads.length} lead{leads.length !== 1 ? "s" : ""}
+            {!viewAll && hiddenLeadsCount > 0 && (
+              <span className="text-amber-500 font-medium"> · {hiddenLeadsCount} outside this month</span>
+            )}
+          </span>
           <span className="text-sm text-muted-foreground">·</span>
           <span className="text-sm font-medium text-emerald-600">${pipelineValue.toLocaleString()} pipeline value</span>
+          <button
+            onClick={() => setViewAll(v => !v)}
+            className={`text-xs px-3 py-1.5 rounded-md border font-medium transition-colors ${
+              viewAll
+                ? "bg-primary text-primary-foreground border-primary"
+                : "border-border hover:bg-muted text-muted-foreground"
+            }`}
+          >
+            {viewAll ? "Viewing all" : "View all leads"}
+          </button>
         </div>
       </div>
 
