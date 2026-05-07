@@ -79,6 +79,7 @@ export default function KPIPage() {
 
   const [leads,    setLeads]    = useState<LeadRow[]>([]);
   const [payments, setPayments] = useState<PaymentRow[]>([]);
+  const [changeOrders, setChangeOrders] = useState<{ amount: number; lead_id: string }[]>([]);
   const [trend,    setTrend]    = useState<{ label: string; contracted: number; actual: number; leads: number }[]>([]);
   const [spend,    setSpend]    = useState<SpendRow[]>([]);
   const [sources,  setSources]  = useState<LeadSource[]>([]);
@@ -121,6 +122,21 @@ export default function KPIPage() {
       .select("id, name")
       .order("name");
 
+    // Won change orders for leads this month
+    const wonLeadIds = (leadsData || [])
+      .filter((l: any) => WON_STAGES.includes(l.status))
+      .map((l: any) => l.id);
+
+    let changeOrdersData: { amount: number; lead_id: string }[] = [];
+    if (wonLeadIds.length > 0) {
+      const { data: coData } = await supabase
+        .from("change_orders")
+        .select("amount, lead_id")
+        .eq("status", "won")
+        .in("lead_id", wonLeadIds);
+      changeOrdersData = coData || [];
+    }
+
     const trendStart = new Date(year, month - 5, 1).toISOString();
     const { data: trendLeads } = await supabase
       .from("leads")
@@ -157,6 +173,7 @@ export default function KPIPage() {
 
     setLeads((leadsData as any[]) || []);
     setPayments(paymentsData || []);
+    setChangeOrders(changeOrdersData);
     setSpend((spendData as any[]) || []);
     setSources(srcData || []);
     setTrend(Object.entries(trendMap).map(([label, v]) => ({ label, ...v })));
@@ -190,6 +207,20 @@ export default function KPIPage() {
     const lsaCredited  = filtered.filter(l => l.lsa_status === "credited").length;
     const appointments = filtered.filter(l => ["appointment_set","estimate_sent","closed_won","won","lost","cancelled_appointment"].includes(l.status)).length;
 
+    // Revenue breakdown
+    const initialContractVolume = won.reduce((s, l) => s + Number(l.initial_contract_value || 0), 0);
+    const changeOrderVolume = changeOrders.reduce((s, co) => s + Number(co.amount || 0), 0);
+    const totalContracted = initialContractVolume + changeOrderVolume;
+
+    // Acquisition & conversion metrics
+    const totalSpend = spend.reduce((s, r) => s + Number(r.amount_spent || 0), 0);
+    const costPerLead = lsaCharged > 0 ? totalSpend / lsaCharged : 0;
+    const jobAcquisitionCost = wonCount > 0 ? totalSpend / wonCount : 0;
+    const apptAcquisitionCost = inPerson > 0 ? totalSpend / inPerson : 0;
+    const jobConversionRatio = lsaCharged > 0 ? (wonCount / lsaCharged) * 100 : 0;
+    const salesClosingRatio = inPerson > 0 ? (wonInPerson / inPerson) * 100 : 0;
+    const apptConversionRatio = lsaCharged > 0 ? (inPerson / lsaCharged) * 100 : 0;
+
     // By source
     const bySrc: Record<string, { name: string; total: number; won: number; revenue: number; estimated: number }> = {};
     filtered.forEach(l => {
@@ -214,15 +245,15 @@ export default function KPIPage() {
       if (WON_STAGES.includes(l.status))  { bySP[sp].won++; bySP[sp].revenue += Number(l.initial_contract_value || 0); }
     });
 
-    const totalSpend = spend.reduce((s, r) => s + Number(r.amount_spent || 0), 0);
-    const costPerLead = lsaCharged > 0 ? totalSpend / lsaCharged : 0;
-
     return {
       total, estimated, inPerson, phoneQuote, wonCount, contracted, actual,
       wonInPerson, wonPhone, lsaCharged, lsaCredited, bySrc, bySP,
       totalSpend, costPerLead, appointments,
+      initialContractVolume, changeOrderVolume, totalContracted,
+      jobAcquisitionCost, apptAcquisitionCost,
+      jobConversionRatio, salesClosingRatio, apptConversionRatio,
     };
-  }, [filtered, payments, spend]);
+  }, [filtered, payments, spend, changeOrders]);
 
   // ── Week data ──────────────────────────────────────────────────────────────
   const weeklyData = useMemo(() => {
@@ -362,7 +393,56 @@ export default function KPIPage() {
             <MiniCard label="Rev / Lead"        value={kpi.wonCount ? fmt$(kpi.contracted / kpi.wonCount) : "—"} sub="avg contracted" />
           </div>
 
-          {/* ── Close rate breakdown ── */}
+          {/* ── Revenue Breakdown ── */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="rounded-lg border border-border p-4">
+              <p className="text-xs text-muted-foreground mb-1">Initial Contract Volume</p>
+              <p className="text-2xl font-bold">{fmt$(kpi.initialContractVolume)}</p>
+              <p className="text-xs text-muted-foreground mt-1">original signed agreements</p>
+            </div>
+            <div className="rounded-lg border border-border p-4">
+              <p className="text-xs text-muted-foreground mb-1">Change Order Volume</p>
+              <p className="text-2xl font-bold">{fmt$(kpi.changeOrderVolume)}</p>
+              <p className="text-xs text-muted-foreground mt-1">additional signed work</p>
+            </div>
+            <div className="rounded-lg border border-primary/30 bg-primary/5 p-4">
+              <p className="text-xs text-primary font-medium mb-1">Total Contracted Revenue</p>
+              <p className="text-2xl font-bold text-primary">{fmt$(kpi.totalContracted)}</p>
+              <p className="text-xs text-muted-foreground mt-1">initial + change orders</p>
+            </div>
+          </div>
+
+          {/* ── Acquisition & Conversion Metrics ── */}
+          <div className="rounded-lg border border-border p-4">
+            <p className="text-sm font-semibold mb-4">Acquisition &amp; Conversion Metrics — {monthLabel}</p>
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
+              <div className="space-y-1">
+                <p className="text-xs text-muted-foreground">Job Acquisition Cost</p>
+                <p className="text-xl font-bold">{kpi.jobAcquisitionCost > 0 ? fmt$(kpi.jobAcquisitionCost) : "—"}</p>
+                <p className="text-xs text-muted-foreground">LSA spend ÷ jobs closed</p>
+              </div>
+              <div className="space-y-1">
+                <p className="text-xs text-muted-foreground">Appt Acquisition Cost</p>
+                <p className="text-xl font-bold">{kpi.apptAcquisitionCost > 0 ? fmt$(kpi.apptAcquisitionCost) : "—"}</p>
+                <p className="text-xs text-muted-foreground">LSA spend ÷ in-person appts</p>
+              </div>
+              <div className="space-y-1">
+                <p className="text-xs text-muted-foreground">Job Conversion Ratio</p>
+                <p className="text-xl font-bold">{kpi.lsaCharged > 0 ? Math.round(kpi.jobConversionRatio) + "%" : "—"}</p>
+                <p className="text-xs text-muted-foreground">won jobs ÷ charged leads</p>
+              </div>
+              <div className="space-y-1">
+                <p className="text-xs text-muted-foreground">Sales Closing Ratio</p>
+                <p className="text-xl font-bold">{kpi.inPerson > 0 ? Math.round(kpi.salesClosingRatio) + "%" : "—"}</p>
+                <p className="text-xs text-muted-foreground">won ÷ in-person appts</p>
+              </div>
+              <div className="space-y-1">
+                <p className="text-xs text-muted-foreground">Appt Conversion Ratio</p>
+                <p className="text-xl font-bold">{kpi.lsaCharged > 0 ? Math.round(kpi.apptConversionRatio) + "%" : "—"}</p>
+                <p className="text-xs text-muted-foreground">in-person appts ÷ charged leads</p>
+              </div>
+            </div>
+          </div>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <CloseRateCard label="Overall Close Rate"      won={kpi.wonCount}    total={kpi.total}       sub={`${kpi.wonCount} won of ${kpi.total} leads`}    color="bg-primary" />
             <CloseRateCard label="In-Person Close Rate"    won={kpi.wonInPerson} total={kpi.inPerson}    sub={`${kpi.wonInPerson} won of ${kpi.inPerson} visits`} color="bg-purple-500" />
