@@ -10,7 +10,7 @@ import {
 import {
   ChevronLeft, ChevronRight, Users, Home, Phone,
   DollarSign, Target, TrendingUp, Plus, Save, X, Loader2,
-  LayoutDashboard, Printer,
+  LayoutDashboard, Printer, CalendarCheck,
 } from "lucide-react";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -188,6 +188,7 @@ export default function KPIPage() {
     const wonPhone     = filtered.filter(l => WON_STAGES.includes(l.status) && l.contact_type === "phone_quote").length;
     const lsaCharged   = filtered.filter(l => l.lsa_status === "charged" || l.lsa_status === "submitted").length;
     const lsaCredited  = filtered.filter(l => l.lsa_status === "credited").length;
+    const appointments = filtered.filter(l => ["appointment_set","estimate_sent","closed_won","won","lost","cancelled_appointment"].includes(l.status)).length;
 
     // By source
     const bySrc: Record<string, { name: string; total: number; won: number; revenue: number; estimated: number }> = {};
@@ -219,7 +220,7 @@ export default function KPIPage() {
     return {
       total, estimated, inPerson, phoneQuote, wonCount, contracted, actual,
       wonInPerson, wonPhone, lsaCharged, lsaCredited, bySrc, bySP,
-      totalSpend, costPerLead,
+      totalSpend, costPerLead, appointments,
     };
   }, [filtered, payments, spend]);
 
@@ -343,9 +344,10 @@ export default function KPIPage() {
       ) : (
         <>
           {/* ── Scorecards ── */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
             <ScoreCard icon={<Users className="h-4 w-4" />}  label="Total Leads"      value={kpi.total}            color="default" />
-            <ScoreCard icon={<Target className="h-4 w-4" />} label="Estimates Given"  value={kpi.estimated}        color="blue" />
+            <ScoreCard icon={<CalendarCheck className="h-4 w-4" />} label="Appointments" value={kpi.appointments}  color="blue" />
+            <ScoreCard icon={<Target className="h-4 w-4" />} label="Estimates Given"  value={kpi.estimated}        color="indigo" />
             <ScoreCard icon={<Home className="h-4 w-4" />}   label="In-Person Visits" value={kpi.inPerson}         color="purple" />
             <ScoreCard icon={<Phone className="h-4 w-4" />}  label="Phone Quotes"     value={kpi.phoneQuote}       color="orange" />
             <ScoreCard icon={<TrendingUp className="h-4 w-4" />} label="Closed Won"   value={kpi.wonCount}         color="green" />
@@ -663,11 +665,14 @@ export default function KPIPage() {
 function ScoreCard({ icon, label, value, color }: { icon: React.ReactNode; label: string; value: string | number; color: string }) {
   const colorMap: Record<string, string> = {
     default: "bg-muted/50", blue: "bg-blue-50 dark:bg-blue-950/20",
+    indigo: "bg-indigo-50 dark:bg-indigo-950/20",
     purple: "bg-purple-50 dark:bg-purple-950/20", orange: "bg-orange-50 dark:bg-orange-950/20",
     green: "bg-green-50 dark:bg-green-950/20", emerald: "bg-emerald-50 dark:bg-emerald-950/20",
   };
   const iconColorMap: Record<string, string> = {
-    default: "text-muted-foreground", blue: "text-blue-500", purple: "text-purple-500",
+    default: "text-muted-foreground", blue: "text-blue-500",
+    indigo: "text-indigo-500",
+    purple: "text-purple-500",
     orange: "text-orange-500", green: "text-green-600", emerald: "text-emerald-600",
   };
   return (
