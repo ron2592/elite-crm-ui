@@ -14,18 +14,20 @@ import {
   HardHat,
   BarChart2,
   LogOut,
+  Archive,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { supabase } from "@/lib/supabaseClient";
 
 const navItems = [
-  { href: "/dashboard",  label: "Dashboard",  icon: LayoutDashboard },
-  { href: "/leads",      label: "Leads",       icon: Users },
-  { href: "/production", label: "Production",  icon: HardHat },
-  { href: "/kpi",        label: "KPI",         icon: BarChart2 },
-  { href: "/calendar",   label: "Calendar",    icon: CalendarDays },
-  { href: "/tasks",      label: "Tasks",       icon: CheckSquare },
-  { href: "/activities", label: "Activities",  icon: Activity },
+  { href: "/dashboard",      label: "Dashboard",  icon: LayoutDashboard },
+  { href: "/leads",          label: "Leads",       icon: Users },
+  { href: "/leads/archived", label: "Archived",    icon: Archive },
+  { href: "/production",     label: "Production",  icon: HardHat },
+  { href: "/kpi",            label: "KPI",         icon: BarChart2 },
+  { href: "/calendar",       label: "Calendar",    icon: CalendarDays },
+  { href: "/tasks",          label: "Tasks",       icon: CheckSquare },
+  { href: "/activities",     label: "Activities",  icon: Activity },
 ];
 
 const bottomItems = [
