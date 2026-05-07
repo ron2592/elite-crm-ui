@@ -15,6 +15,7 @@ import {
   BarChart2,
   LogOut,
   Archive,
+  Upload,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { supabase } from "@/lib/supabaseClient";
@@ -23,7 +24,6 @@ const navItems = [
   { href: "/dashboard",      label: "Dashboard",  icon: LayoutDashboard },
   { href: "/leads",          label: "Leads",       icon: Users },
   { href: "/leads/archived", label: "Archived",    icon: Archive },
-  { href: "/leads/import", label: "Import", icon: Upload },
   { href: "/production",     label: "Production",  icon: HardHat },
   { href: "/kpi",            label: "KPI",         icon: BarChart2 },
   { href: "/calendar",       label: "Calendar",    icon: CalendarDays },
