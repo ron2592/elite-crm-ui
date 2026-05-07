@@ -266,7 +266,7 @@ export default function KPIPage() {
       const wLeads = filtered.filter(l => { const d = new Date(l.created_at); return d >= wStart && d < wEnd; });
       const wWon   = wLeads.filter(l => WON_STAGES.includes(l.status));
       weeks.push({
-        label: `Wk ${w + 1}`,
+        label: `${MONTHS[month].slice(0,3)} ${1 + w * 7}–${Math.min((w + 1) * 7, daysInMonth)}`,
         leads: wLeads.length,
         won: wWon.length,
         revenue: wWon.reduce((s, l) => s + Number(l.initial_contract_value || 0), 0),
