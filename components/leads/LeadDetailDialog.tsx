@@ -4,11 +4,7 @@ import { useState, useEffect } from "react";
 import { Lead } from "@/types";
 import { supabase } from "@/lib/supabaseClient";
 import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
 } from "@/components/ui/dialog";
 import { Phone, Mail, MapPin, Calendar, DollarSign, Save, Plus, X, Pencil, Archive, ChevronDown, ChevronUp, Trash2 } from "lucide-react";
 
@@ -17,6 +13,15 @@ const statusLabels: Record<string, string> = {
   appointment_set: "Appointment Set", estimate_sent: "Estimate Sent",
   closed_won: "Closed Won", won: "Closed Won", closed_lost: "Cancelled Appt",
   cancelled_appointment: "Cancelled Appt", lost: "Lost", not_qualified: "Not Qualified",
+};
+
+// LSA status config — label + Tailwind classes for the inline card
+const LSA_STATUS_CONFIG: Record<string, { label: string; classes: string }> = {
+  charged:     { label: "Charged",     classes: "bg-emerald-100 text-emerald-700" },
+  submitted:   { label: "Submitted",   classes: "bg-yellow-100 text-yellow-700" },
+  credited:    { label: "Credited",    classes: "bg-orange-100 text-orange-700" },
+  not_charged: { label: "Not Charged", classes: "bg-gray-100 text-gray-500" },
+  in_review:   { label: "In Review",   classes: "bg-blue-100 text-blue-700" },
 };
 
 const PAYMENT_TYPES = ["Deposit", "Progress Payment", "Final", "Installment"];
@@ -31,19 +36,9 @@ function formatPhone(value: string) {
   return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`;
 }
 
-interface Payment {
-  id: string; amount: number; payment_type: string;
-  payment_method: string; paid_at: string; notes: string;
-}
-interface ChangeOrder {
-  id: string; order_number: number; description: string; job_type: string;
-  amount: number; status: "pending" | "won" | "lost"; signed_at: string | null;
-  payments: ChangeOrderPayment[];
-}
-interface ChangeOrderPayment {
-  id: string; amount: number; payment_type: string;
-  payment_method: string; paid_at: string; notes: string;
-}
+interface Payment { id: string; amount: number; payment_type: string; payment_method: string; paid_at: string; notes: string; }
+interface ChangeOrder { id: string; order_number: number; description: string; job_type: string; amount: number; status: "pending" | "won" | "lost"; signed_at: string | null; payments: ChangeOrderPayment[]; }
+interface ChangeOrderPayment { id: string; amount: number; payment_type: string; payment_method: string; paid_at: string; notes: string; }
 interface LeadDetailDialogProps {
   lead: Lead | null; open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -52,9 +47,7 @@ interface LeadDetailDialogProps {
   onLeadDeleted?: () => void;
 }
 
-export default function LeadDetailDialog({
-  lead, open, onOpenChange, onStageChange, onLeadUpdated, onLeadDeleted,
-}: LeadDetailDialogProps) {
+export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChange, onLeadUpdated, onLeadDeleted }: LeadDetailDialogProps) {
   const [estimatedAmount, setEstimatedAmount] = useState("");
   const [contractValue, setContractValue] = useState("");
   const [initialContractDescription, setInitialContractDescription] = useState("");
@@ -80,11 +73,49 @@ export default function LeadDetailDialog({
   const [showAddCOPayment, setShowAddCOPayment] = useState<string | null>(null);
   const [newCOPayment, setNewCOPayment] = useState({ amount: "", payment_type: "Deposit", payment_method: "Cash", paid_at: new Date().toISOString().split("T")[0], notes: "" });
   const [addingCOPayment, setAddingCOPayment] = useState(false);
+  const [appointmentAt, setAppointmentAt] = useState("");
+  const [appointmentNotes, setAppointmentNotes] = useState("");
+  const [savingAppointment, setSavingAppointment] = useState(false);
+  const [savedAppointment, setSavedAppointment] = useState(false);
+  const [reasonLost, setReasonLost] = useState("");
+  const [savingReasonLost, setSavingReasonLost] = useState(false);
+  const [savedReasonLost, setSavedReasonLost] = useState(false);
+  const [currentStatus, setCurrentStatus] = useState<string>((lead as any)?.status || "new");
+  // Inline salesperson state
+  const [inlineSalesperson, setInlineSalesperson] = useState<string>("");
+  const [savingInlineSalesperson, setSavingInlineSalesperson] = useState(false);
+  // ── NEW: LSA status + contact type ──────────────────────────────────────
+  const [lsaStatus, setLsaStatus] = useState<string>("not_charged");
+  const [savingLsaStatus, setSavingLsaStatus] = useState(false);
+  const [contactType, setContactType] = useState<string>("");
+  const [savingContactType, setSavingContactType] = useState(false);
+  // ────────────────────────────────────────────────────────────────────────
 
   const leadId = (lead as any)?.id;
 
   useEffect(() => {
-    if (open && leadId) { fetchPayments(); fetchLeadSources(); fetchChangeOrders(); }
+    if (lead) {
+      const raw = lead as any;
+      setCurrentStatus(raw.status || "new");
+      setInlineSalesperson(raw.metadata?.salesperson || "");
+      // Load new fields
+      setLsaStatus(raw.lsa_status || "not_charged");
+      setContactType(raw.contact_type || "");
+    }
+  }, [lead]);
+
+  useEffect(() => {
+    if (open && leadId) {
+      fetchPayments(); fetchLeadSources(); fetchChangeOrders();
+      const raw = lead as any;
+      if (raw?.appointment_at) {
+        const d = new Date(raw.appointment_at);
+        const local = new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+        setAppointmentAt(local);
+      }
+      if (raw?.appointment_notes) setAppointmentNotes(raw.appointment_notes);
+      if (raw?.metadata?.reason_lost) setReasonLost(raw.metadata.reason_lost);
+    }
   }, [open, leadId]);
 
   useEffect(() => {
@@ -134,15 +165,50 @@ export default function LeadDetailDialog({
   const address = l.address_line_1 ? `${l.address_line_1}${l.city ? ", " + l.city : ""}${l.state ? ", " + l.state : ""}` : "No address";
   const source = l.lead_sources?.name || l.source_email || l.metadata?.lead_source || "No source";
   const jobType = l.metadata?.job_type || "";
-  const salesperson = l.metadata?.salesperson || "";
   const notes = l.metadata?.notes || "";
   const createdAt = l.created_at;
-  const status = l.status || "new";
   const currentEstimated = Number(l.estimated_amount || 0);
   const currentContract = contractValue !== "" ? Number(contractValue) : Number(l.initial_contract_value || 0);
   const totalCollected = payments.reduce((sum, p) => sum + Number(p.amount), 0);
   const balance = currentContract > 0 ? currentContract - totalCollected : 0;
   const isFinancing = payments.some(p => p.payment_method === "Sunlight Financial" || p.payment_method === "Upgrade");
+
+  const isAppointmentStage = ["appointment_set", "cancelled_appointment", "closed_lost"].includes(currentStatus);
+  const isEstimateSent = currentStatus === "estimate_sent";
+  const isClosedWon = ["closed_won", "won"].includes(currentStatus);
+  const isLost = currentStatus === "lost";
+  const showFullContract = isClosedWon || isLost;
+  // Show contact_type toggle from estimate_sent onward
+  const showContactType = isEstimateSent || showFullContract;
+
+  // ── NEW handlers ─────────────────────────────────────────────────────────
+  const handleLsaStatusChange = async (val: string) => {
+    setLsaStatus(val);
+    setSavingLsaStatus(true);
+    await supabase.from("leads").update({ lsa_status: val }).eq("id", leadId);
+    setSavingLsaStatus(false);
+    if (onLeadUpdated) onLeadUpdated(leadId);
+  };
+
+  const handleContactTypeChange = async (val: string) => {
+    // Toggle off if already selected
+    const next = contactType === val ? "" : val;
+    setContactType(next);
+    setSavingContactType(true);
+    await supabase.from("leads").update({ contact_type: next || null }).eq("id", leadId);
+    setSavingContactType(false);
+    if (onLeadUpdated) onLeadUpdated(leadId);
+  };
+  // ─────────────────────────────────────────────────────────────────────────
+
+  // Inline salesperson save
+  const handleInlineSalespersonChange = async (val: string) => {
+    setInlineSalesperson(val);
+    setSavingInlineSalesperson(true);
+    await supabase.from("leads").update({ metadata: { ...l.metadata, salesperson: val || null } }).eq("id", leadId);
+    setSavingInlineSalesperson(false);
+    if (onLeadUpdated) onLeadUpdated(leadId);
+  };
 
   const handleSaveAmounts = async () => {
     setSaving(true);
@@ -154,6 +220,14 @@ export default function LeadDetailDialog({
     setSaving(false); setSaved(true); setTimeout(() => setSaved(false), 2000);
   };
 
+  const handleSaveEstimate = async () => {
+    if (!estimatedAmount) return;
+    setSaving(true);
+    await supabase.from("leads").update({ estimated_amount: Number(estimatedAmount) }).eq("id", leadId);
+    setSaving(false); setSaved(true); setTimeout(() => setSaved(false), 2000);
+    if (onLeadUpdated) onLeadUpdated(leadId);
+  };
+
   const handleSaveEdit = async () => {
     setEditSaving(true);
     const fullName = `${editFields.first_name} ${editFields.last_name}`.trim();
@@ -162,6 +236,7 @@ export default function LeadDetailDialog({
     const { error } = await supabase.from("leads").update(updates).eq("id", leadId);
     setEditSaving(false);
     if (error) { alert("Failed to save: " + error.message); return; }
+    setInlineSalesperson(editFields.salesperson || "");
     setEditMode(false); setSaveEditSuccess(true); setTimeout(() => setSaveEditSuccess(false), 3000);
     if (onLeadUpdated) onLeadUpdated(leadId);
   };
@@ -230,8 +305,38 @@ export default function LeadDetailDialog({
     await fetchChangeOrders();
   };
 
+  const handleSaveAppointment = async () => {
+    if (!appointmentAt) return;
+    setSavingAppointment(true);
+    const isoDate = new Date(appointmentAt).toISOString();
+    await supabase.from("leads").update({ appointment_at: isoDate, appointment_notes: appointmentNotes || null }).eq("id", leadId);
+    setSavingAppointment(false); setSavedAppointment(true);
+    setTimeout(() => setSavedAppointment(false), 2000);
+    if (onLeadUpdated) onLeadUpdated(leadId);
+  };
+
+  const handleSaveReasonLost = async () => {
+    setSavingReasonLost(true);
+    await supabase.from("leads").update({ metadata: { ...l.metadata, reason_lost: reasonLost || null } }).eq("id", leadId);
+    setSavingReasonLost(false); setSavedReasonLost(true);
+    setTimeout(() => setSavedReasonLost(false), 2000);
+  };
+
+  const handleStageChange = (newStage: string) => {
+    setCurrentStatus(newStage);
+    if (onStageChange) onStageChange(leadId, newStage);
+  };
+
   const handleOpen = (val: boolean) => {
-    if (!val) { setEstimatedAmount(""); setContractValue(""); setInitialContractDescription(""); setSaved(false); setShowAddPayment(false); setEditMode(false); setSaveEditSuccess(false); setShowAddChangeOrder(false); setShowAddCOPayment(null); }
+    if (!val) {
+      setEstimatedAmount(""); setContractValue(""); setInitialContractDescription("");
+      setSaved(false); setShowAddPayment(false); setEditMode(false);
+      setSaveEditSuccess(false); setShowAddChangeOrder(false); setShowAddCOPayment(null);
+      setAppointmentAt(""); setAppointmentNotes(""); setSavedAppointment(false);
+      setReasonLost(""); setSavedReasonLost(false);
+      // Reset new fields
+      setLsaStatus("not_charged"); setContactType("");
+    }
     onOpenChange(val);
   };
 
@@ -240,6 +345,39 @@ export default function LeadDetailDialog({
   };
 
   const coStatusColors: Record<string, string> = { pending: "bg-yellow-100 text-yellow-700", won: "bg-emerald-100 text-emerald-700", lost: "bg-red-100 text-red-600" };
+
+  // ── Contact type toggle — reusable UI block ──────────────────────────────
+  const ContactTypeToggle = () => (
+    <div className="rounded-lg border border-border p-3 space-y-2">
+      <div className="flex items-center justify-between">
+        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Contact Type</p>
+        {savingContactType && <span className="text-xs text-blue-400">saving...</span>}
+      </div>
+      <div className="flex gap-2">
+        <button
+          onClick={() => handleContactTypeChange("in_person")}
+          className={`flex-1 text-xs px-3 py-2 rounded-md border font-medium transition-colors ${
+            contactType === "in_person"
+              ? "bg-primary text-primary-foreground border-primary"
+              : "border-border hover:bg-muted text-muted-foreground"
+          }`}
+        >
+          🏠 In-Person Visit
+        </button>
+        <button
+          onClick={() => handleContactTypeChange("phone_quote")}
+          className={`flex-1 text-xs px-3 py-2 rounded-md border font-medium transition-colors ${
+            contactType === "phone_quote"
+              ? "bg-primary text-primary-foreground border-primary"
+              : "border-border hover:bg-muted text-muted-foreground"
+          }`}
+        >
+          📞 Phone Quote
+        </button>
+      </div>
+    </div>
+  );
+  // ─────────────────────────────────────────────────────────────────────────
 
   return (
     <Dialog open={open} onOpenChange={handleOpen}>
@@ -310,155 +448,265 @@ export default function LeadDetailDialog({
           {/* STATUS CARDS */}
           {!editMode && (
             <div className="grid grid-cols-2 gap-3">
-              <div className="rounded-lg bg-muted/50 p-3"><p className="text-xs text-muted-foreground mb-1">Status</p><p className="font-semibold text-sm">{statusLabels[status] || status}</p></div>
-              {salesperson && <div className="rounded-lg bg-muted/50 p-3"><p className="text-xs text-muted-foreground mb-1">Salesperson</p><p className="font-semibold text-sm">{salesperson}</p></div>}
-              {jobType && <div className="rounded-lg bg-muted/50 p-3"><p className="text-xs text-muted-foreground mb-1">Job Type</p><p className="font-semibold text-sm">{jobType}</p></div>}
+              {/* Status */}
+              <div className="rounded-lg bg-muted/50 p-3">
+                <p className="text-xs text-muted-foreground mb-1">Status</p>
+                <p className="font-semibold text-sm">{statusLabels[currentStatus] || currentStatus}</p>
+              </div>
+
+              {/* Salesperson inline dropdown */}
+              <div className="rounded-lg bg-muted/50 p-3">
+                <p className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
+                  Salesperson {savingInlineSalesperson && <span className="text-blue-400 text-xs">saving...</span>}
+                </p>
+                <select
+                  value={inlineSalesperson}
+                  onChange={(e) => handleInlineSalespersonChange(e.target.value)}
+                  className="w-full bg-transparent font-semibold text-sm focus:outline-none cursor-pointer"
+                >
+                  <option value="">Not assigned</option>
+                  {SALESPERSONS.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </div>
+
+              {/* ── NEW: LSA Status inline dropdown ── */}
+              <div className="rounded-lg bg-muted/50 p-3">
+                <p className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
+                  LSA Status {savingLsaStatus && <span className="text-blue-400 text-xs">saving...</span>}
+                </p>
+                <div className="flex items-center gap-2">
+                  <select
+                    value={lsaStatus}
+                    onChange={(e) => handleLsaStatusChange(e.target.value)}
+                    className="w-full bg-transparent font-semibold text-sm focus:outline-none cursor-pointer"
+                  >
+                    {Object.entries(LSA_STATUS_CONFIG).map(([val, cfg]) => (
+                      <option key={val} value={val}>{cfg.label}</option>
+                    ))}
+                  </select>
+                  {lsaStatus && (
+                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium whitespace-nowrap ${LSA_STATUS_CONFIG[lsaStatus]?.classes || ""}`}>
+                      {LSA_STATUS_CONFIG[lsaStatus]?.label}
+                    </span>
+                  )}
+                </div>
+              </div>
+              {/* ─────────────────────────────────────── */}
+
+              {jobType && (
+                <div className="rounded-lg bg-muted/50 p-3">
+                  <p className="text-xs text-muted-foreground mb-1">Job Type</p>
+                  <p className="font-semibold text-sm">{jobType}</p>
+                </div>
+              )}
+              {source && source !== "No source" && (
+                <div className="rounded-lg bg-muted/50 p-3">
+                  <p className="text-xs text-muted-foreground mb-1">Lead Source</p>
+                  <p className="font-semibold text-sm">{source}</p>
+                </div>
+              )}
             </div>
           )}
 
-          {/* INITIAL CONTRACT */}
-          <div className="rounded-lg border border-border p-4 space-y-3">
-            <div className="flex items-center justify-between">
-              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1"><DollarSign className="h-3 w-3" /> Initial Contract</p>
-              {jobType && <span className="text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 font-medium">{jobType}</span>}
+          {/* APPOINTMENT PICKER */}
+          {!editMode && isAppointmentStage && (
+            <div className="rounded-lg border border-blue-200 bg-blue-50/50 dark:bg-blue-950/20 p-4 space-y-3">
+              <p className="text-xs font-semibold text-blue-700 uppercase tracking-wide flex items-center gap-1">
+                <Calendar className="h-3 w-3" /> Appointment
+              </p>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs text-muted-foreground block mb-1">Date &amp; Time</label>
+                  <input type="datetime-local" value={appointmentAt} onChange={(e) => setAppointmentAt(e.target.value)} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400/40" />
+                </div>
+                <div>
+                  <label className="text-xs text-muted-foreground block mb-1">Notes</label>
+                  <input type="text" placeholder="e.g. Meet at front door" value={appointmentNotes} onChange={(e) => setAppointmentNotes(e.target.value)} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400/40" />
+                </div>
+              </div>
+              <button onClick={handleSaveAppointment} disabled={savingAppointment || !appointmentAt} className="w-full flex items-center justify-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+                <Save className="h-4 w-4" />{savingAppointment ? "Saving..." : savedAppointment ? "Saved ✓" : "Save Appointment"}
+              </button>
             </div>
-            {l.metadata?.initial_contract_description && <p className="text-xs text-muted-foreground italic">{l.metadata.initial_contract_description}</p>}
-            <div className="grid grid-cols-2 gap-3">
-              <div><label className="text-xs text-muted-foreground mb-1 block">Estimated Amount <span className="text-foreground font-medium">(${currentEstimated.toLocaleString()})</span></label><input type="number" placeholder={String(currentEstimated)} value={estimatedAmount} onChange={(e) => setEstimatedAmount(e.target.value)} className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" /></div>
-              <div><label className="text-xs text-muted-foreground mb-1 block">Contract Value <span className="text-foreground font-medium">(${Number(l.initial_contract_value || 0).toLocaleString()})</span></label><input type="number" placeholder={String(Number(l.initial_contract_value || 0))} value={contractValue} onChange={(e) => setContractValue(e.target.value)} className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" /></div>
-            </div>
-            <div><label className="text-xs text-muted-foreground mb-1 block">Description</label><input type="text" placeholder={l.metadata?.initial_contract_description || "e.g. Full roof replacement, 28 squares..."} value={initialContractDescription} onChange={(e) => setInitialContractDescription(e.target.value)} className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" /></div>
-            <button onClick={handleSaveAmounts} disabled={saving || (estimatedAmount === "" && contractValue === "" && initialContractDescription === "")} className="w-full flex items-center justify-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"><Save className="h-4 w-4" />{saving ? "Saving..." : saved ? "Saved ✓" : "Save Contract"}</button>
+          )}
 
-            <div className="space-y-2 pt-1">
+          {/* ESTIMATE + CONTACT TYPE */}
+          {!editMode && isEstimateSent && (
+            <div className="rounded-lg border border-border p-4 space-y-3">
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1"><DollarSign className="h-3 w-3" /> Estimate</p>
+              {/* ── NEW: Contact Type toggle ── */}
+              <ContactTypeToggle />
+              {/* ──────────────────────────── */}
+              <div>
+                <label className="text-xs text-muted-foreground mb-1 block">Estimated Amount <span className="text-foreground font-medium">(${currentEstimated.toLocaleString()})</span></label>
+                <input type="number" placeholder={String(currentEstimated)} value={estimatedAmount} onChange={(e) => setEstimatedAmount(e.target.value)} className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" />
+              </div>
+              <button onClick={handleSaveEstimate} disabled={saving || estimatedAmount === ""} className="w-full flex items-center justify-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+                <Save className="h-4 w-4" />{saving ? "Saving..." : saved ? "Saved ✓" : "Save Estimate"}
+              </button>
+            </div>
+          )}
+
+          {/* FULL CONTRACT */}
+          {!editMode && showFullContract && (
+            <div className="rounded-lg border border-border p-4 space-y-3">
               <div className="flex items-center justify-between">
-                <p className="text-xs font-medium text-muted-foreground">Payments</p>
-                <button onClick={() => setShowAddPayment(!showAddPayment)} className="flex items-center gap-1 text-xs text-primary hover:underline font-medium"><Plus className="h-3 w-3" /> Add Payment</button>
+                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1"><DollarSign className="h-3 w-3" /> Initial Contract</p>
+                {jobType && <span className="text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 font-medium">{jobType}</span>}
               </div>
-              <div className="grid grid-cols-3 gap-2 text-center">
-                <div className="rounded-md bg-muted/50 p-2"><p className="text-xs text-muted-foreground">Contract</p><p className="font-bold text-sm">${currentContract.toLocaleString()}</p></div>
-                <div className="rounded-md bg-emerald-500/10 p-2"><p className="text-xs text-muted-foreground">Collected</p><p className="font-bold text-sm text-emerald-600">${totalCollected.toLocaleString()}</p></div>
-                <div className={`rounded-md p-2 ${balance > 0 ? "bg-red-500/10" : "bg-emerald-500/10"}`}><p className="text-xs text-muted-foreground">Balance</p><p className={`font-bold text-sm ${balance > 0 ? "text-red-500" : "text-emerald-600"}`}>${balance.toLocaleString()}</p></div>
+              {/* ── NEW: Contact Type toggle (also visible in full contract) ── */}
+              <ContactTypeToggle />
+              {/* ─────────────────────────────────────────────────────────────── */}
+              {l.metadata?.initial_contract_description && <p className="text-xs text-muted-foreground italic">{l.metadata.initial_contract_description}</p>}
+              <div className="grid grid-cols-2 gap-3">
+                <div><label className="text-xs text-muted-foreground mb-1 block">Estimated Amount <span className="text-foreground font-medium">(${currentEstimated.toLocaleString()})</span></label><input type="number" placeholder={String(currentEstimated)} value={estimatedAmount} onChange={(e) => setEstimatedAmount(e.target.value)} className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" /></div>
+                <div><label className="text-xs text-muted-foreground mb-1 block">Contract Value <span className="text-foreground font-medium">(${Number(l.initial_contract_value || 0).toLocaleString()})</span></label><input type="number" placeholder={String(Number(l.initial_contract_value || 0))} value={contractValue} onChange={(e) => setContractValue(e.target.value)} className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" /></div>
               </div>
-              {showAddPayment && (
-                <div className="rounded-md border border-border p-3 space-y-2 bg-muted/20">
-                  <p className="text-xs font-semibold">New Payment</p>
-                  <div className="grid grid-cols-2 gap-2">
-                    <div><label className="text-xs text-muted-foreground block mb-1">Amount</label><input type="number" placeholder="0" value={newPayment.amount} onChange={(e) => setNewPayment({ ...newPayment, amount: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" /></div>
-                    <div><label className="text-xs text-muted-foreground block mb-1">Date</label><input type="date" value={newPayment.paid_at} onChange={(e) => setNewPayment({ ...newPayment, paid_at: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" /></div>
+              <div><label className="text-xs text-muted-foreground mb-1 block">Description</label><input type="text" placeholder={l.metadata?.initial_contract_description || "e.g. Full roof replacement, 28 squares..."} value={initialContractDescription} onChange={(e) => setInitialContractDescription(e.target.value)} className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" /></div>
+              <button onClick={handleSaveAmounts} disabled={saving || (estimatedAmount === "" && contractValue === "" && initialContractDescription === "")} className="w-full flex items-center justify-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"><Save className="h-4 w-4" />{saving ? "Saving..." : saved ? "Saved ✓" : "Save Contract"}</button>
+              <div className="space-y-2 pt-1">
+                <div className="flex items-center justify-between">
+                  <p className="text-xs font-medium text-muted-foreground">Payments</p>
+                  <button onClick={() => setShowAddPayment(!showAddPayment)} className="flex items-center gap-1 text-xs text-primary hover:underline font-medium"><Plus className="h-3 w-3" /> Add Payment</button>
+                </div>
+                <div className="grid grid-cols-3 gap-2 text-center">
+                  <div className="rounded-md bg-muted/50 p-2"><p className="text-xs text-muted-foreground">Contract</p><p className="font-bold text-sm">${currentContract.toLocaleString()}</p></div>
+                  <div className="rounded-md bg-emerald-500/10 p-2"><p className="text-xs text-muted-foreground">Collected</p><p className="font-bold text-sm text-emerald-600">${totalCollected.toLocaleString()}</p></div>
+                  <div className={`rounded-md p-2 ${balance > 0 ? "bg-red-500/10" : "bg-emerald-500/10"}`}><p className="text-xs text-muted-foreground">Balance</p><p className={`font-bold text-sm ${balance > 0 ? "text-red-500" : "text-emerald-600"}`}>${balance.toLocaleString()}</p></div>
+                </div>
+                {showAddPayment && (
+                  <div className="rounded-md border border-border p-3 space-y-2 bg-muted/20">
+                    <p className="text-xs font-semibold">New Payment</p>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div><label className="text-xs text-muted-foreground block mb-1">Amount</label><input type="number" placeholder="0" value={newPayment.amount} onChange={(e) => setNewPayment({ ...newPayment, amount: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" /></div>
+                      <div><label className="text-xs text-muted-foreground block mb-1">Date</label><input type="date" value={newPayment.paid_at} onChange={(e) => setNewPayment({ ...newPayment, paid_at: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" /></div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div><label className="text-xs text-muted-foreground block mb-1">Type</label><select value={newPayment.payment_type} onChange={(e) => setNewPayment({ ...newPayment, payment_type: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40">{PAYMENT_TYPES.map(t => <option key={t}>{t}</option>)}</select></div>
+                      <div><label className="text-xs text-muted-foreground block mb-1">Method</label><select value={newPayment.payment_method} onChange={(e) => setNewPayment({ ...newPayment, payment_method: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40">{PAYMENT_METHODS.map(m => <option key={m}>{m}</option>)}</select></div>
+                    </div>
+                    <input type="text" placeholder="Notes (optional)" value={newPayment.notes} onChange={(e) => setNewPayment({ ...newPayment, notes: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" />
+                    <div className="flex gap-2">
+                      <button onClick={handleAddPayment} disabled={addingPayment || !newPayment.amount} className="flex-1 rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-40 transition-colors">{addingPayment ? "Saving..." : "Save Payment"}</button>
+                      <button onClick={() => setShowAddPayment(false)} className="rounded-md border border-border px-3 py-1.5 text-xs hover:bg-muted transition-colors">Cancel</button>
+                    </div>
                   </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    <div><label className="text-xs text-muted-foreground block mb-1">Type</label><select value={newPayment.payment_type} onChange={(e) => setNewPayment({ ...newPayment, payment_type: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40">{PAYMENT_TYPES.map(t => <option key={t}>{t}</option>)}</select></div>
-                    <div><label className="text-xs text-muted-foreground block mb-1">Method</label><select value={newPayment.payment_method} onChange={(e) => setNewPayment({ ...newPayment, payment_method: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40">{PAYMENT_METHODS.map(m => <option key={m}>{m}</option>)}</select></div>
+                )}
+                {payments.length > 0 ? (
+                  <div className="space-y-1.5">
+                    {payments.map((payment) => (
+                      <div key={payment.id} className={`rounded-md border p-2.5 flex items-center justify-between ${payment.payment_method === "Sunlight Financial" || payment.payment_method === "Upgrade" ? "border-orange-300 bg-orange-50 dark:bg-orange-950/20" : "border-border bg-muted/20"}`}>
+                        <div>
+                          <div className="flex items-center gap-2"><span className="text-sm font-bold text-emerald-600">${Number(payment.amount).toLocaleString()}</span><span className="text-xs px-1.5 py-0.5 rounded bg-secondary text-secondary-foreground">{payment.payment_type}</span><span className={`text-xs px-1.5 py-0.5 rounded ${payment.payment_method === "Sunlight Financial" || payment.payment_method === "Upgrade" ? "bg-orange-100 text-orange-700" : "bg-secondary text-secondary-foreground"}`}>{payment.payment_method}</span></div>
+                          <p className="text-xs text-muted-foreground mt-0.5">{new Date(payment.paid_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}{payment.notes && ` · ${payment.notes}`}</p>
+                        </div>
+                        <button onClick={() => handleDeletePayment(payment.id, Number(payment.amount))} className="text-muted-foreground hover:text-red-500 transition-colors ml-2"><X className="h-3.5 w-3.5" /></button>
+                      </div>
+                    ))}
                   </div>
-                  <input type="text" placeholder="Notes (optional)" value={newPayment.notes} onChange={(e) => setNewPayment({ ...newPayment, notes: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" />
+                ) : <p className="text-xs text-muted-foreground text-center py-1">No payments recorded yet</p>}
+              </div>
+            </div>
+          )}
+
+          {/* CHANGE ORDERS */}
+          {!editMode && showFullContract && (
+            <>
+              {changeOrders.map((co) => {
+                const coCollected = co.payments.reduce((sum, p) => sum + Number(p.amount), 0);
+                const coBalance = Number(co.amount) - coCollected;
+                const isExpanded = expandedChangeOrders.has(co.id);
+                return (
+                  <div key={co.id} className="rounded-lg border border-border p-4 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Change Order #{co.order_number}</p>
+                        <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${coStatusColors[co.status]}`}>{co.status.charAt(0).toUpperCase() + co.status.slice(1)}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <select value={co.status} onChange={(e) => handleUpdateCOStatus(co.id, e.target.value as any)} className="text-xs rounded-md border border-border bg-background px-2 py-1 focus:outline-none focus:ring-2 focus:ring-primary/40"><option value="pending">Pending</option><option value="won">Won</option><option value="lost">Lost</option></select>
+                        <button onClick={() => toggleCOExpand(co.id)} className="text-muted-foreground hover:text-foreground transition-colors">{isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}</button>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3 flex-wrap">
+                      {co.job_type && <span className="text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 font-medium">{co.job_type}</span>}
+                      {co.description && <span className="text-xs text-muted-foreground">{co.description}</span>}
+                      <span className="text-sm font-bold ml-auto">${Number(co.amount).toLocaleString()}</span>
+                    </div>
+                    {isExpanded && (
+                      <div className="space-y-2 pt-1">
+                        <div className="grid grid-cols-3 gap-2 text-center">
+                          <div className="rounded-md bg-muted/50 p-2"><p className="text-xs text-muted-foreground">Contract</p><p className="font-bold text-sm">${Number(co.amount).toLocaleString()}</p></div>
+                          <div className="rounded-md bg-emerald-500/10 p-2"><p className="text-xs text-muted-foreground">Collected</p><p className="font-bold text-sm text-emerald-600">${coCollected.toLocaleString()}</p></div>
+                          <div className={`rounded-md p-2 ${coBalance > 0 ? "bg-red-500/10" : "bg-emerald-500/10"}`}><p className="text-xs text-muted-foreground">Balance</p><p className={`font-bold text-sm ${coBalance > 0 ? "text-red-500" : "text-emerald-600"}`}>${coBalance.toLocaleString()}</p></div>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <p className="text-xs font-medium text-muted-foreground">Payment History</p>
+                          {co.status === "won" && <button onClick={() => setShowAddCOPayment(showAddCOPayment === co.id ? null : co.id)} className="flex items-center gap-1 text-xs text-primary hover:underline font-medium"><Plus className="h-3 w-3" /> Add Payment</button>}
+                        </div>
+                        {showAddCOPayment === co.id && (
+                          <div className="rounded-md border border-border p-3 space-y-2 bg-muted/20">
+                            <div className="grid grid-cols-2 gap-2">
+                              <div><label className="text-xs text-muted-foreground block mb-1">Amount</label><input type="number" placeholder="0" value={newCOPayment.amount} onChange={(e) => setNewCOPayment({ ...newCOPayment, amount: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" /></div>
+                              <div><label className="text-xs text-muted-foreground block mb-1">Date</label><input type="date" value={newCOPayment.paid_at} onChange={(e) => setNewCOPayment({ ...newCOPayment, paid_at: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" /></div>
+                            </div>
+                            <div className="grid grid-cols-2 gap-2">
+                              <div><label className="text-xs text-muted-foreground block mb-1">Type</label><select value={newCOPayment.payment_type} onChange={(e) => setNewCOPayment({ ...newCOPayment, payment_type: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40">{PAYMENT_TYPES.map(t => <option key={t}>{t}</option>)}</select></div>
+                              <div><label className="text-xs text-muted-foreground block mb-1">Method</label><select value={newCOPayment.payment_method} onChange={(e) => setNewCOPayment({ ...newCOPayment, payment_method: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40">{PAYMENT_METHODS.map(m => <option key={m}>{m}</option>)}</select></div>
+                            </div>
+                            <input type="text" placeholder="Notes (optional)" value={newCOPayment.notes} onChange={(e) => setNewCOPayment({ ...newCOPayment, notes: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" />
+                            <div className="flex gap-2">
+                              <button onClick={() => handleAddCOPayment(co.id)} disabled={addingCOPayment || !newCOPayment.amount} className="flex-1 rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-40 transition-colors">{addingCOPayment ? "Saving..." : "Save Payment"}</button>
+                              <button onClick={() => setShowAddCOPayment(null)} className="rounded-md border border-border px-3 py-1.5 text-xs hover:bg-muted transition-colors">Cancel</button>
+                            </div>
+                          </div>
+                        )}
+                        {co.payments.length > 0 ? (
+                          <div className="space-y-1.5">
+                            {co.payments.map((p) => (
+                              <div key={p.id} className="rounded-md border border-border bg-muted/20 p-2.5 flex items-center justify-between">
+                                <div>
+                                  <div className="flex items-center gap-2"><span className="text-sm font-bold text-emerald-600">${Number(p.amount).toLocaleString()}</span><span className="text-xs px-1.5 py-0.5 rounded bg-secondary text-secondary-foreground">{p.payment_type}</span><span className="text-xs px-1.5 py-0.5 rounded bg-secondary text-secondary-foreground">{p.payment_method}</span></div>
+                                  <p className="text-xs text-muted-foreground mt-0.5">{new Date(p.paid_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}{p.notes && ` · ${p.notes}`}</p>
+                                </div>
+                                <button onClick={() => handleDeleteCOPayment(p.id)} className="text-muted-foreground hover:text-red-500 transition-colors ml-2"><X className="h-3.5 w-3.5" /></button>
+                              </div>
+                            ))}
+                          </div>
+                        ) : <p className="text-xs text-muted-foreground text-center py-1">No payments recorded yet</p>}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+              {!showAddChangeOrder ? (
+                <button onClick={() => setShowAddChangeOrder(true)} className="w-full flex items-center justify-center gap-2 rounded-lg border border-dashed border-border py-2.5 text-xs text-muted-foreground hover:border-primary/40 hover:text-primary transition-colors"><Plus className="h-3.5 w-3.5" /> Add Change Order</button>
+              ) : (
+                <div className="rounded-lg border border-primary/30 bg-primary/5 p-4 space-y-3">
+                  <p className="text-xs font-semibold text-primary uppercase tracking-wide">New Change Order</p>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div><label className="text-xs text-muted-foreground block mb-1">Job Type</label><select value={newChangeOrder.job_type} onChange={(e) => setNewChangeOrder({ ...newChangeOrder, job_type: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"><option value="">— Select type —</option>{JOB_TYPES.map(t => <option key={t}>{t}</option>)}</select></div>
+                    <div><label className="text-xs text-muted-foreground block mb-1">Amount</label><input type="number" placeholder="0" value={newChangeOrder.amount} onChange={(e) => setNewChangeOrder({ ...newChangeOrder, amount: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" /></div>
+                  </div>
+                  <div><label className="text-xs text-muted-foreground block mb-1">Description</label><input type="text" placeholder="e.g. Add deck, replace gutters..." value={newChangeOrder.description} onChange={(e) => setNewChangeOrder({ ...newChangeOrder, description: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" /></div>
+                  <div><label className="text-xs text-muted-foreground block mb-1">Status</label><select value={newChangeOrder.status} onChange={(e) => setNewChangeOrder({ ...newChangeOrder, status: e.target.value as any })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"><option value="pending">Pending</option><option value="won">Won</option><option value="lost">Lost</option></select></div>
                   <div className="flex gap-2">
-                    <button onClick={handleAddPayment} disabled={addingPayment || !newPayment.amount} className="flex-1 rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-40 transition-colors">{addingPayment ? "Saving..." : "Save Payment"}</button>
-                    <button onClick={() => setShowAddPayment(false)} className="rounded-md border border-border px-3 py-1.5 text-xs hover:bg-muted transition-colors">Cancel</button>
+                    <button onClick={handleAddChangeOrder} disabled={addingChangeOrder || !newChangeOrder.amount} className="flex-1 flex items-center justify-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-40 transition-colors"><Save className="h-4 w-4" />{addingChangeOrder ? "Saving..." : "Save Change Order"}</button>
+                    <button onClick={() => setShowAddChangeOrder(false)} className="rounded-md border border-border px-4 py-2 text-sm hover:bg-muted transition-colors">Cancel</button>
                   </div>
                 </div>
               )}
-              {payments.length > 0 ? (
-                <div className="space-y-1.5">
-                  {payments.map((payment) => (
-                    <div key={payment.id} className={`rounded-md border p-2.5 flex items-center justify-between ${payment.payment_method === "Sunlight Financial" || payment.payment_method === "Upgrade" ? "border-orange-300 bg-orange-50 dark:bg-orange-950/20" : "border-border bg-muted/20"}`}>
-                      <div>
-                        <div className="flex items-center gap-2"><span className="text-sm font-bold text-emerald-600">${Number(payment.amount).toLocaleString()}</span><span className="text-xs px-1.5 py-0.5 rounded bg-secondary text-secondary-foreground">{payment.payment_type}</span><span className={`text-xs px-1.5 py-0.5 rounded ${payment.payment_method === "Sunlight Financial" || payment.payment_method === "Upgrade" ? "bg-orange-100 text-orange-700" : "bg-secondary text-secondary-foreground"}`}>{payment.payment_method}</span></div>
-                        <p className="text-xs text-muted-foreground mt-0.5">{new Date(payment.paid_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}{payment.notes && ` · ${payment.notes}`}</p>
-                      </div>
-                      <button onClick={() => handleDeletePayment(payment.id, Number(payment.amount))} className="text-muted-foreground hover:text-red-500 transition-colors ml-2"><X className="h-3.5 w-3.5" /></button>
-                    </div>
-                  ))}
-                </div>
-              ) : <p className="text-xs text-muted-foreground text-center py-1">No payments recorded yet</p>}
-            </div>
-          </div>
+            </>
+          )}
 
-          {/* CHANGE ORDERS */}
-          {changeOrders.map((co) => {
-            const coCollected = co.payments.reduce((sum, p) => sum + Number(p.amount), 0);
-            const coBalance = Number(co.amount) - coCollected;
-            const isExpanded = expandedChangeOrders.has(co.id);
-            return (
-              <div key={co.id} className="rounded-lg border border-border p-4 space-y-3">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Change Order #{co.order_number}</p>
-                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${coStatusColors[co.status]}`}>{co.status.charAt(0).toUpperCase() + co.status.slice(1)}</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <select value={co.status} onChange={(e) => handleUpdateCOStatus(co.id, e.target.value as any)} className="text-xs rounded-md border border-border bg-background px-2 py-1 focus:outline-none focus:ring-2 focus:ring-primary/40"><option value="pending">Pending</option><option value="won">Won</option><option value="lost">Lost</option></select>
-                    <button onClick={() => toggleCOExpand(co.id)} className="text-muted-foreground hover:text-foreground transition-colors">{isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}</button>
-                  </div>
-                </div>
-                <div className="flex items-center gap-3 flex-wrap">
-                  {co.job_type && <span className="text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 font-medium">{co.job_type}</span>}
-                  {co.description && <span className="text-xs text-muted-foreground">{co.description}</span>}
-                  <span className="text-sm font-bold ml-auto">${Number(co.amount).toLocaleString()}</span>
-                </div>
-                {isExpanded && (
-                  <div className="space-y-2 pt-1">
-                    <div className="grid grid-cols-3 gap-2 text-center">
-                      <div className="rounded-md bg-muted/50 p-2"><p className="text-xs text-muted-foreground">Contract</p><p className="font-bold text-sm">${Number(co.amount).toLocaleString()}</p></div>
-                      <div className="rounded-md bg-emerald-500/10 p-2"><p className="text-xs text-muted-foreground">Collected</p><p className="font-bold text-sm text-emerald-600">${coCollected.toLocaleString()}</p></div>
-                      <div className={`rounded-md p-2 ${coBalance > 0 ? "bg-red-500/10" : "bg-emerald-500/10"}`}><p className="text-xs text-muted-foreground">Balance</p><p className={`font-bold text-sm ${coBalance > 0 ? "text-red-500" : "text-emerald-600"}`}>${coBalance.toLocaleString()}</p></div>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <p className="text-xs font-medium text-muted-foreground">Payment History</p>
-                      {co.status === "won" && <button onClick={() => setShowAddCOPayment(showAddCOPayment === co.id ? null : co.id)} className="flex items-center gap-1 text-xs text-primary hover:underline font-medium"><Plus className="h-3 w-3" /> Add Payment</button>}
-                    </div>
-                    {showAddCOPayment === co.id && (
-                      <div className="rounded-md border border-border p-3 space-y-2 bg-muted/20">
-                        <div className="grid grid-cols-2 gap-2">
-                          <div><label className="text-xs text-muted-foreground block mb-1">Amount</label><input type="number" placeholder="0" value={newCOPayment.amount} onChange={(e) => setNewCOPayment({ ...newCOPayment, amount: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" /></div>
-                          <div><label className="text-xs text-muted-foreground block mb-1">Date</label><input type="date" value={newCOPayment.paid_at} onChange={(e) => setNewCOPayment({ ...newCOPayment, paid_at: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" /></div>
-                        </div>
-                        <div className="grid grid-cols-2 gap-2">
-                          <div><label className="text-xs text-muted-foreground block mb-1">Type</label><select value={newCOPayment.payment_type} onChange={(e) => setNewCOPayment({ ...newCOPayment, payment_type: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40">{PAYMENT_TYPES.map(t => <option key={t}>{t}</option>)}</select></div>
-                          <div><label className="text-xs text-muted-foreground block mb-1">Method</label><select value={newCOPayment.payment_method} onChange={(e) => setNewCOPayment({ ...newCOPayment, payment_method: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40">{PAYMENT_METHODS.map(m => <option key={m}>{m}</option>)}</select></div>
-                        </div>
-                        <input type="text" placeholder="Notes (optional)" value={newCOPayment.notes} onChange={(e) => setNewCOPayment({ ...newCOPayment, notes: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" />
-                        <div className="flex gap-2">
-                          <button onClick={() => handleAddCOPayment(co.id)} disabled={addingCOPayment || !newCOPayment.amount} className="flex-1 rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-40 transition-colors">{addingCOPayment ? "Saving..." : "Save Payment"}</button>
-                          <button onClick={() => setShowAddCOPayment(null)} className="rounded-md border border-border px-3 py-1.5 text-xs hover:bg-muted transition-colors">Cancel</button>
-                        </div>
-                      </div>
-                    )}
-                    {co.payments.length > 0 ? (
-                      <div className="space-y-1.5">
-                        {co.payments.map((p) => (
-                          <div key={p.id} className="rounded-md border border-border bg-muted/20 p-2.5 flex items-center justify-between">
-                            <div>
-                              <div className="flex items-center gap-2"><span className="text-sm font-bold text-emerald-600">${Number(p.amount).toLocaleString()}</span><span className="text-xs px-1.5 py-0.5 rounded bg-secondary text-secondary-foreground">{p.payment_type}</span><span className="text-xs px-1.5 py-0.5 rounded bg-secondary text-secondary-foreground">{p.payment_method}</span></div>
-                              <p className="text-xs text-muted-foreground mt-0.5">{new Date(p.paid_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}{p.notes && ` · ${p.notes}`}</p>
-                            </div>
-                            <button onClick={() => handleDeleteCOPayment(p.id)} className="text-muted-foreground hover:text-red-500 transition-colors ml-2"><X className="h-3.5 w-3.5" /></button>
-                          </div>
-                        ))}
-                      </div>
-                    ) : <p className="text-xs text-muted-foreground text-center py-1">No payments recorded yet</p>}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-
-          {/* ADD CHANGE ORDER */}
-          {!showAddChangeOrder ? (
-            <button onClick={() => setShowAddChangeOrder(true)} className="w-full flex items-center justify-center gap-2 rounded-lg border border-dashed border-border py-2.5 text-xs text-muted-foreground hover:border-primary/40 hover:text-primary transition-colors"><Plus className="h-3.5 w-3.5" /> Add Change Order</button>
-          ) : (
-            <div className="rounded-lg border border-primary/30 bg-primary/5 p-4 space-y-3">
-              <p className="text-xs font-semibold text-primary uppercase tracking-wide">New Change Order</p>
-              <div className="grid grid-cols-2 gap-2">
-                <div><label className="text-xs text-muted-foreground block mb-1">Job Type</label><select value={newChangeOrder.job_type} onChange={(e) => setNewChangeOrder({ ...newChangeOrder, job_type: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"><option value="">— Select type —</option>{JOB_TYPES.map(t => <option key={t}>{t}</option>)}</select></div>
-                <div><label className="text-xs text-muted-foreground block mb-1">Amount</label><input type="number" placeholder="0" value={newChangeOrder.amount} onChange={(e) => setNewChangeOrder({ ...newChangeOrder, amount: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" /></div>
-              </div>
-              <div><label className="text-xs text-muted-foreground block mb-1">Description</label><input type="text" placeholder="e.g. Add deck, replace gutters..." value={newChangeOrder.description} onChange={(e) => setNewChangeOrder({ ...newChangeOrder, description: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" /></div>
-              <div><label className="text-xs text-muted-foreground block mb-1">Status</label><select value={newChangeOrder.status} onChange={(e) => setNewChangeOrder({ ...newChangeOrder, status: e.target.value as any })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"><option value="pending">Pending</option><option value="won">Won</option><option value="lost">Lost</option></select></div>
-              <div className="flex gap-2">
-                <button onClick={handleAddChangeOrder} disabled={addingChangeOrder || !newChangeOrder.amount} className="flex-1 flex items-center justify-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-40 transition-colors"><Save className="h-4 w-4" />{addingChangeOrder ? "Saving..." : "Save Change Order"}</button>
-                <button onClick={() => setShowAddChangeOrder(false)} className="rounded-md border border-border px-4 py-2 text-sm hover:bg-muted transition-colors">Cancel</button>
-              </div>
+          {/* REASON LOST */}
+          {!editMode && isLost && (
+            <div className="rounded-lg border border-red-200 bg-red-50/50 dark:bg-red-950/20 p-4 space-y-3">
+              <p className="text-xs font-semibold text-red-600 uppercase tracking-wide">Reason Lost</p>
+              <textarea rows={3} placeholder="e.g. Price too high, went with another contractor..." value={reasonLost} onChange={(e) => setReasonLost(e.target.value)} className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-400/40 resize-none" />
+              <button onClick={handleSaveReasonLost} disabled={savingReasonLost || !reasonLost} className="w-full flex items-center justify-center gap-2 rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+                <Save className="h-4 w-4" />{savingReasonLost ? "Saving..." : savedReasonLost ? "Saved ✓" : "Save Reason"}
+              </button>
             </div>
           )}
 
@@ -472,14 +720,22 @@ export default function LeadDetailDialog({
             </div>
           )}
 
-          {!editMode && notes && <div className="rounded-lg bg-muted/50 p-3"><p className="text-xs text-muted-foreground mb-1">Notes</p><p className="text-sm">{notes}</p></div>}
+          {!editMode && notes && (
+            <div className="rounded-lg bg-muted/50 p-3">
+              <p className="text-xs text-muted-foreground mb-1">Notes</p>
+              <p className="text-sm">{notes}</p>
+            </div>
+          )}
 
-          {!editMode && onStageChange && (
+          {/* MOVE TO STAGE */}
+          {!editMode && (
             <div>
               <p className="text-xs text-muted-foreground mb-2">Move to stage</p>
               <div className="flex flex-wrap gap-2">
                 {["new", "contacted", "appointment_set", "estimate_sent", "closed_won", "cancelled_appointment", "lost", "not_qualified"].map((s) => (
-                  <button key={s} onClick={() => { onStageChange((lead as any).id, s); onOpenChange(false); }} className={`text-xs px-3 py-1 rounded-full border transition-colors ${status === s ? "bg-primary text-primary-foreground border-primary" : "hover:bg-muted border-border"}`}>{statusLabels[s]}</button>
+                  <button key={s} onClick={() => handleStageChange(s)} className={`text-xs px-3 py-1 rounded-full border transition-colors ${currentStatus === s ? "bg-primary text-primary-foreground border-primary" : "hover:bg-muted border-border"}`}>
+                    {statusLabels[s]}
+                  </button>
                 ))}
               </div>
             </div>

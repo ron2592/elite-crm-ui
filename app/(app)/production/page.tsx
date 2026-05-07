@@ -3,13 +3,8 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 
-const PRODUCTION_STAGES = [
-  "Pending - Check", "Pending - Financing", "Pending - Deposit",
-  "Deposit Collected", "Materials Ordered", "Permit Submitted", "Permit Approved",
-  "Scheduled to Start", "Job In Progress", "Rough Inspection", "Final Inspection",
-  "Inspection Approved", "Completed", "Completed with Balance",
-  "Cancelled Before Start", "Cancelled Mid-Job",
-];
+// Stages that appear on the calendar
+const CALENDAR_STAGES = ["Scheduled to Start", "Job In Progress", "Rough Inspection", "Final Inspection"];
 
 const stageColors: Record<string, string> = {
   "Pending - Check": "bg-slate-100 text-slate-600",
@@ -47,6 +42,16 @@ interface JobRow {
   orderNumber?: number;
 }
 
+// Convert ISO to local date string YYYY-MM-DD (no UTC drift)
+function toLocalDateValue(iso: string | null): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
 export default function ProductionPage() {
   const [jobs, setJobs] = useState<JobRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -54,6 +59,10 @@ export default function ProductionPage() {
   const [filter, setFilter] = useState("all");
   const [editingNotes, setEditingNotes] = useState<string | null>(null);
   const [noteDraft, setNoteDraft] = useState("");
+  // Date editing state
+  const [editingDate, setEditingDate] = useState<string | null>(null);
+  const [dateDraft, setDateDraft] = useState("");
+  const [savingDate, setSavingDate] = useState(false);
 
   async function fetchJobs() {
     const { data: leads, error } = await supabase
@@ -65,7 +74,6 @@ export default function ProductionPage() {
     if (error) { console.error("Error fetching jobs:", error.message); return; }
 
     const leadIds = (leads || []).map((j: any) => j.id);
-
     let paymentsMap: Record<string, number> = {};
     if (leadIds.length > 0) {
       const { data: payments } = await supabase.from("payments").select("lead_id, amount").in("lead_id", leadIds);
@@ -148,6 +156,22 @@ export default function ProductionPage() {
     await fetchJobs();
   };
 
+  // Save edited stage date
+  const handleSaveDate = async (row: JobRow) => {
+    if (!dateDraft) return;
+    setSavingDate(true);
+    // Build ISO from local date — set to noon to avoid timezone issues
+    const isoDate = new Date(`${dateDraft}T12:00:00`).toISOString();
+    if (row.type === "lead") {
+      await supabase.from("leads").update({ production_stage_updated_at: isoDate }).eq("id", row.id);
+    } else {
+      await supabase.from("change_orders").update({ production_stage_updated_at: isoDate }).eq("id", row.id);
+    }
+    setSavingDate(false);
+    setEditingDate(null);
+    await fetchJobs();
+  };
+
   const isPending = (stage: string | null) => stage?.startsWith("Pending") || false;
 
   const filteredJobs = filter === "all" ? jobs
@@ -227,6 +251,8 @@ export default function ProductionPage() {
                   const rowKey = `${job.type}-${job.id}`;
                   const isUpdating = updating === rowKey;
                   const isEditingNote = editingNotes === rowKey;
+                  const isEditingThisDate = editingDate === rowKey;
+                  const isCalendarStage = CALENDAR_STAGES.includes(job.production_stage || "");
                   const rowBg = isPending(job.production_stage)
                     ? "bg-slate-50/50 dark:bg-slate-900/20"
                     : job.type === "change_order"
@@ -288,18 +314,53 @@ export default function ProductionPage() {
                           </optgroup>
                         </select>
                         {job.production_stage && (
-                          <div className="mt-1">
+                          <div className="mt-1 flex items-center gap-1">
                             <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${stageColors[job.production_stage] || "bg-gray-100 text-gray-700"}`}>
                               {job.production_stage}
                             </span>
+                            {isCalendarStage && (
+                              <span className="text-xs px-1.5 py-0.5 rounded bg-blue-100 text-blue-600 font-medium">📅 cal</span>
+                            )}
                           </div>
                         )}
                       </td>
-                      <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">
-                        {job.production_stage_updated_at
-                          ? new Date(job.production_stage_updated_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
-                          : "—"}
+
+                      {/* STAGE DATE — editable date picker */}
+                      <td className="px-4 py-3 min-w-[160px]">
+                        {isEditingThisDate ? (
+                          <div className="space-y-1">
+                            <input
+                              type="date"
+                              value={dateDraft}
+                              onChange={(e) => setDateDraft(e.target.value)}
+                              autoFocus
+                              className="w-full rounded-md border border-border bg-background px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-primary/40"
+                            />
+                            <div className="flex gap-1">
+                              <button onClick={() => handleSaveDate(job)} disabled={savingDate || !dateDraft} className="text-xs px-2 py-0.5 rounded bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-40">{savingDate ? "..." : "Save"}</button>
+                              <button onClick={() => setEditingDate(null)} className="text-xs px-2 py-0.5 rounded border border-border hover:bg-muted">Cancel</button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div
+                            onClick={() => { setEditingDate(rowKey); setDateDraft(toLocalDateValue(job.production_stage_updated_at)); }}
+                            className="cursor-pointer group"
+                            title="Click to edit date"
+                          >
+                            {job.production_stage_updated_at ? (
+                              <p className="text-xs text-foreground group-hover:text-primary transition-colors">
+                                {new Date(job.production_stage_updated_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                              </p>
+                            ) : (
+                              <p className="text-xs text-muted-foreground/50 group-hover:text-primary transition-colors">+ Set date</p>
+                            )}
+                            {isCalendarStage && job.production_stage_updated_at && (
+                              <p className="text-xs text-blue-500 mt-0.5">on calendar</p>
+                            )}
+                          </div>
+                        )}
                       </td>
+
                       <td className="px-4 py-3 min-w-[180px]">
                         {isEditingNote ? (
                           <div className="space-y-1">
@@ -317,10 +378,7 @@ export default function ProductionPage() {
                             </div>
                           </div>
                         ) : (
-                          <div
-                            onClick={() => { setEditingNotes(rowKey); setNoteDraft(job.production_notes || ""); }}
-                            className="cursor-pointer group"
-                          >
+                          <div onClick={() => { setEditingNotes(rowKey); setNoteDraft(job.production_notes || ""); }} className="cursor-pointer group">
                             {job.production_notes ? (
                               <p className="text-xs text-foreground group-hover:text-primary transition-colors">{job.production_notes}</p>
                             ) : (

@@ -8,6 +8,15 @@ export type LeadStatus =
   | "lost"
   | "not_qualified";
 
+export type ContactType = "in_person" | "phone_quote";
+
+export type LsaStatus =
+  | "charged"
+  | "submitted"
+  | "credited"
+  | "not_charged"
+  | "in_review";
+
 export type TaskPriority = "low" | "medium" | "high";
 export type TaskStatus = "pending" | "completed";
 export type ActivityType = "call" | "email" | "follow_up";
@@ -24,6 +33,8 @@ export interface Lead {
   value: number;
   createdAt: string;
   tags: string[];
+  contact_type?: ContactType | null;
+  lsa_status?: LsaStatus | null;
 }
 
 export interface Task {

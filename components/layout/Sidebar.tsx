@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import {
   LayoutDashboard,
   Users,
@@ -12,16 +12,20 @@ import {
   Zap,
   ChevronRight,
   HardHat,
+  BarChart2,
+  LogOut,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { supabase } from "@/lib/supabaseClient";
 
 const navItems = [
-  { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/leads", label: "Leads", icon: Users },
-  { href: "/production", label: "Production", icon: HardHat },
-  { href: "/calendar", label: "Calendar", icon: CalendarDays },
-  { href: "/tasks", label: "Tasks", icon: CheckSquare },
-  { href: "/activities", label: "Activities", icon: Activity },
+  { href: "/dashboard",  label: "Dashboard",  icon: LayoutDashboard },
+  { href: "/leads",      label: "Leads",       icon: Users },
+  { href: "/production", label: "Production",  icon: HardHat },
+  { href: "/kpi",        label: "KPI",         icon: BarChart2 },
+  { href: "/calendar",   label: "Calendar",    icon: CalendarDays },
+  { href: "/tasks",      label: "Tasks",       icon: CheckSquare },
+  { href: "/activities", label: "Activities",  icon: Activity },
 ];
 
 const bottomItems = [
@@ -30,6 +34,12 @@ const bottomItems = [
 
 export default function Sidebar() {
   const pathname = usePathname();
+  const router = useRouter();
+
+  const handleSignOut = async () => {
+    await supabase.auth.signOut();
+    router.replace("/login");
+  };
 
   return (
     <aside className="flex h-full w-60 flex-col bg-sidebar border-r border-sidebar-border">
@@ -96,6 +106,15 @@ export default function Sidebar() {
             </Link>
           );
         })}
+
+        {/* Sign Out */}
+        <button
+          onClick={handleSignOut}
+          className="group mt-1 w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-all text-sidebar-foreground hover:bg-red-500/10 hover:text-red-400"
+        >
+          <LogOut className="h-4 w-4 shrink-0 text-sidebar-foreground/60 group-hover:text-red-400 transition-colors" />
+          <span>Sign Out</span>
+        </button>
 
         {/* User */}
         <div className="mt-3 flex items-center gap-3 rounded-lg px-3 py-2.5">

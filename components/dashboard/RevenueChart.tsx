@@ -10,7 +10,7 @@ const CustomTooltip = ({ active, payload, label }: any) => {
     return (
       <div className="rounded-lg border bg-background p-3 shadow-md text-sm">
         <p className="font-semibold text-foreground">{label}</p>
-        <p className="text-primary font-medium">${payload[0].value.toLocaleString()}</p>
+        <p className="font-medium" style={{ color: "#E07B3A" }}>${payload[0].value.toLocaleString()}</p>
         <p className="text-muted-foreground">{payload[1]?.value} leads</p>
       </div>
     );
@@ -64,10 +64,12 @@ export default function RevenueChart() {
           </div>
           <div className="flex items-center gap-4 text-xs text-muted-foreground">
             <span className="flex items-center gap-1.5">
-              <span className="h-2 w-2 rounded-full bg-primary" />Revenue
+              <span className="h-2 w-2 rounded-full" style={{ background: "#E07B3A" }} />
+              Revenue
             </span>
             <span className="flex items-center gap-1.5">
-              <span className="h-2 w-2 rounded-full bg-primary/30" />Leads
+              <span className="h-2 w-2 rounded-full" style={{ background: "#378ADD" }} />
+              Leads
             </span>
           </div>
         </div>
@@ -77,15 +79,27 @@ export default function RevenueChart() {
           <AreaChart data={data} margin={{ top: 5, right: 5, left: -10, bottom: 5 }}>
             <defs>
               <linearGradient id="revenueGradient" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor="hsl(221, 83%, 53%)" stopOpacity={0.15} />
-                <stop offset="95%" stopColor="hsl(221, 83%, 53%)" stopOpacity={0} />
+                <stop offset="5%"  stopColor="#E07B3A" stopOpacity={0.18} />
+                <stop offset="95%" stopColor="#E07B3A" stopOpacity={0} />
+              </linearGradient>
+              <linearGradient id="leadsGradient" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="5%"  stopColor="#378ADD" stopOpacity={0.12} />
+                <stop offset="95%" stopColor="#378ADD" stopOpacity={0} />
               </linearGradient>
             </defs>
             <CartesianGrid strokeDasharray="3 3" stroke="hsl(220, 13%, 91%)" vertical={false} />
             <XAxis dataKey="month" tick={{ fontSize: 11, fill: "hsl(220, 9%, 46%)" }} axisLine={false} tickLine={false} />
             <YAxis tick={{ fontSize: 11, fill: "hsl(220, 9%, 46%)" }} axisLine={false} tickLine={false} tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} />
             <Tooltip content={<CustomTooltip />} />
-            <Area type="monotone" dataKey="revenue" stroke="hsl(221, 83%, 53%)" strokeWidth={2} fill="url(#revenueGradient)" dot={{ fill: "hsl(221, 83%, 53%)", r: 4, strokeWidth: 0 }} activeDot={{ r: 5 }} />
+            <Area
+              type="monotone"
+              dataKey="revenue"
+              stroke="#E07B3A"
+              strokeWidth={2}
+              fill="url(#revenueGradient)"
+              dot={{ fill: "#E07B3A", r: 4, strokeWidth: 0 }}
+              activeDot={{ r: 5 }}
+            />
           </AreaChart>
         </ResponsiveContainer>
       </CardContent>
