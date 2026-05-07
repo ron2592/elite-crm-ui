@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
+import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
@@ -9,6 +10,7 @@ import {
 import {
   ChevronLeft, ChevronRight, Users, Home, Phone,
   DollarSign, Target, TrendingUp, Plus, Save, X, Loader2,
+  LayoutDashboard, Printer,
 } from "lucide-react";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -59,9 +61,16 @@ function pct(num: number, den: number) {
 const WON_STAGES = ["closed_won", "won"];
 const ESTIMATED_STAGES = ["estimate_sent", "closed_won", "won", "lost"];
 
+// ─── Source colors for comparison table ───────────────────────────────────────
+const SRC_COLORS = [
+  "bg-blue-500", "bg-orange-500", "bg-emerald-500", "bg-purple-500",
+  "bg-pink-500", "bg-cyan-500", "bg-yellow-500", "bg-red-500",
+];
+
 // ─── Main Page ────────────────────────────────────────────────────────────────
 export default function KPIPage() {
   const today = new Date();
+  const router = useRouter();
   const [year,  setYear]  = useState(today.getFullYear());
   const [month, setMonth] = useState(today.getMonth());
   const [view,  setView]  = useState<"monthly" | "weekly">("monthly");
@@ -88,7 +97,6 @@ export default function KPIPage() {
     setLoading(true);
     const { start, end } = monthRange(year, month);
 
-    // Current month leads
     const { data: leadsData } = await supabase
       .from("leads")
       .select("id, status, contact_type, lsa_status, initial_contract_value, estimated_amount, closed_amount, created_at, source_id, metadata, lead_sources(name)")
@@ -96,27 +104,23 @@ export default function KPIPage() {
       .lt("created_at", end)
       .eq("archived", false);
 
-    // Payments received this month
     const { data: paymentsData } = await supabase
       .from("payments")
       .select("amount, paid_at, lead_id")
       .gte("paid_at", start)
       .lt("paid_at", end);
 
-    // Marketing spend this month
     const { data: spendData } = await supabase
       .from("marketing_spend")
       .select("id, period_start, source_name, source_id, amount_spent, lead_sources(name)")
       .gte("period_start", start)
       .lt("period_start", end);
 
-    // Lead sources list
     const { data: srcData } = await supabase
       .from("lead_sources")
       .select("id, name")
       .order("name");
 
-    // 6-month trend
     const trendStart = new Date(year, month - 5, 1).toISOString();
     const { data: trendLeads } = await supabase
       .from("leads")
@@ -131,7 +135,6 @@ export default function KPIPage() {
       .gte("paid_at", trendStart)
       .lt("paid_at", end);
 
-    // Build 6-month trend array
     const trendMap: Record<string, { contracted: number; actual: number; leads: number }> = {};
     for (let i = 5; i >= 0; i--) {
       const d = new Date(year, month - i, 1);
@@ -187,12 +190,13 @@ export default function KPIPage() {
     const lsaCredited  = filtered.filter(l => l.lsa_status === "credited").length;
 
     // By source
-    const bySrc: Record<string, { name: string; total: number; won: number; revenue: number }> = {};
+    const bySrc: Record<string, { name: string; total: number; won: number; revenue: number; estimated: number }> = {};
     filtered.forEach(l => {
       const key  = l.source_id || "unknown";
       const name = (l.lead_sources as any)?.name || "Unknown";
-      if (!bySrc[key]) bySrc[key] = { name, total: 0, won: 0, revenue: 0 };
+      if (!bySrc[key]) bySrc[key] = { name, total: 0, won: 0, revenue: 0, estimated: 0 };
       bySrc[key].total++;
+      if (ESTIMATED_STAGES.includes(l.status)) bySrc[key].estimated++;
       if (WON_STAGES.includes(l.status)) { bySrc[key].won++; bySrc[key].revenue += Number(l.initial_contract_value || 0); }
     });
 
@@ -222,10 +226,7 @@ export default function KPIPage() {
   // ── Week data ──────────────────────────────────────────────────────────────
   const weeklyData = useMemo(() => {
     const weeks: { label: string; leads: number; won: number; revenue: number }[] = [];
-    const { start } = monthRange(year, month);
-    const startDate = new Date(start);
     const daysInMonth = new Date(year, month + 1, 0).getDate();
-
     for (let w = 0; w < 5; w++) {
       const wStart = new Date(year, month, 1 + w * 7);
       const wEnd   = new Date(year, month, Math.min(1 + (w + 1) * 7 - 1, daysInMonth) + 1);
@@ -269,17 +270,34 @@ export default function KPIPage() {
   const srcList = Object.values(kpi.bySrc).sort((a, b) => b.total - a.total);
   const spList  = Object.values(kpi.bySP).filter(sp => sp.total > 0);
   const maxSrc  = Math.max(...srcList.map(s => s.total), 1);
+  const maxSrcRevenue = Math.max(...srcList.map(s => s.revenue), 1);
 
   return (
     <div className="p-6 max-w-6xl mx-auto space-y-6">
 
       {/* ── Header ── */}
       <div className="flex items-center justify-between flex-wrap gap-3">
-        <div>
-          <h1 className="text-2xl font-bold">KPI Dashboard</h1>
-          <p className="text-sm text-muted-foreground">Elite Work Home Improvement</p>
+        <div className="flex items-center gap-3">
+          {/* Back to Dashboard */}
+          <button
+            onClick={() => router.push("/dashboard")}
+            className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md border border-border hover:bg-muted text-muted-foreground transition-colors"
+          >
+            <LayoutDashboard className="h-3.5 w-3.5" /> Dashboard
+          </button>
+          <div>
+            <h1 className="text-2xl font-bold">KPI Dashboard</h1>
+            <p className="text-sm text-muted-foreground">Elite Work Home Improvement</p>
+          </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
+          {/* Print / PDF */}
+          <button
+            onClick={() => window.print()}
+            className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md border border-border hover:bg-muted text-muted-foreground transition-colors"
+          >
+            <Printer className="h-3.5 w-3.5" /> Export PDF
+          </button>
           {/* View toggle */}
           <div className="flex rounded-lg border border-border overflow-hidden">
             {(["monthly","weekly"] as const).map(v => (
@@ -326,47 +344,31 @@ export default function KPIPage() {
         <>
           {/* ── Scorecards ── */}
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-            <ScoreCard icon={<Users className="h-4 w-4" />}  label="Total Leads"      value={kpi.total}                color="default" />
-            <ScoreCard icon={<Target className="h-4 w-4" />} label="Estimates Given"  value={kpi.estimated}            color="blue" />
-            <ScoreCard icon={<Home className="h-4 w-4" />}   label="In-Person Visits" value={kpi.inPerson}             color="purple" />
-            <ScoreCard icon={<Phone className="h-4 w-4" />}  label="Phone Quotes"     value={kpi.phoneQuote}           color="orange" />
-            <ScoreCard icon={<TrendingUp className="h-4 w-4" />} label="Closed Won"   value={kpi.wonCount}             color="green" />
-            <ScoreCard icon={<DollarSign className="h-4 w-4" />} label="Contracted"   value={fmt$(kpi.contracted)}     color="emerald" />
+            <ScoreCard icon={<Users className="h-4 w-4" />}  label="Total Leads"      value={kpi.total}            color="default" />
+            <ScoreCard icon={<Target className="h-4 w-4" />} label="Estimates Given"  value={kpi.estimated}        color="blue" />
+            <ScoreCard icon={<Home className="h-4 w-4" />}   label="In-Person Visits" value={kpi.inPerson}         color="purple" />
+            <ScoreCard icon={<Phone className="h-4 w-4" />}  label="Phone Quotes"     value={kpi.phoneQuote}       color="orange" />
+            <ScoreCard icon={<TrendingUp className="h-4 w-4" />} label="Closed Won"   value={kpi.wonCount}         color="green" />
+            <ScoreCard icon={<DollarSign className="h-4 w-4" />} label="Contracted"   value={fmt$(kpi.contracted)} color="emerald" />
           </div>
 
           {/* ── Secondary scorecards ── */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <MiniCard label="Actual Revenue"    value={fmt$(kpi.actual)}     sub="payments received" />
-            <MiniCard label="Close Rate"        value={pct(kpi.wonCount, kpi.total)}         sub="won / total leads" />
-            <MiniCard label="Close Rate (Appt)" value={pct(kpi.wonCount, kpi.estimated)}     sub="won / estimates" />
+            <MiniCard label="Close Rate"        value={pct(kpi.wonCount, kpi.total)}      sub="won / total leads" />
+            <MiniCard label="Close Rate (Appt)" value={pct(kpi.wonCount, kpi.estimated)}  sub="won / estimates" />
             <MiniCard label="Rev / Lead"        value={kpi.wonCount ? fmt$(kpi.contracted / kpi.wonCount) : "—"} sub="avg contracted" />
           </div>
 
           {/* ── Close rate breakdown ── */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <CloseRateCard
-              label="Overall Close Rate"
-              won={kpi.wonCount} total={kpi.total}
-              sub={`${kpi.wonCount} won of ${kpi.total} leads`}
-              color="bg-primary"
-            />
-            <CloseRateCard
-              label="In-Person Close Rate"
-              won={kpi.wonInPerson} total={kpi.inPerson}
-              sub={`${kpi.wonInPerson} won of ${kpi.inPerson} visits`}
-              color="bg-purple-500"
-            />
-            <CloseRateCard
-              label="Phone Quote Close Rate"
-              won={kpi.wonPhone} total={kpi.phoneQuote}
-              sub={`${kpi.wonPhone} won of ${kpi.phoneQuote} quotes`}
-              color="bg-orange-500"
-            />
+            <CloseRateCard label="Overall Close Rate"      won={kpi.wonCount}    total={kpi.total}       sub={`${kpi.wonCount} won of ${kpi.total} leads`}    color="bg-primary" />
+            <CloseRateCard label="In-Person Close Rate"    won={kpi.wonInPerson} total={kpi.inPerson}    sub={`${kpi.wonInPerson} won of ${kpi.inPerson} visits`} color="bg-purple-500" />
+            <CloseRateCard label="Phone Quote Close Rate"  won={kpi.wonPhone}    total={kpi.phoneQuote}  sub={`${kpi.wonPhone} won of ${kpi.phoneQuote} quotes`}  color="bg-orange-500" />
           </div>
 
           {/* ── Charts row ── */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-            {/* Revenue trend */}
             <div className="lg:col-span-2 rounded-lg border border-border p-4">
               <div className="flex items-center justify-between mb-4">
                 <p className="text-sm font-semibold">
@@ -399,24 +401,22 @@ export default function KPIPage() {
               </ResponsiveContainer>
             </div>
 
-            {/* Lead source breakdown */}
             <div className="rounded-lg border border-border p-4">
               <p className="text-sm font-semibold mb-4">Leads by Source</p>
               <div className="space-y-3">
                 {srcList.length === 0 && <p className="text-xs text-muted-foreground">No leads this month</p>}
-                {srcList.map(src => (
+                {srcList.map((src, i) => (
                   <div key={src.name}>
                     <div className="flex justify-between text-xs mb-1">
                       <span className="text-muted-foreground truncate max-w-[140px]">{src.name}</span>
                       <span className="font-medium">{src.total} · {pct(src.won, src.total)}</span>
                     </div>
                     <div className="h-1.5 bg-muted rounded-full overflow-hidden">
-                      <div className="h-full bg-primary rounded-full transition-all" style={{ width: `${(src.total / maxSrc) * 100}%` }} />
+                      <div className={`h-full rounded-full transition-all ${SRC_COLORS[i % SRC_COLORS.length]}`} style={{ width: `${(src.total / maxSrc) * 100}%` }} />
                     </div>
                   </div>
                 ))}
               </div>
-
               {view === "monthly" && (
                 <div className="mt-4 pt-4 border-t border-border">
                   <p className="text-xs font-semibold mb-3">Lead count trend</p>
@@ -431,6 +431,95 @@ export default function KPIPage() {
               )}
             </div>
           </div>
+
+          {/* ── Lead Source Comparison Table ── */}
+          {srcList.length > 0 && (
+            <div className="rounded-lg border border-border p-4">
+              <div className="flex items-center justify-between mb-4">
+                <div>
+                  <p className="text-sm font-semibold">Lead Source Comparison — {monthLabel}</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">Which sources are performing vs draining budget</p>
+                </div>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-border">
+                      {["Source","Leads","Estimates","Close Rate","Contracted Rev","Rev / Lead","Performance"].map(h => (
+                        <th key={h} className="text-left text-xs text-muted-foreground font-medium pb-2 pr-4 whitespace-nowrap">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {srcList.map((src, i) => {
+                      const closeRate = src.total > 0 ? Math.round((src.won / src.total) * 100) : 0;
+                      const revPerLead = src.won > 0 ? src.revenue / src.won : 0;
+                      // Performance score: close rate + revenue weight
+                      const perfScore = closeRate;
+                      const perfColor = closeRate >= 40 ? "text-emerald-600" : closeRate >= 20 ? "text-yellow-600" : "text-red-500";
+                      const perfLabel = closeRate >= 40 ? "🟢 Strong" : closeRate >= 20 ? "🟡 Average" : src.total === 0 ? "⚪ No data" : "🔴 Weak";
+
+                      return (
+                        <tr key={src.name} className="border-b border-border/50 last:border-0 hover:bg-muted/20 transition-colors">
+                          <td className="py-2.5 pr-4">
+                            <div className="flex items-center gap-2">
+                              <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${SRC_COLORS[i % SRC_COLORS.length]}`} />
+                              <span className="font-medium">{src.name}</span>
+                            </div>
+                          </td>
+                          <td className="py-2.5 pr-4">{src.total}</td>
+                          <td className="py-2.5 pr-4">{src.estimated}</td>
+                          <td className="py-2.5 pr-4">
+                            <div className="flex items-center gap-2">
+                              <span className={`font-medium ${perfColor}`}>{src.total > 0 ? closeRate + "%" : "—"}</span>
+                              {src.total > 0 && (
+                                <div className="w-16 h-1.5 bg-muted rounded-full overflow-hidden">
+                                  <div className={`h-full rounded-full ${closeRate >= 40 ? "bg-emerald-500" : closeRate >= 20 ? "bg-yellow-500" : "bg-red-500"}`}
+                                    style={{ width: `${Math.min(closeRate, 100)}%` }} />
+                                </div>
+                              )}
+                            </div>
+                          </td>
+                          <td className="py-2.5 pr-4 font-medium text-emerald-600">{src.revenue > 0 ? fmt$(src.revenue) : "—"}</td>
+                          <td className="py-2.5 pr-4 text-muted-foreground">{revPerLead > 0 ? fmt$(revPerLead) : "—"}</td>
+                          <td className="py-2.5 pr-4 text-xs font-medium">{perfLabel}</td>
+                        </tr>
+                      );
+                    })}
+                    {/* Totals */}
+                    <tr className="bg-muted/30 font-bold">
+                      <td className="py-2.5 pr-4 text-xs uppercase tracking-wide text-muted-foreground">Total</td>
+                      <td className="py-2.5 pr-4">{kpi.total}</td>
+                      <td className="py-2.5 pr-4">{kpi.estimated}</td>
+                      <td className="py-2.5 pr-4">{pct(kpi.wonCount, kpi.total)}</td>
+                      <td className="py-2.5 pr-4 text-emerald-600">{fmt$(kpi.contracted)}</td>
+                      <td className="py-2.5 pr-4 text-muted-foreground">{kpi.wonCount > 0 ? fmt$(kpi.contracted / kpi.wonCount) : "—"}</td>
+                      <td className="py-2.5 pr-4" />
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Revenue bar comparison */}
+              {srcList.some(s => s.revenue > 0) && (
+                <div className="mt-4 pt-4 border-t border-border">
+                  <p className="text-xs font-semibold mb-3 text-muted-foreground uppercase tracking-wide">Revenue by source</p>
+                  <div className="space-y-2">
+                    {srcList.filter(s => s.revenue > 0).map((src, i) => (
+                      <div key={src.name} className="flex items-center gap-3">
+                        <span className="text-xs text-muted-foreground w-28 truncate shrink-0">{src.name}</span>
+                        <div className="flex-1 h-2 bg-muted rounded-full overflow-hidden">
+                          <div className={`h-full rounded-full ${SRC_COLORS[i % SRC_COLORS.length]}`}
+                            style={{ width: `${(src.revenue / maxSrcRevenue) * 100}%` }} />
+                        </div>
+                        <span className="text-xs font-medium w-16 text-right">{fmt$(src.revenue)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* ── Salesperson table ── */}
           {spList.length > 0 && (
@@ -459,7 +548,6 @@ export default function KPIPage() {
                         <td className="py-2.5 pr-4 font-bold text-emerald-600">{fmt$(sp.revenue)}</td>
                       </tr>
                     ))}
-                    {/* Totals row */}
                     <tr className="bg-muted/30">
                       <td className="py-2.5 pr-4 font-bold text-xs uppercase tracking-wide text-muted-foreground">Total</td>
                       <td className="py-2.5 pr-4 font-bold">{spList.reduce((s,sp) => s+sp.total,0)}</td>
@@ -574,20 +662,13 @@ export default function KPIPage() {
 // ─── Sub-components ────────────────────────────────────────────────────────────
 function ScoreCard({ icon, label, value, color }: { icon: React.ReactNode; label: string; value: string | number; color: string }) {
   const colorMap: Record<string, string> = {
-    default: "bg-muted/50",
-    blue:    "bg-blue-50 dark:bg-blue-950/20",
-    purple:  "bg-purple-50 dark:bg-purple-950/20",
-    orange:  "bg-orange-50 dark:bg-orange-950/20",
-    green:   "bg-green-50 dark:bg-green-950/20",
-    emerald: "bg-emerald-50 dark:bg-emerald-950/20",
+    default: "bg-muted/50", blue: "bg-blue-50 dark:bg-blue-950/20",
+    purple: "bg-purple-50 dark:bg-purple-950/20", orange: "bg-orange-50 dark:bg-orange-950/20",
+    green: "bg-green-50 dark:bg-green-950/20", emerald: "bg-emerald-50 dark:bg-emerald-950/20",
   };
   const iconColorMap: Record<string, string> = {
-    default: "text-muted-foreground",
-    blue:    "text-blue-500",
-    purple:  "text-purple-500",
-    orange:  "text-orange-500",
-    green:   "text-green-600",
-    emerald: "text-emerald-600",
+    default: "text-muted-foreground", blue: "text-blue-500", purple: "text-purple-500",
+    orange: "text-orange-500", green: "text-green-600", emerald: "text-emerald-600",
   };
   return (
     <div className={`rounded-lg p-3 ${colorMap[color] || colorMap.default}`}>
