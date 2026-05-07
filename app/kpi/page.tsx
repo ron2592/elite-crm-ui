@@ -81,9 +81,8 @@ export default function KPIPage() {
   const [savingSpend, setSavingSpend]       = useState(false);
 
   // ── Fetch ──────────────────────────────────────────────────────────────────
-  useEffect(() => {
-    fetchAll();
-  }, [year, month]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { fetchAll(); }, [year, month]);
 
   async function fetchAll() {
     setLoading(true);
@@ -562,7 +561,7 @@ export default function KPIPage() {
               </table>
             ) : (
               <p className="text-xs text-muted-foreground text-center py-4">
-                No spend logged for {monthLabel} yet. Click "Log Spend" to add.
+                No spend logged for {monthLabel} yet. Click &quot;Log Spend&quot; to add.
               </p>
             )}
           </div>
