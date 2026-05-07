@@ -1,7 +1,7 @@
 "use client";
 
 import { usePathname, useRouter } from "next/navigation";
-import { Bell, Search, X, Loader2, Plus, Users, CheckSquare } from "lucide-react";
+import { Bell, Search, X, Loader2, Plus, CheckSquare } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import AddLeadModal from "@/components/leads/AddLeadModal";
 import { useState, useEffect, useRef, useCallback } from "react";
@@ -228,9 +228,9 @@ export default function Header() {
           {quickAddOpen && (
             <div className="absolute right-0 top-10 w-44 rounded-lg border border-border bg-background shadow-lg z-50 overflow-hidden">
               <p className="px-3 py-2 text-xs font-semibold text-muted-foreground uppercase tracking-wide border-b border-border">Quick Add</p>
-              {/* Add Lead — reuses existing modal trigger */}
-              <div onClick={() => setQuickAddOpen(false)}>
-                <AddLeadModal triggerClassName="w-full flex items-center gap-2 px-3 py-2.5 text-sm hover:bg-muted/50 transition-colors text-left" triggerLabel={<><Users className="h-3.5 w-3.5 text-muted-foreground" /> Add Lead</>} />
+              {/* Add Lead — reuses existing modal */}
+              <div onClick={() => setQuickAddOpen(false)} className="w-full">
+                <AddLeadModal />
               </div>
               <button
                 onClick={() => { setQuickAddOpen(false); router.push("/tasks"); }}
