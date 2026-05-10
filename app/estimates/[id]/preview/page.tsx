@@ -1,14 +1,14 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { createClient } from '@/lib/supabase/client'
+import { supabase } from '@/lib/supabaseClient'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
 
 export default function EstimatePreviewPage() {
   const params = useParams()
   const estimateId = params.id as string
-  const supabase = createClient()
+  
 
   const [loading, setLoading] = useState(true)
   const [estimate, setEstimate] = useState<any>(null)

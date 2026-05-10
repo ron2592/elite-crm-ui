@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
-import { createClient } from '@/lib/supabase/client'
+import { supabase } from '@/lib/supabaseClient'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 
@@ -49,7 +49,7 @@ const PAGES = [
 export default function EstimateBuilderPage() {
   const params   = useParams()
   const router   = useRouter()
-  const supabase = createClient()
+  
   const estimateId = params.id as string
 
   const [saving, setSaving]   = useState(false)
