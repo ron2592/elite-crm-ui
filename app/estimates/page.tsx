@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { createClient } from '@/lib/supabase/client'
+import { supabase } from '@/lib/supabaseClient'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 
@@ -37,7 +37,7 @@ export default function EstimatesPage() {
   const [search, setSearch]       = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
   const router = useRouter()
-  const supabase = createClient()
+  
 
   useEffect(() => { fetchEstimates() }, [])
 
