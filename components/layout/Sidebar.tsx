@@ -16,6 +16,7 @@ import {
   LogOut,
   Archive,
   Upload,
+  FileText,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { supabase } from "@/lib/supabaseClient";
@@ -25,6 +26,7 @@ const navItems = [
   { href: "/leads",          label: "Leads",       icon: Users },
   { href: "/leads/archived", label: "Archived",    icon: Archive },
   { href: "/production",     label: "Production",  icon: HardHat },
+  { href: "/estimates",      label: "Estimates",   icon: FileText },
   { href: "/kpi",            label: "KPI",         icon: BarChart2 },
   { href: "/calendar",       label: "Calendar",    icon: CalendarDays },
   { href: "/tasks",          label: "Tasks",       icon: CheckSquare },
@@ -110,7 +112,6 @@ export default function Sidebar() {
           );
         })}
 
-        {/* Sign Out */}
         <button
           onClick={handleSignOut}
           className="group mt-1 w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-all text-sidebar-foreground hover:bg-red-500/10 hover:text-red-400"
@@ -119,7 +120,6 @@ export default function Sidebar() {
           <span>Sign Out</span>
         </button>
 
-        {/* User */}
         <div className="mt-3 flex items-center gap-3 rounded-lg px-3 py-2.5">
           <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/20 text-xs font-bold text-primary">
             JD
