@@ -1,314 +1,702 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { supabase } from '@/lib/supabaseClient'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
 
-export default function EstimatePreviewPage() {
+// ── TYPES ──────────────────────────────────────────────────────────────────
+type LineItem = {
+  id?: string
+  section_name: string
+  description: string
+  qty: number
+  unit_price: number
+  sort_order: number
+  is_exclusion: boolean
+}
+
+type Option = {
+  id?: string
+  estimate_id?: string
+  option_label: string
+  sort_order: number
+  items: LineItem[]
+}
+
+type Photo = {
+  id?: string
+  estimate_id?: string
+  photo_url: string
+  caption: string
+  sort_order: number
+}
+
+type Estimate = {
+  id: string
+  lead_id?: string
+  client_first_name: string
+  client_last_name: string
+  client_email: string
+  client_address: string
+  client_city: string
+  client_state: string
+  client_zip: string
+  estimate_date: string
+  property_photo_url: string
+  cert_badge_url: string
+  show_inspection: boolean
+  show_tc: boolean
+  show_financing: boolean
+  financing_sunlight: boolean
+  financing_upgrade: boolean
+  tc_file_url: string
+  notes: string
+  status: string
+}
+
+// ── SHARED STYLES ──────────────────────────────────────────────────────────
+const inputCls = 'w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500'
+const inputSmCls = 'w-full bg-gray-900 border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200 focus:outline-none focus:border-blue-500'
+
+// ── REUSABLE COMPONENTS ────────────────────────────────────────────────────
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="bg-gray-900 rounded-xl border border-gray-800 overflow-hidden">
+      <div className="px-6 py-3 border-b border-gray-800 bg-gray-800/50">
+        <h2 className="text-sm font-semibold text-gray-300 uppercase tracking-wide">{title}</h2>
+      </div>
+      <div className="p-6">{children}</div>
+    </div>
+  )
+}
+
+function Field({ label, children, className = '' }: { label: string; children: React.ReactNode; className?: string }) {
+  return (
+    <div className={className}>
+      <label className="block text-xs text-gray-400 mb-1 font-medium uppercase tracking-wide">{label}</label>
+      {children}
+    </div>
+  )
+}
+
+function Toggle({ label, checked, onChange }: { label: string; checked: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <div className="flex items-center gap-3 cursor-pointer" onClick={() => onChange(!checked)}>
+      <div className={`relative w-10 h-5 rounded-full transition-colors ${checked ? 'bg-blue-600' : 'bg-gray-700'}`}>
+        <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform duration-200 ${checked ? 'translate-x-5' : ''}`} />
+      </div>
+      <span className="text-sm text-gray-300 select-none">{label}</span>
+    </div>
+  )
+}
+
+// ── MAIN COMPONENT ─────────────────────────────────────────────────────────
+export default function EstimateBuilderPage() {
   const params = useParams()
   const estimateId = params.id as string
 
   const [loading, setLoading] = useState(true)
-  const [estimate, setEstimate] = useState<any>(null)
-  const [options, setOptions]   = useState<any[]>([])
-  const [photos, setPhotos]     = useState<any[]>([])
-  const [attachments, setAttachments] = useState<any[]>([])
+  const [saving, setSaving] = useState(false)
+  const [saved, setSaved] = useState(false)
+  const [uploadingPhoto, setUploadingPhoto] = useState(false)
+  const [activeOptionIdx, setActiveOptionIdx] = useState(0)
 
+  const photoInputRef = useRef<HTMLInputElement>(null)
+  const propertyPhotoRef = useRef<HTMLInputElement>(null)
+
+  const [estimate, setEstimate] = useState<Estimate>({
+    id: estimateId,
+    client_first_name: '',
+    client_last_name: '',
+    client_email: '',
+    client_address: '',
+    client_city: '',
+    client_state: 'NJ',
+    client_zip: '',
+    estimate_date: new Date().toISOString().split('T')[0],
+    property_photo_url: '',
+    cert_badge_url: '',
+    show_inspection: true,
+    show_tc: true,
+    show_financing: false,
+    financing_sunlight: false,
+    financing_upgrade: false,
+    tc_file_url: '',
+    notes: '',
+    status: 'draft',
+  })
+
+  const [options, setOptions] = useState<Option[]>([])
+  const [photos, setPhotos] = useState<Photo[]>([])
+
+  // ── LOAD ─────────────────────────────────────────────────────────────────
   useEffect(() => { loadAll() }, [estimateId])
 
   async function loadAll() {
     setLoading(true)
-    const [estRes, optsRes, photosRes, attachRes] = await Promise.all([
-      supabase.from('estimates').select('*').eq('id', estimateId).single(),
-      supabase.from('estimate_options').select('*').eq('estimate_id', estimateId).order('sort_order'),
-      supabase.from('estimate_photos').select('*').eq('estimate_id', estimateId).order('sort_order'),
-      supabase.from('estimate_attachments').select('*, template:estimate_document_templates(*)').eq('estimate_id', estimateId).eq('is_enabled', true).order('sort_order'),
-    ])
-    if (estRes.data) setEstimate(estRes.data)
-    if (photosRes.data) setPhotos(photosRes.data)
-    if (attachRes.data) setAttachments(attachRes.data)
-    if (optsRes.data) {
-      const optsWithItems = await Promise.all(optsRes.data.map(async opt => {
-        const { data: items } = await supabase.from('estimate_line_items').select('*').eq('option_id', opt.id).order('sort_order')
-        return { ...opt, items: items || [] }
-      }))
-      setOptions(optsWithItems)
+    try {
+      const [estRes, optsRes, photosRes] = await Promise.all([
+        supabase.from('estimates').select('*').eq('id', estimateId).single(),
+        supabase.from('estimate_options').select('*').eq('estimate_id', estimateId).order('sort_order'),
+        supabase.from('estimate_photos').select('*').eq('estimate_id', estimateId).order('sort_order'),
+      ])
+
+      if (estRes.data) setEstimate(estRes.data)
+      if (photosRes.data) setPhotos(photosRes.data)
+
+      if (optsRes.data && optsRes.data.length > 0) {
+        const optsWithItems = await Promise.all(optsRes.data.map(async opt => {
+          const { data: items } = await supabase
+            .from('estimate_line_items')
+            .select('*')
+            .eq('option_id', opt.id)
+            .order('sort_order')
+          return { ...opt, items: items || [] }
+        }))
+        setOptions(optsWithItems)
+      } else {
+        // Default first option if none exist yet
+        setOptions([{ option_label: 'Option A', sort_order: 0, items: [] }])
+      }
+    } catch (err) {
+      console.error('[EstimateBuilder] Load error:', err)
     }
     setLoading(false)
   }
 
-  const fmt = (n: number) => `$${(n||0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-  const fmtDate = (d: string) => d ? new Date(d+'T00:00:00').toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'}).toUpperCase() : ''
+  // ── SAVE ─────────────────────────────────────────────────────────────────
+  async function handleSave() {
+    setSaving(true)
+    try {
+      // 1. Upsert estimate record
+      const { error: estErr } = await supabase
+        .from('estimates')
+        .upsert({ ...estimate, id: estimateId })
+      if (estErr) throw estErr
 
-  function optionTotal(opt: any) {
-    return (opt.items||[]).filter((i:any)=>!i.is_exclusion).reduce((s:number,i:any)=>s+(i.qty*i.unit_price),0)
+      // 2. Save each option + line items
+      const updatedOptions = [...options]
+      for (let optIdx = 0; optIdx < updatedOptions.length; optIdx++) {
+        const opt = updatedOptions[optIdx]
+        let optId = opt.id
+
+        if (optId) {
+          await supabase.from('estimate_options').update({
+            option_label: opt.option_label,
+            sort_order: optIdx,
+          }).eq('id', optId)
+        } else {
+          const { data: newOpt } = await supabase
+            .from('estimate_options')
+            .insert({ estimate_id: estimateId, option_label: opt.option_label, sort_order: optIdx })
+            .select()
+            .single()
+          optId = newOpt?.id
+          updatedOptions[optIdx] = { ...opt, id: optId }
+        }
+
+        if (!optId) continue
+
+        // Delete + reinsert line items (clean approach)
+        await supabase.from('estimate_line_items').delete().eq('option_id', optId)
+        if (opt.items.length > 0) {
+          await supabase.from('estimate_line_items').insert(
+            opt.items.map((item, itemIdx) => ({
+              option_id: optId,
+              section_name: item.section_name,
+              description: item.description,
+              qty: item.qty,
+              unit_price: item.unit_price,
+              sort_order: itemIdx,
+              is_exclusion: item.is_exclusion,
+            }))
+          )
+        }
+      }
+
+      // 3. Save photo captions
+      for (const photo of photos) {
+        if (photo.id) {
+          await supabase.from('estimate_photos').update({ caption: photo.caption }).eq('id', photo.id)
+        }
+      }
+
+      setOptions(updatedOptions)
+      setSaved(true)
+      setTimeout(() => setSaved(false), 2500)
+    } catch (err) {
+      console.error('[EstimateBuilder] Save error:', err)
+      alert('Save failed — check console for details.')
+    }
+    setSaving(false)
   }
 
-  if (loading) return <div className="flex items-center justify-center h-64 text-gray-400">Loading preview...</div>
-  if (!estimate) return <div className="p-8 text-gray-400">Estimate not found.</div>
+  // ── PHOTO UPLOAD ──────────────────────────────────────────────────────────
+  async function uploadPhoto(file: File, type: 'inspection' | 'property') {
+    setUploadingPhoto(true)
+    try {
+      const ext = file.name.split('.').pop()
+      const path = `estimates/${estimateId}/${type}_${Date.now()}.${ext}`
+      const { error: upErr } = await supabase.storage.from('estimate-photos').upload(path, file)
+      if (upErr) throw upErr
 
-  const clientName = `${estimate.client_first_name||''} ${estimate.client_last_name||''}`.trim()
-  const clientAddr = [estimate.client_address, estimate.client_city, `${estimate.client_state||''} ${estimate.client_zip||''}`.trim()].filter(Boolean).join(', ')
+      const { data: { publicUrl } } = supabase.storage.from('estimate-photos').getPublicUrl(path)
 
+      if (type === 'property') {
+        setEstimate(e => ({ ...e, property_photo_url: publicUrl }))
+      } else {
+        const newPhoto: Omit<Photo, 'id'> = {
+          estimate_id: estimateId,
+          photo_url: publicUrl,
+          caption: '',
+          sort_order: photos.length,
+        }
+        const { data: savedPhoto } = await supabase
+          .from('estimate_photos')
+          .insert(newPhoto)
+          .select()
+          .single()
+        if (savedPhoto) setPhotos(p => [...p, savedPhoto])
+      }
+    } catch (err) {
+      console.error('[EstimateBuilder] Upload error:', err)
+      alert('Photo upload failed.')
+    }
+    setUploadingPhoto(false)
+  }
+
+  async function deletePhoto(photoId: string) {
+    await supabase.from('estimate_photos').delete().eq('id', photoId)
+    setPhotos(p => p.filter(ph => ph.id !== photoId))
+  }
+
+  // ── OPTION HELPERS ────────────────────────────────────────────────────────
+  function addOption() {
+    const labels = ['Option A', 'Option B', 'Option C', 'Option D']
+    const newLabel = labels[options.length] || `Option ${options.length + 1}`
+    const newIdx = options.length
+    setOptions(o => [...o, { option_label: newLabel, sort_order: newIdx, items: [] }])
+    setActiveOptionIdx(newIdx)
+  }
+
+  async function deleteOption(idx: number) {
+    if (options.length === 1) return // must keep at least one
+    const opt = options[idx]
+    if (opt.id) {
+      await supabase.from('estimate_line_items').delete().eq('option_id', opt.id)
+      await supabase.from('estimate_options').delete().eq('id', opt.id)
+    }
+    const newOptions = options.filter((_, i) => i !== idx)
+    setOptions(newOptions)
+    setActiveOptionIdx(Math.max(0, idx - 1))
+  }
+
+  function addLineItem(optIdx: number) {
+    setOptions(opts => opts.map((opt, i) => i !== optIdx ? opt : {
+      ...opt,
+      items: [...opt.items, {
+        section_name: '',
+        description: '',
+        qty: 1,
+        unit_price: 0,
+        sort_order: opt.items.length,
+        is_exclusion: false,
+      }]
+    }))
+  }
+
+  function updateLineItem(optIdx: number, itemIdx: number, field: string, value: any) {
+    setOptions(opts => opts.map((opt, i) => i !== optIdx ? opt : {
+      ...opt,
+      items: opt.items.map((item, j) => j !== itemIdx ? item : { ...item, [field]: value })
+    }))
+  }
+
+  function deleteLineItem(optIdx: number, itemIdx: number) {
+    setOptions(opts => opts.map((opt, i) => i !== optIdx ? opt : {
+      ...opt,
+      items: opt.items.filter((_, j) => j !== itemIdx)
+    }))
+  }
+
+  function optionTotal(opt: Option) {
+    return opt.items
+      .filter(i => !i.is_exclusion)
+      .reduce((s, i) => s + (i.qty * i.unit_price), 0)
+  }
+
+  const fmt = (n: number) =>
+    `$${(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+
+  const clientDisplayName = `${estimate.client_first_name} ${estimate.client_last_name}`.trim()
+
+  // ── LOADING STATE ─────────────────────────────────────────────────────────
+  if (loading) return (
+    <div className="flex items-center justify-center h-screen bg-gray-950">
+      <div className="text-gray-400 text-sm">Loading estimate builder...</div>
+    </div>
+  )
+
+  // ── RENDER ────────────────────────────────────────────────────────────────
   return (
-    <>
-      <div className="no-print fixed top-4 right-4 z-50 flex gap-2">
-        <Link href={`/estimates/${estimateId}`} className="bg-gray-700 text-white text-sm px-4 py-2 rounded-lg hover:bg-gray-600">← Edit</Link>
-        <button onClick={()=>window.print()} className="bg-blue-600 text-white text-sm px-4 py-2 rounded-lg hover:bg-blue-700">🖨️ Print / Save PDF</button>
+    <div className="min-h-screen bg-gray-950 text-gray-100">
+
+      {/* ── TOP BAR ── */}
+      <div className="sticky top-0 z-50 bg-gray-900 border-b border-gray-800 px-6 py-3 flex items-center justify-between shadow-xl">
+        <div className="flex items-center gap-3">
+          <Link href="/estimates" className="text-gray-400 hover:text-white text-sm transition-colors">
+            ← Estimates
+          </Link>
+          <span className="text-gray-700">|</span>
+          <span className="text-white font-semibold text-sm">
+            {clientDisplayName || 'New Estimate'}
+          </span>
+          <span className={`text-xs px-2 py-0.5 rounded-full font-medium capitalize ${
+            estimate.status === 'signed' ? 'bg-green-900 text-green-300' :
+            estimate.status === 'sent' ? 'bg-blue-900 text-blue-300' :
+            estimate.status === 'declined' ? 'bg-red-900 text-red-300' :
+            'bg-gray-700 text-gray-400'
+          }`}>
+            {estimate.status}
+          </span>
+        </div>
+        <div className="flex gap-2">
+          <Link
+            href={`/estimates/${estimateId}/preview`}
+            className="px-4 py-2 text-sm bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors"
+          >
+            👁 Preview
+          </Link>
+          <button
+            onClick={handleSave}
+            disabled={saving}
+            className={`px-5 py-2 text-sm rounded-lg font-semibold transition-all ${
+              saved    ? 'bg-green-600 text-white' :
+              saving   ? 'bg-blue-800 text-blue-300 cursor-not-allowed' :
+                         'bg-blue-600 hover:bg-blue-500 text-white'
+            }`}
+          >
+            {saved ? '✓ Saved' : saving ? 'Saving...' : 'Save'}
+          </button>
+        </div>
       </div>
 
-      <style>{`
-        @media print {
-          .no-print { display: none !important; }
-          body { margin: 0; }
-          .page-break { page-break-after: always; break-after: page; }
-          .avoid-break { page-break-inside: avoid; break-inside: avoid; }
-          .tc-iframe { height: 900px !important; }
-        }
-        @page { margin: 0.6in; size: letter; }
-        body { font-family: Arial, Helvetica, sans-serif; }
-        .elite-blue { color: #1e3a6e; }
-        .elite-bg { background-color: #1e3a6e; }
-      `}</style>
+      {/* ── BODY ── */}
+      <div className="max-w-5xl mx-auto px-6 py-8 space-y-6">
 
-      <div className="max-w-[800px] mx-auto bg-white text-gray-900 py-8 px-4">
-
-        {/* PAGE 1: COVER */}
-        <div className="page-break">
-          <div className="elite-bg flex justify-between items-center px-6 py-4 mb-6">
-            <div>
-              <div className="text-white font-bold text-lg tracking-wide">ESTIMATE</div>
-              <div className="text-blue-200 text-sm">{fmtDate(estimate.estimate_date)}</div>
-            </div>
-            <div className="text-right">
-              <div className="text-white font-bold text-xl tracking-wider">ELITE WORK</div>
-              <div className="text-blue-200 text-xs">HOME IMPROVEMENT</div>
+        {/* 1. CLIENT INFO */}
+        <Section title="Client Info">
+          <div className="grid grid-cols-2 gap-4">
+            <Field label="First Name">
+              <input className={inputCls} value={estimate.client_first_name}
+                onChange={e => setEstimate(v => ({ ...v, client_first_name: e.target.value }))}
+                placeholder="John" />
+            </Field>
+            <Field label="Last Name">
+              <input className={inputCls} value={estimate.client_last_name}
+                onChange={e => setEstimate(v => ({ ...v, client_last_name: e.target.value }))}
+                placeholder="Smith" />
+            </Field>
+            <Field label="Email">
+              <input className={inputCls} type="email" value={estimate.client_email}
+                onChange={e => setEstimate(v => ({ ...v, client_email: e.target.value }))}
+                placeholder="client@email.com" />
+            </Field>
+            <Field label="Estimate Date">
+              <input className={inputCls} type="date" value={estimate.estimate_date}
+                onChange={e => setEstimate(v => ({ ...v, estimate_date: e.target.value }))} />
+            </Field>
+            <Field label="Street Address" className="col-span-2">
+              <input className={inputCls} value={estimate.client_address}
+                onChange={e => setEstimate(v => ({ ...v, client_address: e.target.value }))}
+                placeholder="123 Main St" />
+            </Field>
+            <Field label="City">
+              <input className={inputCls} value={estimate.client_city}
+                onChange={e => setEstimate(v => ({ ...v, client_city: e.target.value }))}
+                placeholder="Hackensack" />
+            </Field>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="State">
+                <input className={inputCls} value={estimate.client_state}
+                  onChange={e => setEstimate(v => ({ ...v, client_state: e.target.value }))}
+                  placeholder="NJ" />
+              </Field>
+              <Field label="ZIP">
+                <input className={inputCls} value={estimate.client_zip}
+                  onChange={e => setEstimate(v => ({ ...v, client_zip: e.target.value }))}
+                  placeholder="07601" />
+              </Field>
             </div>
           </div>
-          {estimate.property_photo_url&&(
-            <div className="mb-6"><img src={estimate.property_photo_url} alt="Property" className="w-full h-72 object-cover rounded-lg"/></div>
+        </Section>
+
+        {/* 2. SETTINGS */}
+        <Section title="Estimate Settings">
+          <div className="grid grid-cols-2 gap-6">
+            <div className="space-y-4">
+              <Toggle label="Show Inspection Photos page"
+                checked={estimate.show_inspection}
+                onChange={v => setEstimate(e => ({ ...e, show_inspection: v }))} />
+              <Toggle label="Show Terms & Conditions page"
+                checked={estimate.show_tc}
+                onChange={v => setEstimate(e => ({ ...e, show_tc: v }))} />
+              <Toggle label="Show Financing Options"
+                checked={estimate.show_financing}
+                onChange={v => setEstimate(e => ({ ...e, show_financing: v }))} />
+            </div>
+            {estimate.show_financing && (
+              <div className="pl-4 border-l border-gray-700 space-y-4">
+                <p className="text-xs text-gray-500 font-semibold uppercase tracking-wide">Active Partners</p>
+                <Toggle label="☀️ Sunlight Financial"
+                  checked={estimate.financing_sunlight}
+                  onChange={v => setEstimate(e => ({ ...e, financing_sunlight: v }))} />
+                <Toggle label="🟢 Upgrade Finance"
+                  checked={estimate.financing_upgrade}
+                  onChange={v => setEstimate(e => ({ ...e, financing_upgrade: v }))} />
+              </div>
+            )}
+          </div>
+          <div className="mt-5 pt-5 border-t border-gray-800">
+            <Field label="Estimate Status">
+              <select className={inputCls} value={estimate.status}
+                onChange={e => setEstimate(v => ({ ...v, status: e.target.value }))}>
+                <option value="draft">Draft</option>
+                <option value="sent">Sent</option>
+                <option value="viewed">Viewed</option>
+                <option value="signed">Signed</option>
+                <option value="declined">Declined</option>
+              </select>
+            </Field>
+          </div>
+        </Section>
+
+        {/* 3. PROPERTY PHOTO */}
+        <Section title="Property Photo — Cover Page">
+          {estimate.property_photo_url ? (
+            <div className="relative group">
+              <img src={estimate.property_photo_url} alt="Property"
+                className="w-full h-56 object-cover rounded-lg" />
+              <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity rounded-lg flex items-center justify-center">
+                <button
+                  onClick={() => setEstimate(e => ({ ...e, property_photo_url: '' }))}
+                  className="bg-red-600 text-white text-sm px-3 py-1.5 rounded-lg hover:bg-red-700"
+                >
+                  Remove Photo
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div
+              onClick={() => propertyPhotoRef.current?.click()}
+              className="border-2 border-dashed border-gray-700 rounded-lg h-40 flex flex-col items-center justify-center cursor-pointer hover:border-blue-500 hover:bg-gray-800/30 transition-all"
+            >
+              <div className="text-3xl text-gray-600 mb-2">🏠</div>
+              <div className="text-gray-400 text-sm">Click to upload property photo</div>
+              <div className="text-gray-600 text-xs mt-1">Appears on the cover page of the estimate</div>
+            </div>
           )}
-          <div className="flex justify-between items-end mb-6">
+          <input ref={propertyPhotoRef} type="file" accept="image/*" className="hidden"
+            onChange={e => { if (e.target.files?.[0]) uploadPhoto(e.target.files[0], 'property') }} />
+        </Section>
+
+        {/* 4. ESTIMATE OPTIONS + LINE ITEMS */}
+        <Section title="Estimate Options">
+
+          {/* Option Tabs */}
+          <div className="flex gap-2 mb-6 flex-wrap">
+            {options.map((opt, idx) => (
+              <button key={idx} onClick={() => setActiveOptionIdx(idx)}
+                className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                  activeOptionIdx === idx
+                    ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/30'
+                    : 'bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-gray-200'
+                }`}>
+                {opt.option_label || `Option ${idx + 1}`}
+              </button>
+            ))}
+            {options.length < 4 && (
+              <button onClick={addOption}
+                className="px-4 py-2 rounded-lg text-sm bg-transparent text-gray-500 hover:text-gray-300 border border-dashed border-gray-700 hover:border-gray-500 transition-all">
+                + Add Option
+              </button>
+            )}
+          </div>
+
+          {/* Active Option Editor */}
+          {options[activeOptionIdx] && (
             <div>
-              {clientName&&<div className="text-2xl font-bold elite-blue mb-1">{clientName.toUpperCase()}</div>}
-              {estimate.client_email&&<div className="text-gray-600 text-sm">{estimate.client_email}</div>}
-              {clientAddr&&<div className="text-gray-600 text-sm">{clientAddr}</div>}
-            </div>
-            <div className="text-center">
-              {estimate.cert_badge_url ? (
-                <img src={estimate.cert_badge_url} alt="Certification" className="w-24 h-24 object-contain"/>
-              ) : (
-                <div className="w-24 h-24 bg-gray-100 rounded-full flex items-center justify-center border-4 border-blue-800 text-center p-2">
-                  <div className="text-[10px] font-bold text-blue-900 leading-tight">GAF<br/>CERTIFIED<br/>PLUS™<br/>RESIDENTIAL</div>
+              {/* Option Label + Total */}
+              <div className="flex items-center gap-3 mb-5">
+                <input
+                  className={`${inputCls} max-w-xs font-semibold`}
+                  value={options[activeOptionIdx].option_label}
+                  placeholder="Option A"
+                  onChange={e => setOptions(opts => opts.map((o, i) =>
+                    i !== activeOptionIdx ? o : { ...o, option_label: e.target.value }
+                  ))}
+                />
+                <div className="ml-auto text-right">
+                  <div className="text-xs text-gray-500">Option Total</div>
+                  <div className="text-white font-bold text-lg">
+                    {fmt(optionTotal(options[activeOptionIdx]))}
+                  </div>
                 </div>
-              )}
-            </div>
-          </div>
-          <div className="elite-bg px-6 py-3 flex justify-end">
-            <div className="text-right">
-              <div className="text-white text-xs font-bold">info@eliteworkhomeimprovement.com</div>
-              <div className="text-blue-200 text-xs">201-699-7959</div>
-            </div>
-          </div>
-        </div>
+                {options.length > 1 && (
+                  <button onClick={() => deleteOption(activeOptionIdx)}
+                    className="text-xs text-red-500 hover:text-red-400 px-2 py-1 rounded border border-red-800 hover:border-red-600 transition-colors">
+                    Delete Option
+                  </button>
+                )}
+              </div>
 
-        {/* PAGE 2: INSPECTION PHOTOS */}
-        {estimate.show_inspection&&photos.length>0&&(
-          <div className="page-break mt-8">
-            <div className="elite-blue font-bold text-xl mb-4 pb-2 border-b-2 border-blue-800">INSPECTION</div>
-            <div className="grid grid-cols-2 gap-4">
-              {photos.map((p,i)=>(
-                <div key={i} className="avoid-break">
-                  <img src={p.photo_url} alt={p.caption||''} className="w-full h-52 object-cover rounded"/>
-                  {p.caption&&<div className="text-xs text-gray-500 mt-1">{p.caption}</div>}
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
+              {/* Line Item Table */}
+              <div className="space-y-2">
+                {/* Column Headers */}
+                {options[activeOptionIdx].items.length > 0 && (
+                  <div className="grid gap-2 text-xs font-semibold text-gray-500 uppercase tracking-wide px-2 mb-1"
+                    style={{ gridTemplateColumns: '160px 1fr 60px 110px 90px 28px' }}>
+                    <span>Section</span>
+                    <span>Description</span>
+                    <span className="text-center">Qty</span>
+                    <span className="text-right">Unit Price</span>
+                    <span className="text-right">Total</span>
+                    <span></span>
+                  </div>
+                )}
 
-        {/* PAGE 3+: ESTIMATE OPTIONS */}
-        {options.map((opt,optIdx)=>(
-          <div key={optIdx} className="page-break mt-8">
-            <div className="elite-blue font-bold text-xl mb-4 pb-2 border-b-2 border-blue-800">{opt.option_label.toUpperCase()}</div>
-            <table className="w-full text-sm mb-4">
-              <thead>
-                <tr className="border-b-2 border-gray-300">
-                  <th className="text-left py-2 text-xs font-bold text-gray-600 uppercase">Description</th>
-                  <th className="text-center py-2 text-xs font-bold text-gray-600 uppercase w-16">Qty</th>
-                  <th className="text-right py-2 text-xs font-bold text-gray-600 uppercase w-28">Unit Price</th>
-                  <th className="text-right py-2 text-xs font-bold text-gray-600 uppercase w-28">Line Total</th>
-                </tr>
-              </thead>
-              <tbody>
-                {(()=>{
-                  const sections=[...new Set(opt.items.map((i:any)=>i.section_name))]
-                  return sections.map((section:any)=>{
-                    const sectionItems=opt.items.filter((i:any)=>i.section_name===section&&!i.is_exclusion)
-                    const exclusions=opt.items.filter((i:any)=>i.section_name===section&&i.is_exclusion)
-                    const sectionTotal=sectionItems.reduce((s:number,i:any)=>s+(i.qty*i.unit_price),0)
-                    return (
-                      <tr key={section} className="border-b border-gray-100 avoid-break">
-                        <td className="py-3 pr-4 align-top">
-                          <div className="font-semibold text-gray-800 mb-1">{section}</div>
-                          <div className="text-xs text-gray-600 leading-relaxed whitespace-pre-wrap">{sectionItems.map((i:any)=>i.description).join('\n')}</div>
-                          {exclusions.length>0&&(
-                            <div className="mt-2">
-                              <div className="text-xs font-semibold text-gray-500">Exclusions</div>
-                              <div className="text-xs text-gray-400">{exclusions.map((i:any)=>i.description).join('\n')}</div>
-                            </div>
-                          )}
-                        </td>
-                        <td className="py-3 text-center text-sm align-top">{sectionItems.length===1?sectionItems[0].qty:''}</td>
-                        <td className="py-3 text-right text-sm align-top">{sectionItems.length===1?fmt(sectionItems[0].unit_price):''}</td>
-                        <td className="py-3 text-right text-sm font-medium align-top">{sectionTotal>0?fmt(sectionTotal):''}</td>
-                      </tr>
-                    )
-                  })
-                })()}
-              </tbody>
-            </table>
-            <div className="ml-auto w-64">
-              <div className="flex justify-between text-sm py-1 border-b border-gray-200"><span className="text-gray-500">Estimate subtotal</span><span>{fmt(optionTotal(opt))}</span></div>
-              <div className="flex justify-between text-base font-bold py-2"><span>Total</span><span className="elite-blue">{fmt(optionTotal(opt))}</span></div>
-            </div>
-
-            {/* ✅ FIX: Show BOTH financing options */}
-            {estimate.show_financing&&(estimate.financing_sunlight||estimate.financing_upgrade)&&(
-              <div className="mt-4 border border-gray-200 rounded-lg p-3">
-                <div className="text-xs font-semibold text-gray-600 mb-2">Financing Available:</div>
-                <div className="flex gap-4 flex-wrap">
-                  {estimate.financing_sunlight&&(
-                    <div className="flex items-center gap-2">
-                      <div className="w-6 h-6 bg-orange-500 rounded-full flex items-center justify-center text-white text-xs font-bold">S</div>
-                      <span className="text-sm font-semibold text-orange-600">Sunlight Financial</span>
-                      <span className="text-xs text-gray-400">— Contact us to apply</span>
+                {/* Line Items */}
+                {options[activeOptionIdx].items.map((item, itemIdx) => (
+                  <div key={itemIdx}
+                    className={`rounded-lg p-3 ${item.is_exclusion
+                      ? 'bg-orange-950/30 border border-dashed border-orange-900'
+                      : 'bg-gray-800 border border-gray-700'
+                    }`}>
+                    <div className="grid gap-2 items-start"
+                      style={{ gridTemplateColumns: '160px 1fr 60px 110px 90px 28px' }}>
+                      <input className={inputSmCls}
+                        placeholder="Section name"
+                        value={item.section_name}
+                        onChange={e => updateLineItem(activeOptionIdx, itemIdx, 'section_name', e.target.value)} />
+                      <textarea className={`${inputSmCls} resize-none`}
+                        rows={2}
+                        placeholder="Description / scope of work"
+                        value={item.description}
+                        onChange={e => updateLineItem(activeOptionIdx, itemIdx, 'description', e.target.value)} />
+                      <input className={`${inputSmCls} text-center`}
+                        type="number" min="0" step="0.01"
+                        value={item.qty}
+                        onChange={e => updateLineItem(activeOptionIdx, itemIdx, 'qty', parseFloat(e.target.value) || 0)} />
+                      <input className={`${inputSmCls} text-right`}
+                        type="number" min="0" step="0.01"
+                        value={item.unit_price}
+                        onChange={e => updateLineItem(activeOptionIdx, itemIdx, 'unit_price', parseFloat(e.target.value) || 0)} />
+                      <div className="text-right text-xs font-semibold text-gray-300 pt-2">
+                        {item.is_exclusion ? <span className="text-orange-500">excl.</span> : fmt(item.qty * item.unit_price)}
+                      </div>
+                      <button onClick={() => deleteLineItem(activeOptionIdx, itemIdx)}
+                        className="text-gray-600 hover:text-red-400 text-xl leading-none pt-1 transition-colors">
+                        ×
+                      </button>
                     </div>
-                  )}
-                  {estimate.financing_upgrade&&(
-                    <div className="flex items-center gap-2">
-                      <div className="w-6 h-6 bg-green-600 rounded-full flex items-center justify-center text-white text-xs font-bold">U</div>
-                      <span className="text-sm font-semibold text-green-700">Upgrade Finance</span>
-                      <span className="text-xs text-gray-400">— upgrade.com/h/sOOQuFJCUS</span>
+                    {/* Exclusion toggle */}
+                    <div className="flex items-center gap-2 mt-2 pl-1">
+                      <input type="checkbox"
+                        id={`excl-${itemIdx}`}
+                        checked={item.is_exclusion}
+                        onChange={e => updateLineItem(activeOptionIdx, itemIdx, 'is_exclusion', e.target.checked)}
+                        className="accent-orange-500 cursor-pointer" />
+                      <label htmlFor={`excl-${itemIdx}`}
+                        className="text-xs text-gray-500 cursor-pointer select-none hover:text-gray-300">
+                        Mark as exclusion (not included in price)
+                      </label>
                     </div>
-                  )}
-                </div>
-              </div>
-            )}
-            {estimate.notes&&<div className="mt-4 text-xs text-gray-500 border-t border-gray-100 pt-3">{estimate.notes}</div>}
-          </div>
-        ))}
+                  </div>
+                ))}
 
-        {/* T&C — PDF if uploaded, else default text */}
-        {estimate.show_tc&&(
-          <div className="page-break mt-8">
-            <div className="elite-blue font-bold text-xl mb-4 pb-2 border-b-2 border-blue-800">TERMS & CONDITIONS</div>
-            {estimate.tc_file_url ? (
-              <div>
-                <p className="text-xs text-gray-400 mb-2 no-print">T&C PDF will print as a separate page. <a href={estimate.tc_file_url} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">View PDF</a></p>
-                <iframe src={`${estimate.tc_file_url}#toolbar=0`} className="w-full tc-iframe border border-gray-200 rounded" style={{height:'700px'}} title="Terms and Conditions"/>
+                {/* Add Line Item */}
+                <button onClick={() => addLineItem(activeOptionIdx)}
+                  className="w-full py-3 border border-dashed border-gray-700 rounded-lg text-sm text-gray-500 hover:border-blue-600 hover:text-blue-400 transition-all hover:bg-blue-950/20">
+                  + Add Line Item
+                </button>
               </div>
-            ) : (
-              <div className="text-xs text-gray-700 leading-relaxed space-y-3">
-                <p>This Agreement is entered into between <strong>Elite Work Home Improvement LLC</strong> (&quot;Contractor&quot;) and the Owner.</p>
-                <p><strong>1. Project Description</strong><br/>The Contractor shall furnish all labor, materials, equipment, and services necessary to complete the project.</p>
-                <p><strong>2. Work Timeline</strong><br/>Work begins within ten (10) business days after contract execution.</p>
-                <p><strong>3. Compensation Terms</strong><br/>One-Third (1/3) due upon signing. Remaining balance due upon completion. Late balances accrue 1.5% monthly.</p>
-                <p><strong>4. Modifications to Work</strong><br/>Changes must be documented in writing and approved via a formal Change Order.</p>
-                <p><strong>5. Guarantees &amp; Warranties</strong><br/>Contractor warrants labor as specified. Excludes sealants, coatings, and cosmetic finishes.</p>
-                <p><strong>6. Insurance</strong><br/>Contractor carries General Liability and Workers&apos; Compensation Insurance.</p>
-                <p><strong>7. Cancellation Rights (NJ Law)</strong><br/>Owner may cancel within 3 business days. Refunds issued within 30 days.</p>
-                <p><strong>8. Resolution of Disputes</strong><br/>Disputes resolved through negotiation, then mediation, then binding arbitration under NJ law.</p>
-              </div>
-            )}
-            <div className="mt-4 pt-3 border-t border-gray-300">
-              <p className="text-xs text-gray-500">I acknowledge that I have read and understand this page. <strong>Initials:</strong> _____________</p>
             </div>
-          </div>
-        )}
+          )}
+        </Section>
 
-        {/* SIGNING PAGE — with checkboxes per option */}
-        <div className="mt-8">
-          <div className="elite-blue font-bold text-xl mb-4 pb-2 border-b-2 border-blue-800">SIGNING & UPGRADES</div>
-
-          <div className="mb-4">
-            <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Select the option(s) you would like to proceed with:</div>
-            {options.map((opt,i)=>(
-              <div key={i} className="flex items-center gap-4 mb-3 p-3 border border-gray-300 rounded-lg">
-                <div className="w-5 h-5 border-2 border-gray-400 rounded flex-shrink-0 flex items-center justify-center text-xs">☐</div>
-                <div className="flex-1">
-                  <div className="font-semibold text-gray-800">{opt.option_label}</div>
-                  <div className="text-xs text-gray-500 mt-0.5">{(opt.items||[]).filter((i:any)=>!i.is_exclusion).map((i:any)=>i.section_name).filter(Boolean).join(' + ')}</div>
+        {/* 5. INSPECTION PHOTOS */}
+        <Section title="Inspection Photos">
+          <div className="grid grid-cols-3 gap-4">
+            {photos.map((photo, idx) => (
+              <div key={idx} className="relative group">
+                <img src={photo.photo_url} alt={photo.caption || ''}
+                  className="w-full h-36 object-cover rounded-lg" />
+                <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity rounded-lg flex items-center justify-center">
+                  <button onClick={() => photo.id && deletePhoto(photo.id)}
+                    className="bg-red-600 text-white text-xs px-3 py-1.5 rounded hover:bg-red-700">
+                    Remove
+                  </button>
                 </div>
-                <div className="font-bold text-lg elite-blue">{fmt(optionTotal(opt))}</div>
+                <input
+                  className="mt-1.5 w-full bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-300 focus:outline-none focus:border-blue-500"
+                  placeholder="Caption (optional)"
+                  value={photo.caption}
+                  onChange={e => setPhotos(ps => ps.map((p, i) => i !== idx ? p : { ...p, caption: e.target.value }))} />
               </div>
             ))}
-          </div>
 
-          <div className="grid grid-cols-2 gap-4 mt-4 mb-4">
-            <div><div className="text-xs text-gray-400 uppercase tracking-wide mb-1">Name</div><div className="font-semibold">{clientName||'—'}</div></div>
-            <div><div className="text-xs text-gray-400 uppercase tracking-wide mb-1">Address</div><div className="text-sm">{clientAddr||'—'}</div></div>
-          </div>
-
-          <div className="bg-gray-100 rounded p-3 text-xs text-gray-600 mb-4 font-medium">
-            Estimates valid for 30 days / A 30% deposit is required before any project begins
-          </div>
-
-          {/* ✅ FIX: Show BOTH financing on signing page */}
-          {estimate.show_financing&&(estimate.financing_sunlight||estimate.financing_upgrade)&&(
-            <div className="flex gap-4 mb-6 flex-wrap">
-              {estimate.financing_sunlight&&(
-                <div className="flex items-center gap-3 px-4 py-3 border border-gray-200 rounded-lg flex-1">
-                  <div className="w-8 h-8 bg-orange-500 rounded-full flex items-center justify-center text-white text-sm font-bold">S</div>
-                  <div>
-                    <div className="font-bold text-sm">Sunlight Financial</div>
-                    <div className="text-xs text-gray-400">Financing available — contact us</div>
-                  </div>
-                </div>
-              )}
-              {estimate.financing_upgrade&&(
-                <div className="flex items-center gap-3 px-4 py-3 border border-gray-200 rounded-lg flex-1">
-                  <div className="w-8 h-8 bg-green-600 rounded-full flex items-center justify-center text-white text-sm font-bold">U</div>
-                  <div>
-                    <div className="font-bold text-sm">Upgrade Finance</div>
-                    <div className="text-xs text-gray-400">upgrade.com/h/sOOQuFJCUS</div>
-                  </div>
-                </div>
+            {/* Upload tile */}
+            <div
+              onClick={() => !uploadingPhoto && photoInputRef.current?.click()}
+              className="border-2 border-dashed border-gray-700 rounded-lg h-36 flex flex-col items-center justify-center cursor-pointer hover:border-blue-500 hover:bg-gray-800/30 transition-all">
+              {uploadingPhoto ? (
+                <div className="text-gray-400 text-xs">Uploading...</div>
+              ) : (
+                <>
+                  <div className="text-3xl text-gray-600">+</div>
+                  <div className="text-xs text-gray-500 mt-1">Add Photo</div>
+                </>
               )}
             </div>
-          )}
+          </div>
+          <input ref={photoInputRef} type="file" accept="image/*" className="hidden"
+            onChange={e => { if (e.target.files?.[0]) uploadPhoto(e.target.files[0], 'inspection') }} />
+        </Section>
 
-          <div className="mt-8 pt-4 border-t border-gray-300">
-            <div className="grid grid-cols-2 gap-8">
-              <div>
-                <div className="text-sm font-semibold mb-6">{clientName||'Client Name'}:</div>
-                <div className="border-b-2 border-gray-800 mb-1" style={{height:'32px'}}/>
-                <div className="text-xs text-gray-400">Signature</div>
-              </div>
-              <div>
-                <div className="text-sm font-semibold mb-6">Date:</div>
-                <div className="border-b-2 border-gray-800 mb-1" style={{height:'32px'}}/>
-                <div className="text-xs text-gray-400">Date</div>
-              </div>
-            </div>
-            <div className="mt-4 text-xs text-gray-500">
-              If you cancel this contract within the three day period, you are entitled to a full refund. Refunds must be made within 30 days of the contractor&apos;s receipt of the cancellation notice.
-            </div>
+        {/* 6. NOTES */}
+        <Section title="Notes (printed on estimate)">
+          <textarea
+            className={`${inputCls} resize-none`}
+            rows={4}
+            placeholder="Any notes to include at the bottom of each option page..."
+            value={estimate.notes}
+            onChange={e => setEstimate(v => ({ ...v, notes: e.target.value }))} />
+        </Section>
+
+        {/* BOTTOM ACTION BAR */}
+        <div className="flex justify-between items-center pb-16">
+          <Link href="/estimates"
+            className="text-sm text-gray-500 hover:text-gray-300 transition-colors">
+            ← Back to Estimates
+          </Link>
+          <div className="flex gap-3">
+            <Link href={`/estimates/${estimateId}/preview`}
+              className="px-6 py-3 bg-gray-800 hover:bg-gray-700 text-white rounded-lg font-medium transition-colors">
+              👁 Preview PDF
+            </Link>
+            <button onClick={handleSave} disabled={saving}
+              className={`px-8 py-3 rounded-lg font-semibold transition-all ${
+                saved    ? 'bg-green-600 text-white' :
+                saving   ? 'bg-blue-800 text-blue-300 cursor-not-allowed' :
+                           'bg-blue-600 hover:bg-blue-500 text-white'
+              }`}>
+              {saved ? '✓ Saved!' : saving ? 'Saving...' : 'Save Estimate'}
+            </button>
           </div>
         </div>
 
-        {/* DOCUMENT ATTACHMENTS */}
-        {attachments.length>0&&(
-          <div className="mt-8 pt-4 border-t border-gray-200 no-print">
-            <div className="text-sm font-semibold text-gray-600 mb-2">📎 Attached Documents:</div>
-            <ul className="text-xs text-gray-500 space-y-1">
-              {attachments.map((a,i)=><li key={i}>• {a.template?.name}</li>)}
-            </ul>
-          </div>
-        )}
-
       </div>
-    </>
+    </div>
   )
 }
