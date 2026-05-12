@@ -30,7 +30,6 @@ interface LeadSource { id: string; name: string }
 // ── Helpers ────────────────────────────────────────────────────────────────
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
 const WON_STAGES = ['closed_won', 'won']
-const ESTIMATED_STAGES = ['estimate_sent', 'closed_won', 'won', 'lost']
 const SRC_COLORS = ['#378ADD','#E07B3A','#10b981','#8b5cf6','#ec4899','#06b6d4','#f59e0b','#ef4444']
 
 function monthRange(y: number, m: number) {
@@ -53,18 +52,18 @@ function fmt$(n: number) {
 function pct(a: number, b: number) { return b === 0 ? '—' : Math.round((a / b) * 100) + '%' }
 function fmtDate(d: Date) { return `${MONTHS[d.getMonth()]} ${d.getDate()}` }
 
-// ── Collapsible ────────────────────────────────────────────────────────────
-function Expand({ label, value, color = '', children }: {
+// ── Collapsible metric (appointments / revenue) ────────────────────────────
+function ExpandMetric({ label, value, color = '', children }: {
   label: string; value: React.ReactNode; color?: string; children: React.ReactNode
 }) {
   const [open, setOpen] = useState(false)
   return (
-    <div className="border border-border rounded-lg overflow-hidden">
+    <div className="rounded-lg border border-border overflow-hidden bg-card">
       <button onClick={() => setOpen(v => !v)}
-        className="w-full flex items-center justify-between px-4 py-3 hover:bg-muted/30 transition-colors">
-        <span className="text-xs text-muted-foreground font-medium uppercase tracking-wide">{label}</span>
+        className="w-full flex items-center justify-between px-4 py-4 hover:bg-muted/30 transition-colors">
+        <span className="text-xs text-muted-foreground font-semibold uppercase tracking-wide">{label}</span>
         <div className="flex items-center gap-2">
-          <span className={`font-bold text-base ${color}`}>{value}</span>
+          <span className={`font-bold text-2xl ${color}`}>{value}</span>
           {open ? <ChevronUp className="h-3.5 w-3.5 text-muted-foreground" /> : <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />}
         </div>
       </button>
@@ -92,12 +91,14 @@ function Section({ title, badge, defaultOpen = true, children }: {
   )
 }
 
-// ── Metric Card ────────────────────────────────────────────────────────────
-function MetricCard({ label, value, sub, color = '' }: { label: string; value: string | number; sub?: string; color?: string }) {
+// ── Bold Metric Card — matching Marketing Spend style ──────────────────────
+function MetricCard({ label, value, sub, color = '' }: {
+  label: string; value: string | number; sub?: string; color?: string
+}) {
   return (
-    <div className="rounded-lg bg-muted/40 border border-border p-4">
-      <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium mb-2">{label}</p>
-      <p className={`text-2xl font-bold ${color}`}>{value}</p>
+    <div className="rounded-lg border border-border bg-card p-4 flex flex-col justify-between min-h-[100px]">
+      <p className="text-xs text-muted-foreground font-semibold uppercase tracking-wide mb-2">{label}</p>
+      <p className={`text-2xl font-bold ${color || 'text-foreground'}`}>{value}</p>
       {sub && <p className="text-xs text-muted-foreground mt-1">{sub}</p>}
     </div>
   )
@@ -125,7 +126,6 @@ export default function KPIPage() {
   const [spendForm, setSpendForm] = useState({ source_id: '', amount: '' })
   const [savingSpend, setSavingSpend] = useState(false)
 
-  // Date range
   const range = useMemo(() => {
     if (viewMode === 'monthly') return monthRange(year, month)
     return weekRange(weekOffset)
@@ -192,11 +192,8 @@ export default function KPIPage() {
     setLoading(false)
   }
 
-  const filtered = useMemo(() => {
-    return leads.filter(l => !filterSrc || l.source_id === filterSrc)
-  }, [leads, filterSrc])
+  const filtered = useMemo(() => leads.filter(l => !filterSrc || l.source_id === filterSrc), [leads, filterSrc])
 
-  // ── KPI Calculations ──────────────────────────────────────────────────
   const kpi = useMemo(() => {
     const total        = filtered.length
     const inPerson     = filtered.filter(l => l.contact_type === 'in_person').length
@@ -208,13 +205,12 @@ export default function KPIPage() {
     const coVolume     = changeOrders.reduce((s, co) => s + Number(co.amount || 0), 0)
     const totalRev     = contracted + coVolume
     const actual       = payments.reduce((s, p) => s + Number(p.amount || 0), 0)
-    const lsaTotal     = filtered.length
     const lsaCharged   = filtered.filter(l => l.lsa_status === 'charged' || l.lsa_status === 'submitted').length
     const lsaCredited  = filtered.filter(l => l.lsa_status === 'credited').length
     const lsaNotCharged = filtered.filter(l => l.lsa_status === 'not_charged' || !l.lsa_status).length
     const lsaInReview  = filtered.filter(l => l.lsa_status === 'in_review').length
     const totalSpend   = spend.filter(s => !filterSrc || s.source_id === filterSrc).reduce((s, r) => s + Number(r.amount_spent || 0), 0)
-    const apptAcqCost  = lsaCharged > 0 && totalSpend > 0 ? totalSpend / inPerson : 0
+    const apptAcqCost  = inPerson > 0 && totalSpend > 0 ? totalSpend / inPerson : 0
     const projAcqCost  = wonCount > 0 && totalSpend > 0 ? totalSpend / wonCount : 0
 
     const bySrc: Record<string, { name: string; total: number; inPerson: number; phoneQ: number; won: number; contracted: number; lsaCharged: number }> = {}
@@ -229,14 +225,9 @@ export default function KPIPage() {
       if (l.lsa_status === 'charged' || l.lsa_status === 'submitted') bySrc[key].lsaCharged++
     })
 
-    return {
-      total, inPerson, phoneQ, totalAppts, wonCount, contracted, coVolume, totalRev, actual,
-      lsaTotal, lsaCharged, lsaCredited, lsaNotCharged, lsaInReview,
-      totalSpend, apptAcqCost, projAcqCost, bySrc,
-    }
+    return { total, inPerson, phoneQ, totalAppts, wonCount, contracted, coVolume, totalRev, actual, lsaCharged, lsaCredited, lsaNotCharged, lsaInReview, totalSpend, apptAcqCost, projAcqCost, bySrc }
   }, [filtered, payments, spend, changeOrders, filterSrc])
 
-  // ── Spend by source ──────────────────────────────────────────────────
   const spendBySrc = useMemo(() => {
     const map: Record<string, { name: string; amount: number; source_id: string | null }> = {}
     spend.forEach(row => {
@@ -248,7 +239,6 @@ export default function KPIPage() {
     return Object.values(map).sort((a, b) => b.amount - a.amount)
   }, [spend])
 
-  // ── ADDITION: Insights data ────────────────────────────────────────────
   const srcList = Object.values(kpi.bySrc).sort((a, b) => b.total - a.total)
 
   const insightsData: InsightData = useMemo(() => ({
@@ -265,19 +255,11 @@ export default function KPIPage() {
         const key = Object.keys(kpi.bySrc).find(k => kpi.bySrc[k] === src)
         return s.source_id === key
       })
-      return {
-        name:       src.name,
-        leads:      src.total,
-        inPerson:   src.inPerson,
-        won:        src.won,
-        contracted: src.contracted,
-        spend:      srcSpendRow?.amount || 0,
-      }
+      return { name: src.name, leads: src.total, inPerson: src.inPerson, won: src.won, contracted: src.contracted, spend: srcSpendRow?.amount || 0 }
     }),
     trend: trend.map(t => ({ label: t.label, contracted: t.contracted, leads: t.leads })),
   }), [kpi, periodLabel, viewMode, srcList, spendBySrc, trend])
 
-  // ── Save spend ────────────────────────────────────────────────────────
   async function handleAddSpend() {
     if (!spendForm.amount || Number(spendForm.amount) <= 0) return
     setSavingSpend(true)
@@ -444,46 +426,68 @@ export default function KPIPage() {
             </div>
           </div>
 
-          {/* 2. KEY METRICS */}
+          {/* 2. KEY METRICS — bold cards */}
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-            <div className="col-span-1 rounded-lg border border-border overflow-hidden">
-              <button className="w-full px-4 pt-4 pb-2 text-left cursor-default">
-                <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium mb-1">Total Leads</p>
-                <p className="text-2xl font-bold">{kpi.total}</p>
+
+            {/* Total Leads */}
+            <div className="rounded-lg border border-border bg-card overflow-hidden">
+              <div className="px-4 py-4">
+                <p className="text-xs text-muted-foreground font-semibold uppercase tracking-wide mb-2">Total Leads</p>
+                <p className="text-3xl font-bold text-foreground">{kpi.total}</p>
                 <p className="text-xs text-muted-foreground mt-1">{periodLabel}</p>
-              </button>
-              <div className="px-4 pb-3 border-t border-border bg-muted/10 mt-2 pt-2">
+              </div>
+              <div className="px-4 pb-3 border-t border-border bg-muted/10 pt-2">
                 <div className="space-y-1">
-                  <div className="flex justify-between text-xs"><span className="text-muted-foreground">Charged</span><span className="font-medium">{kpi.lsaCharged}</span></div>
-                  <div className="flex justify-between text-xs"><span className="text-muted-foreground">Not charged</span><span>{kpi.lsaNotCharged}</span></div>
-                  <div className="flex justify-between text-xs"><span className="text-muted-foreground">In review</span><span>{kpi.lsaInReview}</span></div>
-                  <div className="flex justify-between text-xs"><span className="text-muted-foreground">Credited</span><span>{kpi.lsaCredited}</span></div>
+                  <div className="flex justify-between text-xs"><span className="text-muted-foreground">Charged</span><span className="font-semibold">{kpi.lsaCharged}</span></div>
+                  <div className="flex justify-between text-xs"><span className="text-muted-foreground">Not charged</span><span className="font-semibold">{kpi.lsaNotCharged}</span></div>
+                  <div className="flex justify-between text-xs"><span className="text-muted-foreground">In review</span><span className="font-semibold">{kpi.lsaInReview}</span></div>
+                  <div className="flex justify-between text-xs"><span className="text-muted-foreground">Credited</span><span className="font-semibold">{kpi.lsaCredited}</span></div>
                 </div>
               </div>
             </div>
 
-            <div className="col-span-1 rounded-lg border border-border overflow-hidden">
-              <Expand label="Total Appointments" value={kpi.totalAppts}>
+            {/* Total Appointments — expandable */}
+            <div className="rounded-lg border border-border bg-card overflow-hidden">
+              <ExpandMetric label="Total Appointments" value={kpi.totalAppts}>
                 <div className="space-y-2">
-                  <div className="flex justify-between text-sm"><span className="text-muted-foreground">In-person visits</span><span className="font-semibold">{kpi.inPerson}</span></div>
-                  <div className="flex justify-between text-sm"><span className="text-muted-foreground">Phone quotes</span><span className="font-semibold">{kpi.phoneQ}</span></div>
+                  <div className="flex justify-between text-sm"><span className="text-muted-foreground">In-person visits</span><span className="font-bold">{kpi.inPerson}</span></div>
+                  <div className="flex justify-between text-sm"><span className="text-muted-foreground">Phone quotes</span><span className="font-bold">{kpi.phoneQ}</span></div>
                 </div>
-              </Expand>
+              </ExpandMetric>
             </div>
 
-            <div className="col-span-1 rounded-lg border border-border overflow-hidden">
-              <Expand label="Total Revenue" value={fmt$(kpi.totalRev)} color="text-emerald-600">
+            {/* Total Revenue — expandable */}
+            <div className="rounded-lg border border-border bg-card overflow-hidden">
+              <ExpandMetric label="Total Revenue" value={fmt$(kpi.totalRev)} color="text-emerald-600">
                 <div className="space-y-2">
-                  <div className="flex justify-between text-sm"><span className="text-muted-foreground">Initial contracts</span><span className="font-semibold">{fmt$(kpi.contracted)}</span></div>
-                  <div className="flex justify-between text-sm"><span className="text-muted-foreground">Change orders</span><span className="font-semibold">{fmt$(kpi.coVolume)}</span></div>
-                  <div className="flex justify-between text-sm border-t border-border pt-2"><span className="text-muted-foreground">Collected (actual)</span><span className="font-semibold text-emerald-600">{fmt$(kpi.actual)}</span></div>
+                  <div className="flex justify-between text-sm"><span className="text-muted-foreground">Initial contracts</span><span className="font-bold">{fmt$(kpi.contracted)}</span></div>
+                  <div className="flex justify-between text-sm"><span className="text-muted-foreground">Change orders</span><span className="font-bold">{fmt$(kpi.coVolume)}</span></div>
+                  <div className="flex justify-between text-sm border-t border-border pt-2"><span className="text-muted-foreground">Collected (actual)</span><span className="font-bold text-emerald-600">{fmt$(kpi.actual)}</span></div>
                 </div>
-              </Expand>
+              </ExpandMetric>
             </div>
 
-            <MetricCard label="Appt Acquisition Cost" value={kpi.apptAcqCost > 0 ? fmt$(kpi.apptAcqCost) : '—'} sub={kpi.totalSpend > 0 ? `spend ÷ in-person appts` : 'log spend to calculate'} />
-            <MetricCard label="Marketing Proj. Acq. Cost" value={kpi.projAcqCost > 0 ? fmt$(kpi.projAcqCost) : '—'} sub={kpi.totalSpend > 0 ? `spend ÷ jobs closed` : 'log spend to calculate'} />
-            <MetricCard label="Overall Close Rate" value={pct(kpi.wonCount, kpi.total)} sub={`${kpi.wonCount} won / ${kpi.total} leads`} color={kpi.wonCount / Math.max(kpi.total, 1) >= 0.3 ? 'text-emerald-600' : ''} />
+            {/* Appt Acquisition Cost */}
+            <MetricCard
+              label="Appt Acquisition Cost"
+              value={kpi.apptAcqCost > 0 ? fmt$(kpi.apptAcqCost) : '—'}
+              sub={kpi.totalSpend > 0 ? 'spend ÷ in-person appts' : 'log spend to calculate'}
+            />
+
+            {/* Project Acquisition Cost */}
+            <MetricCard
+              label="Marketing Proj. Acq. Cost"
+              value={kpi.projAcqCost > 0 ? fmt$(kpi.projAcqCost) : '—'}
+              sub={kpi.totalSpend > 0 ? 'spend ÷ jobs closed' : 'log spend to calculate'}
+            />
+
+            {/* Close Rate */}
+            <MetricCard
+              label="Overall Close Rate"
+              value={pct(kpi.wonCount, kpi.total)}
+              sub={`${kpi.wonCount} won / ${kpi.total} leads`}
+              color={kpi.wonCount / Math.max(kpi.total, 1) >= 0.3 ? 'text-emerald-600' : 'text-foreground'}
+            />
           </div>
 
           {/* 3. SOURCE PERFORMANCE TABLE */}
@@ -497,7 +501,7 @@ export default function KPIPage() {
                     <thead>
                       <tr className="border-b border-border">
                         {['Source','Leads','Charged','Appts (In-Person)','Phone Quotes','Closed Won','Close %','Revenue','Spend','Appt Acq. Cost','Proj Acq. Cost'].map(h => (
-                          <th key={h} className="text-left text-xs text-muted-foreground font-medium pb-2 pr-3 whitespace-nowrap">{h}</th>
+                          <th key={h} className="text-left text-xs text-muted-foreground font-semibold pb-2 pr-3 whitespace-nowrap">{h}</th>
                         ))}
                       </tr>
                     </thead>
@@ -510,24 +514,24 @@ export default function KPIPage() {
                         const apptCost = src.inPerson > 0 && srcSpend > 0 ? srcSpend / src.inPerson : 0
                         const projCost = src.won > 0 && srcSpend > 0 ? srcSpend / src.won : 0
                         const cr = src.total > 0 ? Math.round((src.won / src.total) * 100) : 0
-                        const crColor = cr >= 40 ? 'text-emerald-600' : cr >= 20 ? 'text-yellow-600' : 'text-red-500'
+                        const crColor = cr >= 40 ? 'text-emerald-600 font-bold' : cr >= 20 ? 'text-yellow-600 font-bold' : 'text-red-500 font-bold'
                         return (
                           <tr key={src.name} className="border-b border-border/50 hover:bg-muted/20">
                             <td className="py-3 pr-3">
                               <div className="flex items-center gap-2">
                                 <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: SRC_COLORS[i % SRC_COLORS.length] }} />
-                                <span className="font-medium">{src.name}</span>
+                                <span className="font-semibold">{src.name}</span>
                               </div>
                             </td>
-                            <td className="py-3 pr-3">{src.total}</td>
+                            <td className="py-3 pr-3 font-semibold">{src.total}</td>
                             <td className="py-3 pr-3 text-muted-foreground">{src.lsaCharged}</td>
-                            <td className="py-3 pr-3">{src.inPerson}</td>
+                            <td className="py-3 pr-3 font-semibold">{src.inPerson}</td>
                             <td className="py-3 pr-3 text-muted-foreground">{src.phoneQ}</td>
                             <td className="py-3 pr-3">
-                              <span className="px-2 py-0.5 rounded-full text-xs bg-emerald-100 text-emerald-700 font-medium dark:bg-emerald-900/30 dark:text-emerald-400">{src.won}</span>
+                              <span className="px-2 py-0.5 rounded-full text-xs bg-emerald-100 text-emerald-700 font-bold dark:bg-emerald-900/30 dark:text-emerald-400">{src.won}</span>
                             </td>
-                            <td className={`py-3 pr-3 font-medium ${crColor}`}>{src.total > 0 ? cr + '%' : '—'}</td>
-                            <td className="py-3 pr-3 font-medium text-emerald-600">{src.contracted > 0 ? fmt$(src.contracted) : '—'}</td>
+                            <td className={`py-3 pr-3 ${crColor}`}>{src.total > 0 ? cr + '%' : '—'}</td>
+                            <td className="py-3 pr-3 font-bold text-emerald-600">{src.contracted > 0 ? fmt$(src.contracted) : '—'}</td>
                             <td className="py-3 pr-3 text-muted-foreground">{srcSpend > 0 ? fmt$(srcSpend) : '—'}</td>
                             <td className="py-3 pr-3 text-muted-foreground">{apptCost > 0 ? fmt$(apptCost) : '—'}</td>
                             <td className="py-3 pr-3 text-muted-foreground">{projCost > 0 ? fmt$(projCost) : '—'}</td>
@@ -561,7 +565,7 @@ export default function KPIPage() {
                           <div className="flex-1 h-2 bg-muted rounded-full overflow-hidden">
                             <div className="h-full rounded-full transition-all" style={{ background: SRC_COLORS[i % SRC_COLORS.length], width: `${(src.contracted / maxRev) * 100}%` }} />
                           </div>
-                          <span className="text-xs font-medium w-14 text-right">{fmt$(src.contracted)}</span>
+                          <span className="text-xs font-bold w-14 text-right">{fmt$(src.contracted)}</span>
                         </div>
                       ))}
                     </div>
@@ -571,13 +575,10 @@ export default function KPIPage() {
             )}
           </Section>
 
-          {/* ── ADDITION: KPI Performance Analysis ── */}
-          <KpiInsights
-            label="KPI Performance Analysis"
-            data={insightsData}
-          />
+          {/* 4. KPI INSIGHTS */}
+          <KpiInsights label="KPI Performance Analysis" data={insightsData} />
 
-          {/* 4. REVENUE TREND */}
+          {/* 5. REVENUE TREND */}
           {viewMode === 'monthly' && (
             <Section title="Revenue Trend — Last 6 Months" defaultOpen={false}>
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
