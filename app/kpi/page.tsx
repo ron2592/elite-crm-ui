@@ -10,6 +10,7 @@ import {
   ChevronLeft, ChevronRight, ChevronDown, ChevronUp,
   Plus, Save, X, Loader2, LayoutDashboard, Printer, UserCheck,
 } from 'lucide-react'
+import KpiInsights, { InsightData } from '@/components/KpiInsights'
 
 // ── Types ──────────────────────────────────────────────────────────────────
 interface LeadRow {
@@ -152,7 +153,6 @@ export default function KPIPage() {
       supabase.from('lead_sources').select('id,name').order('name'),
     ])
 
-    // Change orders for won leads
     const wonIds = (leadsRes.data || []).filter((l: any) => WON_STAGES.includes(l.status)).map((l: any) => l.id)
     let coData: any[] = []
     if (wonIds.length > 0) {
@@ -160,7 +160,6 @@ export default function KPIPage() {
       coData = data || []
     }
 
-    // 6-month trend (monthly only)
     if (viewMode === 'monthly') {
       const trendStart = new Date(year, month - 5, 1).toISOString()
       const [tLeads, tPay] = await Promise.all([
@@ -209,20 +208,15 @@ export default function KPIPage() {
     const coVolume     = changeOrders.reduce((s, co) => s + Number(co.amount || 0), 0)
     const totalRev     = contracted + coVolume
     const actual       = payments.reduce((s, p) => s + Number(p.amount || 0), 0)
-
-    // LSA lead counts by status
-    const lsaTotal     = filtered.length  // all leads in period
+    const lsaTotal     = filtered.length
     const lsaCharged   = filtered.filter(l => l.lsa_status === 'charged' || l.lsa_status === 'submitted').length
     const lsaCredited  = filtered.filter(l => l.lsa_status === 'credited').length
     const lsaNotCharged = filtered.filter(l => l.lsa_status === 'not_charged' || !l.lsa_status).length
     const lsaInReview  = filtered.filter(l => l.lsa_status === 'in_review').length
-
     const totalSpend   = spend.filter(s => !filterSrc || s.source_id === filterSrc).reduce((s, r) => s + Number(r.amount_spent || 0), 0)
-    // Acquisition costs use charged leads only
-    const apptAcqCost    = lsaCharged > 0 && totalSpend > 0 ? totalSpend / inPerson : 0
-    const projAcqCost    = wonCount > 0 && totalSpend > 0 ? totalSpend / wonCount : 0
+    const apptAcqCost  = lsaCharged > 0 && totalSpend > 0 ? totalSpend / inPerson : 0
+    const projAcqCost  = wonCount > 0 && totalSpend > 0 ? totalSpend / wonCount : 0
 
-    // By source
     const bySrc: Record<string, { name: string; total: number; inPerson: number; phoneQ: number; won: number; contracted: number; lsaCharged: number }> = {}
     filtered.forEach(l => {
       const key  = l.source_id || 'unknown'
@@ -254,6 +248,35 @@ export default function KPIPage() {
     return Object.values(map).sort((a, b) => b.amount - a.amount)
   }, [spend])
 
+  // ── ADDITION: Insights data ────────────────────────────────────────────
+  const srcList = Object.values(kpi.bySrc).sort((a, b) => b.total - a.total)
+
+  const insightsData: InsightData = useMemo(() => ({
+    totalLeads:      kpi.total,
+    totalAppts:      kpi.inPerson,
+    totalPhoneQ:     kpi.phoneQ,
+    totalWon:        kpi.wonCount,
+    totalContracted: kpi.contracted + kpi.coVolume,
+    totalSpend:      kpi.totalSpend,
+    period:          periodLabel,
+    viewMode,
+    sources: srcList.map(src => {
+      const srcSpendRow = spendBySrc.find(s => {
+        const key = Object.keys(kpi.bySrc).find(k => kpi.bySrc[k] === src)
+        return s.source_id === key
+      })
+      return {
+        name:       src.name,
+        leads:      src.total,
+        inPerson:   src.inPerson,
+        won:        src.won,
+        contracted: src.contracted,
+        spend:      srcSpendRow?.amount || 0,
+      }
+    }),
+    trend: trend.map(t => ({ label: t.label, contracted: t.contracted, leads: t.leads })),
+  }), [kpi, periodLabel, viewMode, srcList, spendBySrc, trend])
+
   // ── Save spend ────────────────────────────────────────────────────────
   async function handleAddSpend() {
     if (!spendForm.amount || Number(spendForm.amount) <= 0) return
@@ -282,8 +305,7 @@ export default function KPIPage() {
     else setWeekOffset(w => Math.min(w + 1, 0))
   }
 
-  const srcList = Object.values(kpi.bySrc).sort((a, b) => b.total - a.total)
-  const maxRev  = Math.max(...srcList.map(s => s.contracted), 1)
+  const maxRev = Math.max(...srcList.map(s => s.contracted), 1)
 
   return (
     <div className="p-6 max-w-6xl mx-auto space-y-5">
@@ -309,7 +331,6 @@ export default function KPIPage() {
             className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md border border-border hover:bg-muted text-muted-foreground">
             <Printer className="h-3.5 w-3.5" /> Export PDF
           </button>
-          {/* View toggle */}
           <div className="flex rounded-lg border border-border overflow-hidden">
             {(['monthly','weekly'] as const).map(v => (
               <button key={v} onClick={() => { setViewMode(v); setWeekOffset(0) }}
@@ -318,7 +339,6 @@ export default function KPIPage() {
               </button>
             ))}
           </div>
-          {/* Period nav */}
           <div className="flex items-center gap-1 rounded-lg border border-border px-2 py-1">
             <button onClick={prevPeriod} className="p-1 hover:bg-muted rounded"><ChevronLeft className="h-4 w-4" /></button>
             <span className="text-sm font-medium w-48 text-center">{periodLabel}</span>
@@ -351,9 +371,7 @@ export default function KPIPage() {
       ) : (
         <div className="space-y-5">
 
-          {/* ═══════════════════════════════════════════════════
-              1. MARKETING SPEND — TOP, PROMINENT
-          ═══════════════════════════════════════════════════ */}
+          {/* 1. MARKETING SPEND */}
           <div className="rounded-xl border-2 border-primary/30 bg-primary/5 overflow-hidden">
             <div className="px-6 py-4 border-b border-primary/20 flex items-center justify-between">
               <div>
@@ -402,7 +420,6 @@ export default function KPIPage() {
               </div>
             )}
 
-            {/* Spend by source */}
             <div className="px-6 py-4">
               {spendBySrc.length === 0 ? (
                 <p className="text-sm text-muted-foreground text-center py-2">No spend logged for {periodLabel}. Click "Log Spend" to add.</p>
@@ -427,12 +444,8 @@ export default function KPIPage() {
             </div>
           </div>
 
-          {/* ═══════════════════════════════════════════════════
-              2. KEY METRICS
-          ═══════════════════════════════════════════════════ */}
+          {/* 2. KEY METRICS */}
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-
-            {/* Total Leads */}
             <div className="col-span-1 rounded-lg border border-border overflow-hidden">
               <button className="w-full px-4 pt-4 pb-2 text-left cursor-default">
                 <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium mb-1">Total Leads</p>
@@ -449,68 +462,31 @@ export default function KPIPage() {
               </div>
             </div>
 
-            {/* Total Appointments — expandable */}
             <div className="col-span-1 rounded-lg border border-border overflow-hidden">
               <Expand label="Total Appointments" value={kpi.totalAppts}>
                 <div className="space-y-2">
-                  <div className="flex justify-between text-sm">
-                    <span className="text-muted-foreground">In-person visits</span>
-                    <span className="font-semibold">{kpi.inPerson}</span>
-                  </div>
-                  <div className="flex justify-between text-sm">
-                    <span className="text-muted-foreground">Phone quotes</span>
-                    <span className="font-semibold">{kpi.phoneQ}</span>
-                  </div>
+                  <div className="flex justify-between text-sm"><span className="text-muted-foreground">In-person visits</span><span className="font-semibold">{kpi.inPerson}</span></div>
+                  <div className="flex justify-between text-sm"><span className="text-muted-foreground">Phone quotes</span><span className="font-semibold">{kpi.phoneQ}</span></div>
                 </div>
               </Expand>
             </div>
 
-            {/* Total Revenue — expandable */}
             <div className="col-span-1 rounded-lg border border-border overflow-hidden">
               <Expand label="Total Revenue" value={fmt$(kpi.totalRev)} color="text-emerald-600">
                 <div className="space-y-2">
-                  <div className="flex justify-between text-sm">
-                    <span className="text-muted-foreground">Initial contracts</span>
-                    <span className="font-semibold">{fmt$(kpi.contracted)}</span>
-                  </div>
-                  <div className="flex justify-between text-sm">
-                    <span className="text-muted-foreground">Change orders</span>
-                    <span className="font-semibold">{fmt$(kpi.coVolume)}</span>
-                  </div>
-                  <div className="flex justify-between text-sm border-t border-border pt-2">
-                    <span className="text-muted-foreground">Collected (actual)</span>
-                    <span className="font-semibold text-emerald-600">{fmt$(kpi.actual)}</span>
-                  </div>
+                  <div className="flex justify-between text-sm"><span className="text-muted-foreground">Initial contracts</span><span className="font-semibold">{fmt$(kpi.contracted)}</span></div>
+                  <div className="flex justify-between text-sm"><span className="text-muted-foreground">Change orders</span><span className="font-semibold">{fmt$(kpi.coVolume)}</span></div>
+                  <div className="flex justify-between text-sm border-t border-border pt-2"><span className="text-muted-foreground">Collected (actual)</span><span className="font-semibold text-emerald-600">{fmt$(kpi.actual)}</span></div>
                 </div>
               </Expand>
             </div>
 
-            {/* Appt Acquisition Cost */}
-            <MetricCard
-              label="Appt Acquisition Cost"
-              value={kpi.apptAcqCost > 0 ? fmt$(kpi.apptAcqCost) : '—'}
-              sub={kpi.totalSpend > 0 ? `spend ÷ in-person appts` : 'log spend to calculate'}
-            />
-
-            {/* Project Acquisition Cost */}
-            <MetricCard
-              label="Marketing Proj. Acq. Cost"
-              value={kpi.projAcqCost > 0 ? fmt$(kpi.projAcqCost) : '—'}
-              sub={kpi.totalSpend > 0 ? `spend ÷ jobs closed` : 'log spend to calculate'}
-            />
-
-            {/* Close Rate */}
-            <MetricCard
-              label="Overall Close Rate"
-              value={pct(kpi.wonCount, kpi.total)}
-              sub={`${kpi.wonCount} won / ${kpi.total} leads`}
-              color={kpi.wonCount / Math.max(kpi.total, 1) >= 0.3 ? 'text-emerald-600' : ''}
-            />
+            <MetricCard label="Appt Acquisition Cost" value={kpi.apptAcqCost > 0 ? fmt$(kpi.apptAcqCost) : '—'} sub={kpi.totalSpend > 0 ? `spend ÷ in-person appts` : 'log spend to calculate'} />
+            <MetricCard label="Marketing Proj. Acq. Cost" value={kpi.projAcqCost > 0 ? fmt$(kpi.projAcqCost) : '—'} sub={kpi.totalSpend > 0 ? `spend ÷ jobs closed` : 'log spend to calculate'} />
+            <MetricCard label="Overall Close Rate" value={pct(kpi.wonCount, kpi.total)} sub={`${kpi.wonCount} won / ${kpi.total} leads`} color={kpi.wonCount / Math.max(kpi.total, 1) >= 0.3 ? 'text-emerald-600' : ''} />
           </div>
 
-          {/* ═══════════════════════════════════════════════════
-              3. SOURCE PERFORMANCE TABLE
-          ═══════════════════════════════════════════════════ */}
+          {/* 3. SOURCE PERFORMANCE TABLE */}
           <Section title="Lead Source Performance" badge={`${srcList.length} sources`} defaultOpen>
             {srcList.length === 0 ? (
               <p className="text-sm text-muted-foreground text-center py-4">No leads for this period.</p>
@@ -558,7 +534,6 @@ export default function KPIPage() {
                           </tr>
                         )
                       })}
-                      {/* Totals */}
                       <tr className="bg-muted/30 font-bold border-t-2 border-border">
                         <td className="py-2.5 pr-3 text-xs uppercase text-muted-foreground tracking-wide">Total</td>
                         <td className="py-2.5 pr-3">{kpi.total}</td>
@@ -576,7 +551,6 @@ export default function KPIPage() {
                   </table>
                 </div>
 
-                {/* Revenue bar visual */}
                 {srcList.some(s => s.contracted > 0) && (
                   <div className="mt-4 pt-4 border-t border-border">
                     <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Revenue by source</p>
@@ -597,9 +571,13 @@ export default function KPIPage() {
             )}
           </Section>
 
-          {/* ═══════════════════════════════════════════════════
-              4. REVENUE TREND (monthly only)
-          ═══════════════════════════════════════════════════ */}
+          {/* ── ADDITION: KPI Performance Analysis ── */}
+          <KpiInsights
+            label="KPI Performance Analysis"
+            data={insightsData}
+          />
+
+          {/* 4. REVENUE TREND */}
           {viewMode === 'monthly' && (
             <Section title="Revenue Trend — Last 6 Months" defaultOpen={false}>
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
