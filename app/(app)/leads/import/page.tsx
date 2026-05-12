@@ -276,6 +276,11 @@ function buildLead(row: Record<string, string>, mapping: Record<string, string>,
     if (bad_lead) lead.bad_lead = true;
   }
 
+// Set lead_name — required field (NOT NULL)
+  lead.lead_name = [lead.first_name, lead.last_name].filter(Boolean).join(" ").trim()
+    || lead.phone
+    || "Imported Lead"
+
   return { lead, hasIdentifier };
 }
 
