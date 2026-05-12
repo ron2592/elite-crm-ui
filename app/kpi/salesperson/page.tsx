@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabaseClient'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts'
 import { ChevronLeft, ChevronRight, TrendingUp, Plus, Trash2, X, UserPlus } from 'lucide-react'
+import KpiInsights, { InsightData } from '@/components/KpiInsights'
 
 // ── Types ──────────────────────────────────────────────────────────────────
 interface Salesperson { id: string; name: string }
@@ -18,8 +19,8 @@ interface PaymentRow { amount: number; paid_at: string; lead_id: string }
 
 // ── Constants ──────────────────────────────────────────────────────────────
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
-const WON_STAGES    = ['closed_won', 'won']
-const EST_STAGES    = ['estimate_sent', 'closed_won', 'won', 'lost']
+const WON_STAGES = ['closed_won', 'won']
+const EST_STAGES = ['estimate_sent', 'closed_won', 'won', 'lost']
 const PALETTE = [
   { bg: 'bg-blue-950/30',    border: 'border-blue-700',    text: 'text-blue-400',    bar: '#378ADD' },
   { bg: 'bg-purple-950/30',  border: 'border-purple-700',  text: 'text-purple-400',  bar: '#8b5cf6' },
@@ -32,6 +33,18 @@ const DEFAULT_PAL = { bg: 'bg-gray-800/50', border: 'border-gray-600', text: 'te
 // ── Helpers ────────────────────────────────────────────────────────────────
 const fmt$ = (n: number) => n >= 1000 ? '$' + (n/1000).toFixed(1).replace(/\.0$/,'') + 'k' : '$' + Math.round(n).toLocaleString()
 const pct  = (a: number, b: number) => b === 0 ? '—' : Math.round((a/b)*100) + '%'
+
+function getWeekRange(offset: number) {
+  const now = new Date()
+  const monday = new Date(now)
+  monday.setDate(now.getDate() - ((now.getDay() + 6) % 7) + offset * 7)
+  monday.setHours(0, 0, 0, 0)
+  const sunday = new Date(monday)
+  sunday.setDate(monday.getDate() + 7)
+  return { start: monday.toISOString(), end: sunday.toISOString(), monday, sunday }
+}
+
+function fmtShort(d: Date) { return `${MONTHS[d.getMonth()]} ${d.getDate()}` }
 
 function Stat({ label, value }: { label: string; value: string | number }) {
   return (
@@ -46,8 +59,12 @@ function Stat({ label, value }: { label: string; value: string | number }) {
 export default function SalespersonKPIPage() {
   const today = new Date()
   const router = useRouter()
-  const [year, setYear]   = useState(today.getFullYear())
-  const [month, setMonth] = useState(today.getMonth())
+
+  // ── View mode ──────────────────────────────────────────────────────────
+  const [viewMode, setViewMode]     = useState<'monthly' | 'weekly'>('monthly')
+  const [year, setYear]             = useState(today.getFullYear())
+  const [month, setMonth]           = useState(today.getMonth())
+  const [weekOffset, setWeekOffset] = useState(0)
 
   const [salespersons, setSalespersons] = useState<Salesperson[]>([])
   const [leads, setLeads]               = useState<LeadRow[]>([])
@@ -55,24 +72,40 @@ export default function SalespersonKPIPage() {
   const [trendLeads, setTrendLeads]     = useState<any[]>([])
   const [loading, setLoading]           = useState(true)
 
-  // Manage salespersons UI
-  const [showManager, setShowManager]   = useState(false)
-  const [newName, setNewName]           = useState('')
-  const [saving, setSaving]             = useState(false)
+  const [showManager, setShowManager] = useState(false)
+  const [newName, setNewName]         = useState('')
+  const [saving, setSaving]           = useState(false)
 
-  useEffect(() => { fetchAll() }, [year, month])
+  // ── Compute date range + label ─────────────────────────────────────────
+  const { rangeStart, rangeEnd, periodLabel } = useMemo(() => {
+    if (viewMode === 'monthly') {
+      return {
+        rangeStart:  new Date(year, month, 1).toISOString(),
+        rangeEnd:    new Date(year, month + 1, 1).toISOString(),
+        periodLabel: `${MONTHS[month]} ${year}`,
+      }
+    }
+    const { start, end, monday, sunday } = getWeekRange(weekOffset)
+    const label = weekOffset === 0
+      ? `This week (${fmtShort(monday)} – ${fmtShort(sunday)})`
+      : weekOffset === -1
+      ? `Last week (${fmtShort(monday)} – ${fmtShort(sunday)})`
+      : `${fmtShort(monday)} – ${fmtShort(sunday)}`
+    return { rangeStart: start, rangeEnd: end, periodLabel: label }
+  }, [viewMode, year, month, weekOffset])
+
+  useEffect(() => { fetchAll() }, [rangeStart, rangeEnd])
 
   async function fetchAll() {
     setLoading(true)
-    const start      = new Date(year, month, 1).toISOString()
-    const end        = new Date(year, month + 1, 1).toISOString()
     const trendStart = new Date(year, month - 5, 1).toISOString()
+    const trendEnd   = new Date(year, month + 1, 1).toISOString()
 
     const [spRes, leadsRes, paymentsRes, trendRes] = await Promise.all([
       supabase.from('salespersons').select('id, name').order('name'),
-      supabase.from('leads').select('id,status,contact_type,initial_contract_value,created_at,metadata,lead_sources(name)').gte('created_at', start).lt('created_at', end).eq('archived', false),
-      supabase.from('payments').select('amount,paid_at,lead_id').gte('paid_at', start).lt('paid_at', end),
-      supabase.from('leads').select('status,initial_contract_value,created_at,metadata').gte('created_at', trendStart).lt('created_at', end).eq('archived', false),
+      supabase.from('leads').select('id,status,contact_type,initial_contract_value,created_at,metadata,lead_sources(name)').gte('created_at', rangeStart).lt('created_at', rangeEnd).eq('archived', false),
+      supabase.from('payments').select('amount,paid_at,lead_id').gte('paid_at', rangeStart).lt('paid_at', rangeEnd),
+      supabase.from('leads').select('status,initial_contract_value,created_at,metadata').gte('created_at', trendStart).lt('created_at', trendEnd).eq('archived', false),
     ])
 
     setSalespersons(spRes.data || [])
@@ -82,14 +115,11 @@ export default function SalespersonKPIPage() {
     setLoading(false)
   }
 
-  // ── Add salesperson ────────────────────────────────────────────────────
+  // ── Add / Delete salesperson ───────────────────────────────────────────
   async function addSalesperson() {
     if (!newName.trim()) return
     setSaving(true)
-    const { data, error } = await supabase
-      .from('salespersons')
-      .insert({ name: newName.trim() })
-      .select().single()
+    const { data, error } = await supabase.from('salespersons').insert({ name: newName.trim() }).select().single()
     if (!error && data) {
       setSalespersons(s => [...s, data].sort((a, b) => a.name.localeCompare(b.name)))
       setNewName('')
@@ -99,19 +129,17 @@ export default function SalespersonKPIPage() {
     setSaving(false)
   }
 
-  // ── Delete salesperson ─────────────────────────────────────────────────
   async function deleteSalesperson(id: string, name: string) {
     if (!confirm(`Remove "${name}" from salesperson list? Their past lead data is not affected.`)) return
     await supabase.from('salespersons').delete().eq('id', id)
     setSalespersons(s => s.filter(sp => sp.id !== id))
   }
 
-  // ── Build stats per salesperson ────────────────────────────────────────
+  // ── Stats per salesperson ──────────────────────────────────────────────
   const spData = useMemo(() => {
     const payByLead: Record<string, number> = {}
     payments.forEach(p => { payByLead[p.lead_id] = (payByLead[p.lead_id] || 0) + Number(p.amount) })
 
-    // Build stats from leads
     const statsMap: Record<string, {
       leads: number; inPerson: number; phoneQ: number; estimated: number;
       won: number; contracted: number; actual: number;
@@ -121,7 +149,6 @@ export default function SalespersonKPIPage() {
     leads.forEach(l => {
       const rawSP = (l.metadata?.salesperson || '').trim()
       if (!rawSP) return
-      // Match case-insensitively to salesperson name
       const matched = salespersons.find(s => s.name.toLowerCase() === rawSP.toLowerCase())
       const spName = matched?.name || rawSP
       if (!statsMap[spName]) statsMap[spName] = { leads: 0, inPerson: 0, phoneQ: 0, estimated: 0, won: 0, contracted: 0, actual: 0, sourceBreakdown: {} }
@@ -138,18 +165,27 @@ export default function SalespersonKPIPage() {
       statsMap[spName].sourceBreakdown[src] = (statsMap[spName].sourceBreakdown[src] || 0) + 1
     })
 
-    // Always return ALL salespersons, even those with 0 leads
     return salespersons.map(sp => ({
-      id:   sp.id,
+      id: sp.id,
       name: sp.name,
-      ...(statsMap[sp.name] || {
-        leads: 0, inPerson: 0, phoneQ: 0, estimated: 0,
-        won: 0, contracted: 0, actual: 0, sourceBreakdown: {},
-      })
+      ...(statsMap[sp.name] || { leads: 0, inPerson: 0, phoneQ: 0, estimated: 0, won: 0, contracted: 0, actual: 0, sourceBreakdown: {} })
     }))
   }, [salespersons, leads, payments])
 
-  // ── 6-month trend ─────────────────────────────────────────────────────
+  // ── Insights data ──────────────────────────────────────────────────────
+  const insightsData: InsightData = useMemo(() => ({
+    totalLeads:      spData.reduce((s, sp) => s + sp.leads, 0),
+    totalAppts:      spData.reduce((s, sp) => s + sp.inPerson, 0),
+    totalPhoneQ:     spData.reduce((s, sp) => s + sp.phoneQ, 0),
+    totalWon:        spData.reduce((s, sp) => s + sp.won, 0),
+    totalContracted: spData.reduce((s, sp) => s + sp.contracted, 0),
+    totalSpend:      0,
+    period:          periodLabel,
+    viewMode,
+    salespersons:    spData,
+  }), [spData, periodLabel, viewMode])
+
+  // ── 6-month trend ──────────────────────────────────────────────────────
   const trendData = useMemo(() => {
     const tMap: Record<string, Record<string, number>> = {}
     for (let i = 5; i >= 0; i--) {
@@ -172,10 +208,21 @@ export default function SalespersonKPIPage() {
     return Object.entries(tMap).map(([label, v]) => ({ label, ...v }))
   }, [trendLeads, salespersons, year, month])
 
-  function prevMonth() { if (month === 0) { setMonth(11); setYear(y => y - 1) } else setMonth(m => m - 1) }
-  function nextMonth() { if (month === 11) { setMonth(0); setYear(y => y + 1) } else setMonth(m => m + 1) }
-
-  const monthLabel = `${MONTHS[month]} ${year}`
+  // ── Navigation ─────────────────────────────────────────────────────────
+  function prevPeriod() {
+    if (viewMode === 'monthly') {
+      if (month === 0) { setMonth(11); setYear(y => y - 1) } else setMonth(m => m - 1)
+    } else {
+      setWeekOffset(w => w - 1)
+    }
+  }
+  function nextPeriod() {
+    if (viewMode === 'monthly') {
+      if (month === 11) { setMonth(0); setYear(y => y + 1) } else setMonth(m => m + 1)
+    } else {
+      setWeekOffset(w => Math.min(w + 1, 0))
+    }
+  }
 
   return (
     <div className="min-h-screen bg-gray-950 text-gray-100">
@@ -193,16 +240,30 @@ export default function SalespersonKPIPage() {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          {/* Manage button */}
           <button onClick={() => setShowManager(v => !v)}
             className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md border transition-colors font-medium ${showManager ? 'bg-purple-700 border-purple-600 text-white' : 'border-gray-700 hover:bg-gray-800 text-gray-400'}`}>
             <UserPlus className="h-3.5 w-3.5" /> Manage Salespersons
           </button>
-          {/* Month nav */}
+
+          {/* ── View toggle ── */}
+          <div className="flex rounded-lg border border-gray-700 overflow-hidden">
+            {(['monthly', 'weekly'] as const).map(v => (
+              <button key={v} onClick={() => { setViewMode(v); setWeekOffset(0) }}
+                className={`px-3 py-1.5 text-xs font-medium capitalize transition-colors ${viewMode === v ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-gray-200'}`}>
+                {v}
+              </button>
+            ))}
+          </div>
+
+          {/* ── Period nav ── */}
           <div className="flex items-center gap-1 rounded-lg border border-gray-700 px-2 py-1">
-            <button onClick={prevMonth} className="p-1 hover:bg-gray-800 rounded"><ChevronLeft className="h-4 w-4" /></button>
-            <span className="text-sm font-medium w-24 text-center text-white">{monthLabel}</span>
-            <button onClick={nextMonth} className="p-1 hover:bg-gray-800 rounded"><ChevronRight className="h-4 w-4" /></button>
+            <button onClick={prevPeriod} className="p-1 hover:bg-gray-800 rounded"><ChevronLeft className="h-4 w-4" /></button>
+            <span className="text-xs font-medium w-52 text-center text-white">{periodLabel}</span>
+            <button onClick={nextPeriod}
+              disabled={viewMode === 'weekly' && weekOffset === 0}
+              className="p-1 hover:bg-gray-800 rounded disabled:opacity-30">
+              <ChevronRight className="h-4 w-4" />
+            </button>
           </div>
         </div>
       </div>
@@ -222,7 +283,6 @@ export default function SalespersonKPIPage() {
               </button>
             </div>
             <div className="p-6">
-              {/* Add new */}
               <div className="flex gap-2 mb-5">
                 <input
                   className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-purple-500 placeholder-gray-600"
@@ -236,8 +296,6 @@ export default function SalespersonKPIPage() {
                   <Plus className="h-4 w-4" /> Add
                 </button>
               </div>
-
-              {/* Current list */}
               {salespersons.length === 0 ? (
                 <p className="text-sm text-gray-500 text-center py-4">No salespersons added yet.</p>
               ) : (
@@ -245,16 +303,13 @@ export default function SalespersonKPIPage() {
                   {salespersons.map((sp, i) => {
                     const c = PALETTE[i] || DEFAULT_PAL
                     const stats = spData.find(s => s.id === sp.id)
-                    const totalLeadsAll = leads.length // total leads this month
                     return (
                       <div key={sp.id} className="flex items-center gap-3 bg-gray-800 rounded-lg px-4 py-3 border border-gray-700">
                         <div className={`w-8 h-8 rounded-full border-2 ${c.border} flex items-center justify-center text-sm font-bold ${c.text}`}>
                           {sp.name.charAt(0).toUpperCase()}
                         </div>
                         <span className="flex-1 font-medium text-white">{sp.name}</span>
-                        <span className="text-xs text-gray-500">
-                          {stats?.leads || 0} leads in {monthLabel}
-                        </span>
+                        <span className="text-xs text-gray-500">{stats?.leads || 0} leads this period</span>
                         <button onClick={() => deleteSalesperson(sp.id, sp.name)}
                           className="flex items-center gap-1 text-xs px-3 py-1.5 text-red-400 hover:text-red-300 border border-red-900 hover:border-red-700 rounded-lg transition-colors">
                           <Trash2 className="h-3 w-3" /> Remove
@@ -264,7 +319,6 @@ export default function SalespersonKPIPage() {
                   })}
                 </div>
               )}
-
               <p className="text-xs text-gray-600 mt-4 border-t border-gray-800 pt-3">
                 ⚠️ Make sure lead records use the exact same name spelling (e.g. "Ron" not "ron" or "Ronald"). Names are matched case-insensitively.
               </p>
@@ -318,11 +372,10 @@ export default function SalespersonKPIPage() {
                       </div>
                       <div>
                         <div className={`font-bold text-lg ${c.text}`}>{sp.name}</div>
-                        <div className="text-xs text-gray-500">{monthLabel}</div>
+                        <div className="text-xs text-gray-500">{periodLabel}</div>
                       </div>
                     </div>
 
-                    {/* Stats grid */}
                     <div className="grid grid-cols-3 gap-3 mb-5">
                       <Stat label="Leads"     value={sp.leads} />
                       <Stat label="In-Person" value={sp.inPerson} />
@@ -332,7 +385,6 @@ export default function SalespersonKPIPage() {
                       <Stat label="Close %"   value={pct(sp.won, sp.leads)} />
                     </div>
 
-                    {/* Progress bars */}
                     <div className="space-y-3 mb-5">
                       {[
                         { label: 'Overall close rate',   a: sp.won, b: sp.leads },
@@ -352,7 +404,6 @@ export default function SalespersonKPIPage() {
                       ))}
                     </div>
 
-                    {/* Revenue */}
                     <div className="grid grid-cols-2 gap-2 border-t border-gray-700/50 pt-4 mb-4">
                       <div className="bg-gray-900/60 rounded-lg p-3 text-center">
                         <div className="text-xs text-gray-500 mb-1">Contracted</div>
@@ -364,7 +415,6 @@ export default function SalespersonKPIPage() {
                       </div>
                     </div>
 
-                    {/* Source breakdown */}
                     {Object.keys(sp.sourceBreakdown).length > 0 ? (
                       <div className="border-t border-gray-700/50 pt-4">
                         <div className="text-xs text-gray-500 mb-2 font-medium uppercase tracking-wide">Leads by source</div>
@@ -379,7 +429,7 @@ export default function SalespersonKPIPage() {
                       </div>
                     ) : (
                       <div className="border-t border-gray-700/50 pt-4 text-center text-xs text-gray-600">
-                        No leads assigned for {monthLabel}
+                        No leads assigned for {periodLabel}
                       </div>
                     )}
                   </div>
@@ -387,11 +437,17 @@ export default function SalespersonKPIPage() {
               })}
             </div>
 
+            {/* ── AI Insights ── */}
+            <KpiInsights
+              label="Salesperson Performance Analysis"
+              data={insightsData}
+            />
+
             {/* ── Head-to-head table ── */}
             {spData.length > 1 && (
               <div className="bg-gray-900 rounded-xl border border-gray-800 overflow-hidden">
                 <div className="px-6 py-3 border-b border-gray-800 bg-gray-800/50">
-                  <h2 className="text-sm font-semibold text-gray-300 uppercase tracking-wide">Head-to-Head — {monthLabel}</h2>
+                  <h2 className="text-sm font-semibold text-gray-300 uppercase tracking-wide">Head-to-Head — {periodLabel}</h2>
                 </div>
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
@@ -432,42 +488,44 @@ export default function SalespersonKPIPage() {
               </div>
             )}
 
-            {/* ── 6-month trend ── */}
-            <div className="bg-gray-900 rounded-xl border border-gray-800 overflow-hidden">
-              <div className="px-6 py-3 border-b border-gray-800 bg-gray-800/50 flex items-center gap-3">
-                <TrendingUp className="h-4 w-4 text-gray-400" />
-                <h2 className="text-sm font-semibold text-gray-300 uppercase tracking-wide">6-Month — Contracted Revenue</h2>
-                <div className="ml-auto flex gap-4">
-                  {spData.map((sp, i) => {
-                    const c = PALETTE[i] || DEFAULT_PAL
-                    return (
-                      <div key={sp.id} className="flex items-center gap-1.5">
-                        <div className="w-2.5 h-2.5 rounded-full" style={{ background: c.bar }} />
-                        <span className="text-xs text-gray-400">{sp.name}</span>
-                      </div>
-                    )
-                  })}
-                </div>
-              </div>
-              <div className="p-6">
-                <ResponsiveContainer width="100%" height={240}>
-                  <BarChart data={trendData} barGap={4}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
-                    <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#9ca3af' }} axisLine={false} tickLine={false} />
-                    <YAxis tick={{ fontSize: 11, fill: '#9ca3af' }} axisLine={false} tickLine={false} tickFormatter={v => '$'+(v/1000).toFixed(0)+'k'} />
-                    <Tooltip
-                      contentStyle={{ background: '#1f2937', border: '1px solid #374151', borderRadius: '8px' }}
-                      labelStyle={{ color: '#f9fafb', fontSize: 12 }}
-                      formatter={(v: number) => fmt$(v)}
-                    />
+            {/* ── 6-month trend (monthly only) ── */}
+            {viewMode === 'monthly' && (
+              <div className="bg-gray-900 rounded-xl border border-gray-800 overflow-hidden">
+                <div className="px-6 py-3 border-b border-gray-800 bg-gray-800/50 flex items-center gap-3">
+                  <TrendingUp className="h-4 w-4 text-gray-400" />
+                  <h2 className="text-sm font-semibold text-gray-300 uppercase tracking-wide">6-Month — Contracted Revenue</h2>
+                  <div className="ml-auto flex gap-4">
                     {spData.map((sp, i) => {
                       const c = PALETTE[i] || DEFAULT_PAL
-                      return <Bar key={sp.id} dataKey={sp.name + '_rev'} name={sp.name} fill={c.bar} radius={[3,3,0,0]} />
+                      return (
+                        <div key={sp.id} className="flex items-center gap-1.5">
+                          <div className="w-2.5 h-2.5 rounded-full" style={{ background: c.bar }} />
+                          <span className="text-xs text-gray-400">{sp.name}</span>
+                        </div>
+                      )
                     })}
-                  </BarChart>
-                </ResponsiveContainer>
+                  </div>
+                </div>
+                <div className="p-6">
+                  <ResponsiveContainer width="100%" height={240}>
+                    <BarChart data={trendData} barGap={4}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
+                      <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#9ca3af' }} axisLine={false} tickLine={false} />
+                      <YAxis tick={{ fontSize: 11, fill: '#9ca3af' }} axisLine={false} tickLine={false} tickFormatter={v => '$'+(v/1000).toFixed(0)+'k'} />
+                      <Tooltip
+                        contentStyle={{ background: '#1f2937', border: '1px solid #374151', borderRadius: '8px' }}
+                        labelStyle={{ color: '#f9fafb', fontSize: 12 }}
+                        formatter={(v: number) => fmt$(v)}
+                      />
+                      {spData.map((sp, i) => {
+                        const c = PALETTE[i] || DEFAULT_PAL
+                        return <Bar key={sp.id} dataKey={sp.name + '_rev'} name={sp.name} fill={c.bar} radius={[3,3,0,0]} />
+                      })}
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
               </div>
-            </div>
+            )}
 
           </>
         )}
