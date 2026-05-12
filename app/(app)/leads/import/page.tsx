@@ -8,67 +8,67 @@ import {
   Loader2, X, FileText, Download,
 } from "lucide-react";
 
-// ── Standard template columns — matches CRM fields exactly ───────────────────
-// This is what we tell clients to use. Auto-detection is perfect for these.
+// ── Standard template columns ─────────────────────────────────────────────────
 const TEMPLATE_COLUMNS = [
-  { col: "first_name",      example: "John",            note: "First name" },
-  { col: "last_name",       example: "Smith",           note: "Last name" },
-  { col: "phone",           example: "(201) 555-1234",  note: "Contact number" },
-  { col: "email",           example: "john@email.com",  note: "Email address" },
-  { col: "address",         example: "123 Main St",     note: "Street address" },
-  { col: "city",            example: "Newark",          note: "City" },
-  { col: "state",           example: "NJ",              note: "State (2-letter)" },
-  { col: "zip",             example: "07101",           note: "ZIP code" },
-  { col: "job_type",        example: "Roofing",         note: "Type of work" },
-  { col: "salesperson",     example: "Ron",             note: "Salesperson assigned" },
-  { col: "contract_value",  example: "8500",            note: "Initial contract $ (numbers only)" },
-  { col: "date_received",   example: "4/1/2026",        note: "Date lead came in" },
-  { col: "status",          example: "new_lead",        note: "new_lead / appointment_set / estimate_sent / closed_won / lost" },
-  { col: "lsa_status",      example: "charged",         note: "charged / submitted / credited / not_charged" },
-  { col: "contact_type",    example: "phone_quote",     note: "in_person / phone_quote" },
-  { col: "notes",           example: "Needs roof replacement", note: "Any notes" },
+  { col: "first_name",     example: "John",             note: "First name" },
+  { col: "last_name",      example: "Smith",            note: "Last name" },
+  { col: "phone",          example: "(201) 555-1234",   note: "Contact number" },
+  { col: "email",          example: "john@email.com",   note: "Email address" },
+  { col: "address",        example: "123 Main St",      note: "Street address" },
+  { col: "city",           example: "Newark",           note: "City" },
+  { col: "state",          example: "NJ",               note: "State (2-letter)" },
+  { col: "zip",            example: "07101",            note: "ZIP code" },
+  { col: "job_type",       example: "Roofing",          note: "Type of work" },
+  { col: "salesperson",    example: "Ron",              note: "Salesperson assigned" },
+  { col: "contract_value", example: "8500",             note: "Initial contract $ (no $ sign)" },
+  { col: "date_received",  example: "4/1/2026",         note: "Date lead came in" },
+  { col: "lsa_status",     example: "charged",          note: "charged / submitted / credited / not_charged" },
+  { col: "contact_type",   example: "phone_quote",      note: "in_person / phone_quote" },
+  { col: "notes",          example: "Needs full roof",  note: "Any notes" },
 ];
 
-// ── CRM Fields available in mapper ────────────────────────────────────────────
+// ── CRM Fields for mapper dropdown ───────────────────────────────────────────
 const DB_FIELDS = [
-  { key: "first_name",              label: "First Name"                        },
-  { key: "last_name",               label: "Last Name"                         },
-  { key: "full_name",               label: "Full Name (auto-split)"            },
-  { key: "phone",                   label: "Phone"                             },
-  { key: "email",                   label: "Email"                             },
-  { key: "client_address",          label: "Street Address"                    },
-  { key: "client_city",             label: "City"                              },
-  { key: "client_state",            label: "State"                             },
-  { key: "client_zip",              label: "ZIP Code"                          },
-  { key: "location",                label: "Location (auto-parse: city, ST zip)"},
-  { key: "jn_address",             label: "Address Block (JN multi-line)"     },
-  { key: "meta_job_type",           label: "Job Type"                          },
-  { key: "meta_salesperson",        label: "Salesperson"                       },
-  { key: "initial_contract_value",  label: "Contract Value ($)"               },
-  { key: "created_at",              label: "Date Received"                     },
-  { key: "status",                  label: "Stage / Status"                    },
-  { key: "lsa_status",              label: "LSA Status"                        },
-  { key: "contact_type",            label: "Contact Type"                      },
-  { key: "visited",                 label: "Visited? (true → in_person)"       },
-  { key: "estimate_sent",           label: "Estimate Sent? (true/false)"       },
-  { key: "job_closed",              label: "Job Closed? (true → closed_won)"   },
-  { key: "bad_lead",                label: "Bad Lead? (true/false)"            },
-  { key: "meta_notes",              label: "Notes"                             },
+  { key: "phone",                  label: "Phone"                              },
+  { key: "first_name",             label: "First Name"                         },
+  { key: "last_name",              label: "Last Name"                          },
+  { key: "full_name",              label: "Full Name (auto-split)"             },
+  { key: "email",                  label: "Email"                              },
+  { key: "client_address",         label: "Street Address"                     },
+  { key: "client_city",            label: "City"                               },
+  { key: "client_state",           label: "State"                              },
+  { key: "client_zip",             label: "ZIP Code"                           },
+  { key: "location",               label: "Location (auto-parse: city, ST zip)"},
+  { key: "jn_address",             label: "Address Block (JN multi-line)"      },
+  { key: "lsa_status",             label: "LSA Status (charged/submitted/etc)" },
+  { key: "contact_type",           label: "Contact Type (in_person/phone_quote)"},
+  { key: "visited",                label: "Visited? (true → in_person)"        },
+  { key: "estimate_sent",          label: "Estimate Sent? (true/false)"        },
+  { key: "job_closed",             label: "Job Closed? (true → closed_won)"    },
+  { key: "bad_lead",               label: "Bad Lead? (true/false)"             },
+  { key: "initial_contract_value", label: "Contract Value ($)"                 },
+  { key: "created_at",             label: "Date Received"                      },
+  { key: "meta_salesperson",       label: "Salesperson"                        },
+  { key: "meta_job_type",          label: "Job Type"                           },
+  { key: "meta_notes",             label: "Notes"                              },
 ];
 
-// ── Auto-detect — prioritizes exact template column names ─────────────────────
+// ── Auto-detect mapping ───────────────────────────────────────────────────────
 function autoMap(headers: string[]): Record<string, string> {
   const map: Record<string, string> = {};
   const n = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
 
-  // Always skip these — calculated or irrelevant
-  const alwaysSkip = ["projectrevenue", "changeorders", "recordtype", "salesrep"];
+  // Columns to ALWAYS skip — boolean flags, calculated fields, irrelevant
+  const alwaysSkip = [
+    "projectrevenue", "changeorders", "recordtype", "salesrep",
+    "contacted",  // ← boolean TRUE/FALSE, NOT a phone number
+  ];
 
-  // Exact template matches first, then fuzzy fallbacks
+  // Exact matches for standard template columns
   const exact: Record<string, string> = {
+    "phone":          "phone",
     "first_name":     "first_name",
     "last_name":      "last_name",
-    "phone":          "phone",
     "email":          "email",
     "address":        "client_address",
     "city":           "client_city",
@@ -78,26 +78,29 @@ function autoMap(headers: string[]): Record<string, string> {
     "salesperson":    "meta_salesperson",
     "contract_value": "initial_contract_value",
     "date_received":  "created_at",
-    "status":         "status",
     "lsa_status":     "lsa_status",
     "contact_type":   "contact_type",
     "notes":          "meta_notes",
   };
 
-  // Fuzzy fallbacks for non-template CSVs (LSA, JN, etc.)
+  // Fuzzy aliases for non-template formats (LSA export, JN export, etc.)
   const fuzzy: Record<string, string[]> = {
-    phone:                  ["mainphone", "contactnum", "contact", "customernum", "customersnum", "phonenumber", "mobile", "cell", "tel", "unnamed0"],
+    // Phone — only explicit phone-like column names
+    // "contact" removed — too greedy, also matches "Contacted" (boolean)
+    phone:                  ["contactnum", "contacthash", "customernum", "customersnum",
+                             "mainphone", "phonenumber", "mobile", "cell", "tel", "unnamed0"],
     full_name:              ["display", "name", "fullname", "clientname", "customername"],
     first_name:             ["firstname", "fname"],
     last_name:              ["lastname", "lname"],
     email:                  ["emailaddress", "mail"],
-    jn_address:            ["addressinfo"],
+    jn_address:             ["addressinfo"],
     location:               ["location"],
     client_city:            ["city", "town"],
-    client_address:         ["streetaddress", "street"],
+    client_address:         ["street", "streetaddress"],
     client_state:           ["province"],
     client_zip:             ["zipcode", "postalcode", "postal"],
-    lsa_status:             ["leadstatus"],
+    // LSA Status — "leadstatus" maps to lsa_status (NOT pipeline stage)
+    lsa_status:             ["leadstatus", "lsastatus", "leadstatusvalue"],
     contact_type:           ["leadtype"],
     visited:                ["visited"],
     estimate_sent:          ["estimatesent"],
@@ -112,35 +115,33 @@ function autoMap(headers: string[]): Record<string, string> {
 
   headers.forEach(h => {
     const normalized = n(h);
+    // 1. Always skip?
     if (alwaysSkip.includes(normalized)) return;
-
-    // 1. Exact match against template columns
+    // 2. Exact template match?
     if (exact[normalized]) { map[h] = exact[normalized]; return; }
-
-    // 2. Fuzzy match
+    // 3. Fuzzy match
     for (const [field, aliases] of Object.entries(fuzzy)) {
       if (normalized === n(field) || aliases.some(a => normalized.includes(a))) {
         map[h] = field;
         return;
       }
     }
+    // 4. "Contact #" — the # gets stripped so normalized = "contact"
+    // Handle this special case explicitly
+    if (normalized === "contact") { map[h] = "phone"; return; }
   });
 
   return map;
 }
 
-// ── Download template CSV ─────────────────────────────────────────────────────
+// ── Download template ─────────────────────────────────────────────────────────
 function downloadTemplate() {
-  const header = TEMPLATE_COLUMNS.map(c => c.col).join(",");
+  const header  = TEMPLATE_COLUMNS.map(c => c.col).join(",");
   const example = TEMPLATE_COLUMNS.map(c => `"${c.example}"`).join(",");
-  const notes = TEMPLATE_COLUMNS.map(c => `"${c.note}"`).join(",");
-  const csv = [header, example, notes].join("\n");
-  const blob = new Blob([csv], { type: "text/csv" });
+  const notes   = TEMPLATE_COLUMNS.map(c => `"← ${c.note}"`).join(",");
+  const blob = new Blob([[header, example, notes].join("\n")], { type: "text/csv" });
   const url  = URL.createObjectURL(blob);
-  const a    = document.createElement("a");
-  a.href     = url;
-  a.download = "lead_import_template.csv";
-  a.click();
+  const a    = document.createElement("a"); a.href = url; a.download = "lead_import_template.csv"; a.click();
   URL.revokeObjectURL(url);
 }
 
@@ -170,8 +171,7 @@ function parseLocation(loc: string) {
   if (!loc?.trim()) return {};
   const parts = loc.split(",");
   if (parts.length >= 2) {
-    const addr  = parts[0].trim();
-    const rest  = parts.slice(1).join(",").trim();
+    const addr = parts[0].trim(), rest = parts.slice(1).join(",").trim();
     const match = rest.match(/([A-Z]{2})\s*(\d{5})?$/);
     if (match) return { client_address: addr, client_city: rest.replace(match[0], "").trim(), client_state: match[1], client_zip: match[2] || null };
     return { client_address: addr, client_city: rest };
@@ -187,11 +187,11 @@ function parseName(name: string) {
 
 function mapLsaStatus(val: string) {
   const v = (val || "").trim().toLowerCase();
-  if (v === "charged")     return { lsa_status: "charged",     bad_lead: false };
-  if (v === "submitted")   return { lsa_status: "charged",     bad_lead: true  };
+  if (v === "charged")                          return { lsa_status: "charged",     bad_lead: false };
+  if (v === "submitted")                        return { lsa_status: "charged",     bad_lead: true  };
   if (v === "not charged" || v === "not_charged") return { lsa_status: "not_charged", bad_lead: false };
-  if (v === "credited")    return { lsa_status: "credited",    bad_lead: false };
-  if (v === "in review" || v === "in_review")     return { lsa_status: "in_review",   bad_lead: true  };
+  if (v === "credited")                         return { lsa_status: "credited",    bad_lead: false };
+  if (v === "in review"  || v === "in_review")  return { lsa_status: "in_review",   bad_lead: true  };
   return { lsa_status: null, bad_lead: false };
 }
 
@@ -206,7 +206,7 @@ function parseDate(val: string) {
   return null;
 }
 
-// ── Proper CSV parser — handles multi-line quoted fields ──────────────────────
+// ── CSV parser — handles quoted multi-line fields ─────────────────────────────
 function parseCSV(text: string): { headers: string[]; rows: Record<string, string>[] } {
   const result: string[][] = [];
   let row: string[] = [], field = "", inQuotes = false;
@@ -250,14 +250,13 @@ function buildLead(row: Record<string, string>, mapping: Record<string, string>,
       case "last_name":              lead.last_name = val; break;
       case "full_name":              Object.assign(lead, parseName(val)); hasIdentifier = true; break;
       case "email":                  lead.email = val; break;
-      case "jn_address":            Object.assign(lead, parseJNAddress(val)); break;
+      case "jn_address":             Object.assign(lead, parseJNAddress(val)); break;
       case "location":               Object.assign(lead, parseLocation(val)); break;
       case "client_address":         lead.client_address = val; break;
       case "client_city":            lead.client_city = val; break;
       case "client_state":           lead.client_state = val; break;
       case "client_zip":             lead.client_zip = val; break;
       case "lsa_status":             lsaVal = val; break;
-      case "status":                 lead.status = val; break;
       case "contact_type":           lead.contact_type = val; break;
       case "visited":                if (parseBool(val)) lead.contact_type = "in_person"; break;
       case "estimate_sent":          if (parseBool(val)) lead.status = "estimate_sent"; break;
@@ -290,7 +289,7 @@ export default function ImportLeadsPage() {
   const [csvRows, setCsvRows]       = useState<Record<string, string>[]>([]);
   const [mapping, setMapping]       = useState<Record<string, string>>({});
   const [errors, setErrors]         = useState<string[]>([]);
-  const [results, setResults]       = useState({ success: 0, failed: 0 });
+  const [results, setResults]       = useState({ success: 0, skipped: 0, dbErrors: 0, dbErrorMsg: "" });
   const [fileName, setFileName]     = useState("");
   const [dragging, setDragging]     = useState(false);
   const [sources, setSources]               = useState<{ id: string; name: string }[]>([]);
@@ -309,7 +308,7 @@ export default function ImportLeadsPage() {
     reader.onload = (e) => {
       const text = e.target?.result as string;
       const { headers, rows } = parseCSV(text);
-      if (!headers.length) { setErrors(["Could not parse CSV — check the file format"]); return; }
+      if (!headers.length) { setErrors(["Could not parse CSV"]); return; }
       setCsvHeaders(headers); setCsvRows(rows);
       setMapping(autoMap(headers)); setErrors([]);
       setStep("map");
@@ -319,13 +318,13 @@ export default function ImportLeadsPage() {
 
   function handleDrop(e: React.DragEvent) {
     e.preventDefault(); setDragging(false);
-    const file = e.dataTransfer.files[0];
-    if (file) handleFile(file);
+    if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
   }
 
   async function handleImport() {
     setStep("importing");
-    let success = 0, failed = 0;
+    let success = 0, skipped = 0, dbErrors = 0, dbErrorMsg = "";
+
     let sourceId: string | null = null;
     if (selectedSource === "__new__" && newSourceName.trim()) {
       const { data } = await supabase.from("lead_sources").insert({ name: newSourceName.trim() }).select().single();
@@ -337,18 +336,23 @@ export default function ImportLeadsPage() {
     const leadsToInsert: any[] = [];
     csvRows.forEach(row => {
       const { lead, hasIdentifier } = buildLead(row, mapping, sourceId);
-      if (!hasIdentifier) { failed++; return; }
+      if (!hasIdentifier) { skipped++; return; }
       leadsToInsert.push(lead);
     });
 
     for (let i = 0; i < leadsToInsert.length; i += 50) {
       const batch = leadsToInsert.slice(i, i + 50);
       const { error } = await supabase.from("leads").insert(batch);
-      if (error) { failed += batch.length; console.error("Import error:", error.message); }
-      else success += batch.length;
+      if (error) {
+        dbErrors += batch.length;
+        dbErrorMsg = error.message;
+        console.error("Supabase insert error:", error.message, error);
+      } else {
+        success += batch.length;
+      }
     }
 
-    setResults({ success, failed });
+    setResults({ success, skipped, dbErrors, dbErrorMsg });
     setStep("done");
   }
 
@@ -371,12 +375,11 @@ export default function ImportLeadsPage() {
         </div>
       </div>
 
-      {/* Step indicator */}
+      {/* Steps */}
       <div className="flex items-center gap-2 text-xs">
         {["Upload", "Map Columns", "Preview", "Import"].map((s, i) => {
-          const idx    = ["upload","map","preview","importing","done"].indexOf(step);
-          const active = i === Math.min(idx, 3);
-          const done   = i < idx;
+          const idx = ["upload","map","preview","importing","done"].indexOf(step);
+          const active = i === Math.min(idx, 3), done = i < idx;
           return (
             <div key={s} className="flex items-center gap-2">
               <div className={`w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold
@@ -390,7 +393,6 @@ export default function ImportLeadsPage() {
         })}
       </div>
 
-      {/* Errors */}
       {errors.length > 0 && (
         <div className="rounded-lg border border-red-200 bg-red-50 p-3 space-y-1">
           {errors.map((e, i) => (
@@ -404,39 +406,28 @@ export default function ImportLeadsPage() {
       {/* ── STEP 1: Upload ── */}
       {step === "upload" && (
         <div className="space-y-4">
-
-          {/* Template download — prominent */}
           <div className="rounded-xl border-2 border-emerald-200 bg-emerald-50/50 dark:border-emerald-800/40 dark:bg-emerald-950/10 p-5">
             <div className="flex items-start justify-between gap-4">
               <div>
-                <p className="font-semibold text-emerald-800 dark:text-emerald-300 mb-1">
-                  Step 1 — Use our standard template
-                </p>
-                <p className="text-xs text-emerald-700 dark:text-emerald-400 mb-3">
-                  Download the template, fill it in, and your CSV will import perfectly — no manual mapping needed.
-                </p>
+                <p className="font-semibold text-emerald-800 dark:text-emerald-300 mb-1">Use our standard template for zero-effort imports</p>
+                <p className="text-xs text-emerald-700 dark:text-emerald-400 mb-3">Download → fill in your data → upload → done. No manual mapping needed.</p>
                 <button onClick={downloadTemplate}
                   className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-medium transition-colors">
                   <Download className="h-4 w-4" /> Download Template CSV
                 </button>
               </div>
-              <div className="hidden sm:block text-xs text-emerald-700 dark:text-emerald-400 space-y-1 shrink-0">
-                <p className="font-semibold mb-1">Template columns:</p>
-                {TEMPLATE_COLUMNS.map(c => (
-                  <p key={c.col} className="font-mono">{c.col}</p>
-                ))}
+              <div className="hidden sm:block text-xs text-emerald-700 dark:text-emerald-400 space-y-0.5 shrink-0">
+                {TEMPLATE_COLUMNS.map(c => <p key={c.col} className="font-mono">{c.col}</p>)}
               </div>
             </div>
           </div>
 
-          {/* Divider */}
           <div className="flex items-center gap-3">
             <div className="flex-1 h-px bg-border" />
             <span className="text-xs text-muted-foreground">or upload any CSV and map manually</span>
             <div className="flex-1 h-px bg-border" />
           </div>
 
-          {/* Upload zone */}
           <div
             onDragOver={e => { e.preventDefault(); setDragging(true); }}
             onDragLeave={() => setDragging(false)}
@@ -446,25 +437,22 @@ export default function ImportLeadsPage() {
               ${dragging ? "border-primary bg-primary/5" : "border-border hover:border-primary/50 hover:bg-muted/30"}`}>
             <Upload className="h-8 w-8 mx-auto mb-3 text-muted-foreground" />
             <p className="font-medium text-sm mb-1">Drop CSV file here or click to browse</p>
-            <p className="text-xs text-muted-foreground">Template CSV, LSA export, JobNimbus, Google Sheets — any CSV works</p>
+            <p className="text-xs text-muted-foreground">Template CSV, LSA export, JobNimbus contacts — any CSV</p>
             <input ref={fileRef} type="file" accept=".csv" className="hidden"
               onChange={e => { if (e.target.files?.[0]) handleFile(e.target.files[0]); }} />
           </div>
 
-          {/* Field reference */}
           <details className="rounded-lg border border-border overflow-hidden">
             <summary className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide cursor-pointer hover:bg-muted/30 bg-muted/10">
-              View all template fields + accepted values
+              View template field reference
             </summary>
             <div className="overflow-x-auto">
               <table className="w-full text-xs">
-                <thead>
-                  <tr className="border-b border-border bg-muted/20">
-                    <th className="text-left px-4 py-2 font-semibold text-muted-foreground">Column name</th>
-                    <th className="text-left px-4 py-2 font-semibold text-muted-foreground">Example</th>
-                    <th className="text-left px-4 py-2 font-semibold text-muted-foreground">Notes</th>
-                  </tr>
-                </thead>
+                <thead><tr className="border-b border-border bg-muted/20">
+                  <th className="text-left px-4 py-2 font-semibold text-muted-foreground">Column</th>
+                  <th className="text-left px-4 py-2 font-semibold text-muted-foreground">Example</th>
+                  <th className="text-left px-4 py-2 font-semibold text-muted-foreground">Notes</th>
+                </tr></thead>
                 <tbody>
                   {TEMPLATE_COLUMNS.map((c, i) => (
                     <tr key={c.col} className={`border-b border-border/50 ${i % 2 === 0 ? "" : "bg-muted/10"}`}>
@@ -480,17 +468,13 @@ export default function ImportLeadsPage() {
         </div>
       )}
 
-      {/* ── STEP 2: Map columns ── */}
+      {/* ── STEP 2: Map ── */}
       {step === "map" && (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm font-semibold flex items-center gap-2">
-                <FileText className="h-4 w-4" /> {fileName}
-              </p>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                {csvRows.length} rows · {csvHeaders.length} columns · {mappedCount} mapped
-              </p>
+              <p className="text-sm font-semibold flex items-center gap-2"><FileText className="h-4 w-4" /> {fileName}</p>
+              <p className="text-xs text-muted-foreground mt-0.5">{csvRows.length} rows · {csvHeaders.length} columns · {mappedCount} mapped</p>
             </div>
             <button onClick={() => { setStep("upload"); setCsvHeaders([]); setCsvRows([]); setMapping({}); }}
               className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1">
@@ -498,7 +482,6 @@ export default function ImportLeadsPage() {
             </button>
           </div>
 
-          {/* Lead source */}
           <div className="rounded-lg border border-border p-4">
             <label className="block text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Lead Source</label>
             <select value={selectedSource} onChange={e => setSelectedSource(e.target.value)}
@@ -508,19 +491,15 @@ export default function ImportLeadsPage() {
               <option value="__new__">+ Create new source...</option>
             </select>
             {selectedSource === "__new__" && (
-              <input
-                className="w-full mt-2 rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
-                placeholder="New source name (e.g. LSA - Teaneck, Pro Referral)"
-                value={newSourceName}
-                onChange={e => setNewSourceName(e.target.value)}
-              />
+              <input className="w-full mt-2 rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
+                placeholder="New source name (e.g. LSA - Teaneck)"
+                value={newSourceName} onChange={e => setNewSourceName(e.target.value)} />
             )}
           </div>
 
-          {/* Column mapping */}
           <div className="rounded-lg border border-border overflow-hidden">
-            <div className="bg-muted/30 px-4 py-2.5 border-b border-border flex justify-between items-center">
-              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Map CSV Columns → CRM Fields</p>
+            <div className="bg-muted/30 px-4 py-2.5 border-b border-border flex justify-between">
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Map CSV → CRM Fields</p>
               <p className="text-xs text-muted-foreground">First row preview on right</p>
             </div>
             <div className="divide-y divide-border">
@@ -528,17 +507,15 @@ export default function ImportLeadsPage() {
                 <div key={col} className={`flex items-center gap-3 px-4 py-2.5 ${!mapping[col] ? "opacity-50" : ""}`}>
                   <span className="text-xs font-mono bg-muted px-2 py-0.5 rounded w-40 truncate shrink-0">{col}</span>
                   <span className="text-muted-foreground text-xs">→</span>
-                  <select
-                    value={mapping[col] || ""}
+                  <select value={mapping[col] || ""}
                     onChange={e => setMapping(prev => ({ ...prev, [col]: e.target.value }))}
                     className={`flex-1 rounded-md border px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-primary/40 ${
                       mapping[col] ? "border-primary/50 bg-primary/5 text-primary font-medium" : "border-border bg-background text-muted-foreground"}`}>
                     <option value="">— Skip —</option>
                     {DB_FIELDS.map(f => <option key={f.key} value={f.key}>{f.label}</option>)}
                   </select>
-                  {mapping[col]
-                    ? <span className="text-xs text-emerald-600 font-medium w-5 shrink-0">✓</span>
-                    : <span className="text-xs text-muted-foreground w-5 shrink-0">—</span>}
+                  {mapping[col] ? <span className="text-xs text-emerald-600 font-medium w-5 shrink-0">✓</span>
+                                : <span className="text-xs text-muted-foreground w-5 shrink-0">—</span>}
                   <span className="text-xs text-muted-foreground w-32 truncate shrink-0 hidden sm:block">
                     {String(csvRows[0]?.[col] || "").split("\n")[0].slice(0, 28) || "—"}
                   </span>
@@ -549,9 +526,7 @@ export default function ImportLeadsPage() {
 
           <div className="flex gap-3 justify-end">
             <button onClick={() => setStep("upload")}
-              className="px-4 py-2 text-sm rounded-md border border-border hover:bg-muted transition-colors">
-              Back
-            </button>
+              className="px-4 py-2 text-sm rounded-md border border-border hover:bg-muted transition-colors">Back</button>
             <button onClick={() => { setErrors([]); setStep("preview"); }} disabled={mappedCount === 0}
               className="px-4 py-2 text-sm rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors font-medium disabled:opacity-40">
               Preview Import →
@@ -569,15 +544,13 @@ export default function ImportLeadsPage() {
           </div>
           <div className="rounded-lg border border-border overflow-x-auto">
             <table className="w-full text-xs">
-              <thead>
-                <tr className="bg-muted/30 border-b border-border">
-                  {mappedCols.map(([col, field]) => (
-                    <th key={col} className="text-left text-xs font-semibold text-muted-foreground px-3 py-2 whitespace-nowrap">
-                      {DB_FIELDS.find(f => f.key === field)?.label || field}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
+              <thead><tr className="bg-muted/30 border-b border-border">
+                {mappedCols.map(([col, field]) => (
+                  <th key={col} className="text-left text-xs font-semibold text-muted-foreground px-3 py-2 whitespace-nowrap">
+                    {DB_FIELDS.find(f => f.key === field)?.label || field}
+                  </th>
+                ))}
+              </tr></thead>
               <tbody>
                 {previewRows.map((row, i) => (
                   <tr key={i} className="border-b border-border/50 last:border-0 hover:bg-muted/10">
@@ -593,9 +566,7 @@ export default function ImportLeadsPage() {
           </div>
           <div className="flex gap-3 justify-end">
             <button onClick={() => setStep("map")}
-              className="px-4 py-2 text-sm rounded-md border border-border hover:bg-muted transition-colors">
-              ← Back
-            </button>
+              className="px-4 py-2 text-sm rounded-md border border-border hover:bg-muted transition-colors">← Back</button>
             <button onClick={handleImport}
               className="px-5 py-2 text-sm rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors font-medium">
               Import {csvRows.length} Leads →
@@ -615,14 +586,23 @@ export default function ImportLeadsPage() {
 
       {/* ── STEP 5: Done ── */}
       {step === "done" && (
-        <div className="flex flex-col items-center justify-center py-16 gap-4 text-center">
+        <div className="flex flex-col items-center justify-center py-12 gap-4 text-center">
           <CheckCircle className="h-12 w-12 text-emerald-500" />
-          <div>
-            <p className="text-xl font-bold">Import Complete</p>
-            <p className="text-sm text-muted-foreground mt-1">
-              <span className="text-emerald-600 font-semibold">{results.success} leads imported</span>
-              {results.failed > 0 && <span className="text-red-500 ml-2">· {results.failed} skipped (no phone or name)</span>}
+          <div className="space-y-1">
+            <p className="text-xl font-bold">
+              {results.success > 0 ? "Import Complete" : "Import Finished"}
             </p>
+            <p className="text-sm text-muted-foreground">
+              <span className="text-emerald-600 font-semibold">{results.success} leads imported</span>
+              {results.skipped > 0 && <span className="text-amber-500 ml-2">· {results.skipped} skipped (no phone or name)</span>}
+              {results.dbErrors > 0 && <span className="text-red-500 ml-2">· {results.dbErrors} failed to save</span>}
+            </p>
+            {results.dbErrors > 0 && results.dbErrorMsg && (
+              <div className="mt-3 rounded-lg border border-red-200 bg-red-50 dark:bg-red-950/20 p-3 text-left max-w-lg mx-auto">
+                <p className="text-xs font-semibold text-red-700 mb-1">Database error:</p>
+                <p className="text-xs text-red-600 font-mono break-all">{results.dbErrorMsg}</p>
+              </div>
+            )}
           </div>
           <div className="flex gap-3 flex-wrap justify-center">
             <button onClick={() => router.push("/leads")}
