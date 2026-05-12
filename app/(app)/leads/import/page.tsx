@@ -1,34 +1,133 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { Upload, ChevronLeft, AlertCircle, CheckCircle, Loader2, X, FileText } from "lucide-react";
+import { supabase } from "@/lib/supabaseClient";
+import {
+  Upload, ChevronLeft, AlertCircle, CheckCircle,
+  Loader2, X, FileText,
+} from "lucide-react";
 
-// ─── Expected DB fields ────────────────────────────────────────────────────────
+// ── CRM Fields ─────────────────────────────────────────────────────────────────
 const DB_FIELDS = [
-  { key: "first_name",      label: "First Name",       required: true  },
-  { key: "last_name",       label: "Last Name",         required: false },
-  { key: "phone",           label: "Phone",             required: true  },
-  { key: "email",           label: "Email",             required: false },
-  { key: "address_line_1",  label: "Address",           required: false },
-  { key: "city",            label: "City",              required: false },
-  { key: "state",           label: "State",             required: false },
-  { key: "postal_code",     label: "Zip Code",          required: false },
-  { key: "lead_source",     label: "Lead Source",       required: false },
-  { key: "job_type",        label: "Job Type",          required: false },
-  { key: "salesperson",     label: "Salesperson",       required: false },
-  { key: "estimated_amount",label: "Estimated Amount",  required: false },
-  { key: "notes",           label: "Notes",             required: false },
-  { key: "status",          label: "Status",            required: false },
-  { key: "created_at",      label: "Date Received",     required: false },
+  { key: "phone",                   label: "Phone",                      required: false },
+  { key: "first_name",              label: "First Name",                 required: false },
+  { key: "last_name",               label: "Last Name",                  required: false },
+  { key: "full_name",               label: "Full Name (auto-split)",     required: false },
+  { key: "location",                label: "Location (auto-parse city)", required: false },
+  { key: "client_city",             label: "City",                       required: false },
+  { key: "client_address",          label: "Street Address",             required: false },
+  { key: "client_state",            label: "State",                      required: false },
+  { key: "client_zip",              label: "ZIP Code",                   required: false },
+  { key: "lsa_status",              label: "LSA Status (Charged/Credited/etc)", required: false },
+  { key: "contact_type",            label: "Contact Type",               required: false },
+  { key: "visited",                 label: "Visited? (true/false → in_person)", required: false },
+  { key: "estimate_sent",           label: "Estimate Sent? (true/false)", required: false },
+  { key: "job_closed",              label: "Job Closed? (true/false)",   required: false },
+  { key: "bad_lead",                label: "Bad Lead? (true/false)",     required: false },
+  { key: "initial_contract_value",  label: "Contract Value ($)",         required: false },
+  { key: "created_at",              label: "Date Received",              required: false },
+  { key: "meta_salesperson",        label: "Salesperson",                required: false },
+  { key: "meta_job_type",           label: "Job Type",                   required: false },
+  { key: "meta_notes",              label: "Notes",                      required: false },
 ];
+
+// ── Auto-detect column mapping ─────────────────────────────────────────────────
+function autoMap(headers: string[]): Record<string, string> {
+  const map: Record<string, string> = {};
+  const n = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const aliases: Record<string, string[]> = {
+    phone:                  ["customer", "customersnum", "phonenumber", "mobile", "cell", "telephone", "tel", "unnamed0"],
+    first_name:             ["firstname", "fname", "givenname"],
+    last_name:              ["lastname", "lname", "surname"],
+    full_name:              ["name", "fullname", "clientname", "customername"],
+    location:               ["location"],
+    client_city:            ["city", "town"],
+    client_address:         ["address", "street", "streetaddress"],
+    client_state:           ["state", "province"],
+    client_zip:             ["zip", "zipcode", "postalcode", "postal"],
+    lsa_status:             ["leadstatus", "lsastatus", "status2"],
+    contact_type:           ["leadtype", "contacttype", "type"],
+    visited:                ["visited"],
+    estimate_sent:          ["estimatesent", "estimate"],
+    job_closed:             ["jobclosed", "closed", "won"],
+    bad_lead:               ["badlead", "bad"],
+    initial_contract_value: ["initialvolume", "projectrevenue", "revenue", "contractvalue", "amount", "value"],
+    created_at:             ["leadreceived", "datereceived", "date", "createdat", "received"],
+    meta_salesperson:       ["technicians", "salesperson", "assignedto", "rep", "agent"],
+    meta_job_type:          ["jobtype", "job", "service", "worktype"],
+    meta_notes:             ["notes", "note", "comments", "description"],
+  };
+  headers.forEach(h => {
+    const normalized = n(h);
+    for (const [field, aliasList] of Object.entries(aliases)) {
+      if (normalized === n(field) || aliasList.some(a => normalized.includes(a))) {
+        map[h] = field;
+        return;
+      }
+    }
+  });
+  return map;
+}
+
+// ── Value helpers ──────────────────────────────────────────────────────────────
+function parseBool(val: string) {
+  return ["true", "yes", "1"].includes((val || "").trim().toLowerCase());
+}
+
+function parseLocation(loc: string) {
+  if (!loc?.trim()) return {};
+  const parts = loc.split(",");
+  if (parts.length >= 2) {
+    const addr  = parts[0].trim();
+    const rest  = parts.slice(1).join(",").trim();
+    const match = rest.match(/([A-Z]{2})\s*(\d{5})?$/);
+    if (match) return {
+      client_address: addr,
+      client_city:    rest.replace(match[0], "").trim(),
+      client_state:   match[1],
+      client_zip:     match[2] || null,
+    };
+    return { client_address: addr, client_city: rest };
+  }
+  return { client_city: loc.trim() };
+}
+
+function parseName(name: string) {
+  if (!name?.trim()) return {};
+  const parts = name.trim().split(" ");
+  return { first_name: parts[0], last_name: parts.slice(1).join(" ") || null };
+}
+
+function mapLsaStatus(val: string): { lsa_status: string | null; bad_lead: boolean } {
+  const v = (val || "").trim().toLowerCase();
+  if (v === "charged")     return { lsa_status: "charged",     bad_lead: false };
+  if (v === "submitted")   return { lsa_status: "charged",     bad_lead: true  }; // disputed
+  if (v === "not charged") return { lsa_status: "not_charged", bad_lead: false };
+  if (v === "credited")    return { lsa_status: "credited",    bad_lead: false };
+  if (v === "in review")   return { lsa_status: "in_review",   bad_lead: true  };
+  return { lsa_status: null, bad_lead: false };
+}
+
+function parseRevenue(val: string) {
+  const n = parseFloat((val || "").replace(/[$,]/g, "").trim());
+  return isNaN(n) ? 0 : n;
+}
+
+function parseDate(val: string) {
+  if (!val?.trim()) return null;
+  try {
+    const d = new Date(val.trim());
+    if (!isNaN(d.getTime())) return d.toISOString();
+  } catch {}
+  return null;
+}
 
 function parseCSV(text: string): { headers: string[]; rows: Record<string, string>[] } {
   const lines = text.trim().split(/\r?\n/);
   if (lines.length < 2) return { headers: [], rows: [] };
   const headers = lines[0].split(",").map(h => h.trim().replace(/^"|"$/g, ""));
   const rows = lines.slice(1).map(line => {
-    // Handle quoted commas
     const cols: string[] = [];
     let cur = "", inQuote = false;
     for (const ch of line) {
@@ -42,64 +141,82 @@ function parseCSV(text: string): { headers: string[]; rows: Record<string, strin
   return { headers, rows };
 }
 
-function formatPhone(value: string) {
-  const digits = value.replace(/\D/g, "").slice(0, 10);
-  if (digits.length <= 3) return digits;
-  if (digits.length <= 6) return `(${digits.slice(0, 3)}) ${digits.slice(3)}`;
-  return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`;
-}
-
-// Auto-detect mapping from CSV header to DB field
-function autoMap(headers: string[]): Record<string, string> {
-  const map: Record<string, string> = {};
-  const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
-  const aliases: Record<string, string[]> = {
-    first_name:       ["firstname","first","fname","givenname"],
-    last_name:        ["lastname","last","lname","surname","familyname"],
-    phone:            ["phone","phonenumber","mobile","cell","telephone","tel"],
-    email:            ["email","emailaddress","mail"],
-    address_line_1:   ["address","streetaddress","address1","street"],
-    city:             ["city","town"],
-    state:            ["state","province","region"],
-    postal_code:      ["zip","zipcode","postalcode","postal"],
-    lead_source:      ["source","leadsource","leadtype","campaign"],
-    job_type:         ["jobtype","job","service","type","worktype"],
-    salesperson:      ["salesperson","sales","rep","agent","assignedto"],
-    estimated_amount: ["estimatedamount","estimate","amount","value","price"],
-    notes:            ["notes","note","comments","comment","description"],
-    status:           ["status","stage","leadstatus"],
-    created_at:       ["createdat","datereceived","date","leaddate","received"],
+// ── Build lead from a CSV row ─────────────────────────────────────────────────
+function buildLead(row: Record<string, string>, mapping: Record<string, string>, sourceId: string | null) {
+  const lead: any = {
+    archived:  false,
+    status:    "new_lead",
+    source_id: sourceId,
+    metadata:  { imported_from: "csv", import_date: new Date().toISOString() },
   };
-  headers.forEach(h => {
-    const n = normalize(h);
-    for (const [field, aliasList] of Object.entries(aliases)) {
-      if (n === normalize(field) || aliasList.some(a => n === a)) {
-        map[h] = field;
-        break;
-      }
+  let hasIdentifier = false;
+  let lsaVal = "";
+
+  for (const [csvCol, crmField] of Object.entries(mapping)) {
+    if (!crmField || crmField === "skip") continue;
+    const val = String(row[csvCol] || "").trim();
+    if (!val) continue;
+
+    switch (crmField) {
+      case "phone":                  lead.phone = val; hasIdentifier = true; break;
+      case "first_name":             lead.first_name = val; hasIdentifier = true; break;
+      case "last_name":              lead.last_name = val; break;
+      case "full_name":              Object.assign(lead, parseName(val)); hasIdentifier = true; break;
+      case "location":               Object.assign(lead, parseLocation(val)); break;
+      case "client_city":            lead.client_city = val; break;
+      case "client_address":         lead.client_address = val; break;
+      case "client_state":           lead.client_state = val; break;
+      case "client_zip":             lead.client_zip = val; break;
+      case "lsa_status":             lsaVal = val; break;
+      case "contact_type":           lead.contact_type = val; break;
+      case "visited":                if (parseBool(val)) lead.contact_type = "in_person"; break;
+      case "estimate_sent":          if (parseBool(val)) lead.status = "estimate_sent"; break;
+      case "job_closed":             if (parseBool(val)) lead.status = "closed_won"; break;
+      case "bad_lead":               lead.bad_lead = parseBool(val); break;
+      case "initial_contract_value": lead.initial_contract_value = parseRevenue(val); break;
+      case "created_at":             lead.created_at = parseDate(val) || undefined; break;
+      case "meta_salesperson":       lead.metadata.salesperson = val; break;
+      case "meta_job_type":          lead.metadata.job_type = val; break;
+      case "meta_notes":             lead.metadata.notes = val; break;
     }
-  });
-  return map;
+  }
+
+  // Apply LSA status (may override bad_lead)
+  if (lsaVal) {
+    const { lsa_status, bad_lead } = mapLsaStatus(lsaVal);
+    lead.lsa_status = lsa_status;
+    if (bad_lead) lead.bad_lead = true;
+  }
+
+  return { lead, hasIdentifier };
 }
 
+// ── Main Component ─────────────────────────────────────────────────────────────
 export default function ImportLeadsPage() {
   const router = useRouter();
   const fileRef = useRef<HTMLInputElement>(null);
 
-  const [step, setStep] = useState<"upload" | "map" | "preview" | "importing" | "done">("upload");
+  const [step, setStep]         = useState<"upload" | "map" | "preview" | "importing" | "done">("upload");
   const [csvHeaders, setCsvHeaders] = useState<string[]>([]);
-  const [csvRows, setCsvRows] = useState<Record<string, string>[]>([]);
-  const [mapping, setMapping] = useState<Record<string, string>>({});
-  const [errors, setErrors] = useState<string[]>([]);
-  const [results, setResults] = useState({ success: 0, failed: 0 });
+  const [csvRows, setCsvRows]   = useState<Record<string, string>[]>([]);
+  const [mapping, setMapping]   = useState<Record<string, string>>({});
+  const [errors, setErrors]     = useState<string[]>([]);
+  const [results, setResults]   = useState({ success: 0, failed: 0 });
   const [fileName, setFileName] = useState("");
   const [dragging, setDragging] = useState(false);
 
+  // Lead source
+  const [sources, setSources]               = useState<{ id: string; name: string }[]>([]);
+  const [selectedSource, setSelectedSource] = useState("");
+  const [newSourceName, setNewSourceName]   = useState("");
+
+  useEffect(() => {
+    supabase.from("lead_sources").select("id,name").order("name")
+      .then(({ data }) => setSources(data || []));
+  }, []);
+
   function handleFile(file: File) {
-    if (!file.name.endsWith(".csv")) {
-      setErrors(["Please upload a .csv file"]);
-      return;
-    }
+    if (!file.name.endsWith(".csv")) { setErrors(["Please upload a .csv file"]); return; }
     setFileName(file.name);
     const reader = new FileReader();
     reader.onload = (e) => {
@@ -116,74 +233,50 @@ export default function ImportLeadsPage() {
   }
 
   function handleDrop(e: React.DragEvent) {
-    e.preventDefault();
-    setDragging(false);
+    e.preventDefault(); setDragging(false);
     const file = e.dataTransfer.files[0];
     if (file) handleFile(file);
-  }
-
-  function validateMapping() {
-    const errs: string[] = [];
-    const requiredFields = DB_FIELDS.filter(f => f.required).map(f => f.key);
-    const mappedValues = Object.values(mapping);
-    requiredFields.forEach(f => {
-      if (!mappedValues.includes(f)) errs.push(`Required field "${DB_FIELDS.find(d => d.key === f)?.label}" is not mapped`);
-    });
-    return errs;
   }
 
   async function handleImport() {
     setStep("importing");
     let success = 0, failed = 0;
 
-    for (const row of csvRows) {
-      // Build the lead object from mapping
-      const mapped: Record<string, any> = {};
-      Object.entries(mapping).forEach(([csvCol, dbField]) => {
-        if (dbField && row[csvCol] !== undefined) mapped[dbField] = row[csvCol];
-      });
+    // Get or create source
+    let sourceId: string | null = null;
+    if (selectedSource === "__new__" && newSourceName.trim()) {
+      const { data } = await supabase.from("lead_sources").insert({ name: newSourceName.trim() }).select().single();
+      sourceId = data?.id || null;
+    } else if (selectedSource && selectedSource !== "__none__") {
+      sourceId = selectedSource;
+    }
 
-      if (!mapped.first_name && !mapped.phone) { failed++; continue; }
+    // Build leads
+    const leadsToInsert: any[] = [];
+    csvRows.forEach(row => {
+      const { lead, hasIdentifier } = buildLead(row, mapping, sourceId);
+      if (!hasIdentifier) { failed++; return; }
+      leadsToInsert.push(lead);
+    });
 
-      const full_name = `${mapped.first_name || ""} ${mapped.last_name || ""}`.trim();
-      const phone = mapped.phone ? formatPhone(mapped.phone) : "";
-
-      try {
-        const res = await fetch("/api/leads", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            lead_name:        full_name || phone,
-            last_name:        mapped.last_name || null,
-            phone:            phone,
-            email:            mapped.email || null,
-            address_line_1:   mapped.address_line_1 || null,
-            city:             mapped.city || null,
-            state:            mapped.state || null,
-            postal_code:      mapped.postal_code || null,
-            lead_source:      mapped.lead_source || null,
-            job_type:         mapped.job_type || null,
-            salesperson:      mapped.salesperson || null,
-            estimated_amount: mapped.estimated_amount ? Number(mapped.estimated_amount.replace(/[^0-9.]/g, "")) : 0,
-            notes:            mapped.notes || null,
-            status:           mapped.status || "new",
-            created_at:       mapped.created_at || null,
-            archived:         false,
-          }),
-        });
-        if (res.ok) success++; else failed++;
-      } catch { failed++; }
+    // Batch insert
+    for (let i = 0; i < leadsToInsert.length; i += 50) {
+      const batch = leadsToInsert.slice(i, i + 50);
+      const { error } = await supabase.from("leads").insert(batch);
+      if (error) { failed += batch.length; console.error("Import batch error:", error.message); }
+      else success += batch.length;
     }
 
     setResults({ success, failed });
     setStep("done");
   }
 
-  const mappedCount = Object.values(mapping).filter(Boolean).length;
-  const previewRows = csvRows.slice(0, 5);
+  const mappedCount  = Object.values(mapping).filter(Boolean).length;
+  const previewRows  = csvRows.slice(0, 5);
+  const mappedCols   = Object.entries(mapping).filter(([, v]) => v && v !== "skip");
 
   return (
-    <div className="max-w-3xl mx-auto space-y-6">
+    <div className="max-w-3xl mx-auto space-y-6 p-6">
 
       {/* Header */}
       <div className="flex items-center gap-3">
@@ -193,7 +286,7 @@ export default function ImportLeadsPage() {
         </button>
         <div>
           <h1 className="text-xl font-bold">Import Leads</h1>
-          <p className="text-xs text-muted-foreground">Upload a CSV file to bulk import leads</p>
+          <p className="text-xs text-muted-foreground">Upload a CSV — map columns — import directly to CRM</p>
         </div>
       </div>
 
@@ -201,8 +294,8 @@ export default function ImportLeadsPage() {
       <div className="flex items-center gap-2 text-xs">
         {["Upload", "Map Columns", "Preview", "Import"].map((s, i) => {
           const stepIdx = ["upload","map","preview","importing","done"].indexOf(step);
-          const active = i === Math.min(stepIdx, 3);
-          const done = i < stepIdx;
+          const active  = i === Math.min(stepIdx, 3);
+          const done    = i < stepIdx;
           return (
             <div key={s} className="flex items-center gap-2">
               <div className={`w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold
@@ -229,20 +322,29 @@ export default function ImportLeadsPage() {
 
       {/* ── STEP 1: Upload ── */}
       {step === "upload" && (
-        <div
-          onDragOver={e => { e.preventDefault(); setDragging(true); }}
-          onDragLeave={() => setDragging(false)}
-          onDrop={handleDrop}
-          onClick={() => fileRef.current?.click()}
-          className={`rounded-xl border-2 border-dashed p-12 text-center cursor-pointer transition-colors
-            ${dragging ? "border-primary bg-primary/5" : "border-border hover:border-primary/50 hover:bg-muted/30"}`}
-        >
-          <Upload className="h-8 w-8 mx-auto mb-3 text-muted-foreground" />
-          <p className="font-medium text-sm mb-1">Drop your CSV file here</p>
-          <p className="text-xs text-muted-foreground">or click to browse</p>
-          <input ref={fileRef} type="file" accept=".csv" className="hidden"
-            onChange={e => { if (e.target.files?.[0]) handleFile(e.target.files[0]); }} />
-        </div>
+        <>
+          <div
+            onDragOver={e => { e.preventDefault(); setDragging(true); }}
+            onDragLeave={() => setDragging(false)}
+            onDrop={handleDrop}
+            onClick={() => fileRef.current?.click()}
+            className={`rounded-xl border-2 border-dashed p-12 text-center cursor-pointer transition-colors
+              ${dragging ? "border-primary bg-primary/5" : "border-border hover:border-primary/50 hover:bg-muted/30"}`}>
+            <Upload className="h-8 w-8 mx-auto mb-3 text-muted-foreground" />
+            <p className="font-medium text-sm mb-1">Drop your CSV file here</p>
+            <p className="text-xs text-muted-foreground">or click to browse</p>
+            <p className="text-xs text-muted-foreground mt-2">Works with LSA exports, JobNimbus, Google Sheets, any CSV</p>
+            <input ref={fileRef} type="file" accept=".csv" className="hidden"
+              onChange={e => { if (e.target.files?.[0]) handleFile(e.target.files[0]); }} />
+          </div>
+          <div className="rounded-lg bg-muted/30 p-4 space-y-1.5">
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Tips</p>
+            <p className="text-xs text-muted-foreground">• First row must be column headers</p>
+            <p className="text-xs text-muted-foreground">• Columns are auto-detected — you can adjust in the next step</p>
+            <p className="text-xs text-muted-foreground">• LSA Status: Charged, Submitted (bad lead), Credited, Not charged</p>
+            <p className="text-xs text-muted-foreground">• Export from Google Sheets or JobNimbus as CSV and upload directly</p>
+          </div>
+        </>
       )}
 
       {/* ── STEP 2: Map columns ── */}
@@ -263,30 +365,50 @@ export default function ImportLeadsPage() {
             </button>
           </div>
 
+          {/* Lead source selector */}
+          <div className="rounded-lg border border-border p-4">
+            <label className="block text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">
+              Lead Source
+            </label>
+            <select value={selectedSource} onChange={e => setSelectedSource(e.target.value)}
+              className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40">
+              <option value="">— No source / select later —</option>
+              {sources.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+              <option value="__new__">+ Create new source...</option>
+            </select>
+            {selectedSource === "__new__" && (
+              <input
+                className="w-full mt-2 rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
+                placeholder="New source name (e.g. LSA - Teaneck)"
+                value={newSourceName}
+                onChange={e => setNewSourceName(e.target.value)}
+              />
+            )}
+          </div>
+
+          {/* Column mapping table */}
           <div className="rounded-lg border border-border overflow-hidden">
-            <div className="bg-muted/30 px-4 py-2.5 border-b border-border">
-              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Column Mapping</p>
+            <div className="bg-muted/30 px-4 py-2.5 border-b border-border flex justify-between items-center">
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Map CSV → CRM Fields</p>
+              <p className="text-xs text-muted-foreground">Preview value shown on right</p>
             </div>
             <div className="divide-y divide-border">
               {csvHeaders.map(col => (
-                <div key={col} className="flex items-center gap-4 px-4 py-2.5">
-                  <span className="text-sm w-44 truncate text-muted-foreground">{col}</span>
-                  <span className="text-muted-foreground">→</span>
+                <div key={col} className="flex items-center gap-3 px-4 py-2.5">
+                  <span className="text-xs font-mono bg-muted px-2 py-0.5 rounded w-40 truncate shrink-0">{col}</span>
+                  <span className="text-muted-foreground text-xs">→</span>
                   <select
                     value={mapping[col] || ""}
                     onChange={e => setMapping(prev => ({ ...prev, [col]: e.target.value }))}
-                    className="flex-1 rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
-                  >
-                    <option value="">— Skip this column —</option>
-                    {DB_FIELDS.map(f => (
-                      <option key={f.key} value={f.key}>
-                        {f.label}{f.required ? " *" : ""}
-                      </option>
-                    ))}
+                    className={`flex-1 rounded-md border px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-primary/40 ${
+                      mapping[col] ? "border-primary/50 bg-primary/5 text-primary font-medium" : "border-border bg-background text-muted-foreground"}`}>
+                    <option value="">— Skip —</option>
+                    {DB_FIELDS.map(f => <option key={f.key} value={f.key}>{f.label}</option>)}
                   </select>
-                  {mapping[col] && (
-                    <span className="text-xs text-emerald-600 font-medium shrink-0">✓ mapped</span>
-                  )}
+                  {mapping[col] && <span className="text-xs text-emerald-600 font-medium shrink-0">✓</span>}
+                  <span className="text-xs text-muted-foreground w-28 truncate shrink-0 hidden sm:block">
+                    {String(csvRows[0]?.[col] || "").slice(0, 25) || "—"}
+                  </span>
                 </div>
               ))}
             </div>
@@ -298,14 +420,9 @@ export default function ImportLeadsPage() {
               Back
             </button>
             <button
-              onClick={() => {
-                const errs = validateMapping();
-                if (errs.length) { setErrors(errs); return; }
-                setErrors([]);
-                setStep("preview");
-              }}
-              className="px-4 py-2 text-sm rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors font-medium"
-            >
+              onClick={() => { setErrors([]); setStep("preview"); }}
+              disabled={mappedCount === 0}
+              className="px-4 py-2 text-sm rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors font-medium disabled:opacity-40">
               Preview Import →
             </button>
           </div>
@@ -315,17 +432,17 @@ export default function ImportLeadsPage() {
       {/* ── STEP 3: Preview ── */}
       {step === "preview" && (
         <div className="space-y-4">
-          <div className="rounded-lg border border-border p-3 bg-blue-50/50 dark:bg-blue-950/20 flex items-center gap-2 text-sm text-blue-700">
+          <div className="rounded-lg border border-blue-200 bg-blue-50/50 dark:bg-blue-950/20 p-3 flex items-center gap-2 text-sm text-blue-700 dark:text-blue-300">
             <AlertCircle className="h-4 w-4 shrink-0" />
             Showing first 5 rows of {csvRows.length} total. Review before importing.
           </div>
 
           <div className="rounded-lg border border-border overflow-hidden overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className="w-full text-xs">
               <thead>
                 <tr className="bg-muted/30 border-b border-border">
-                  {Object.entries(mapping).filter(([,v]) => v).map(([col, field]) => (
-                    <th key={col} className="text-left text-xs font-medium text-muted-foreground px-3 py-2 whitespace-nowrap">
+                  {mappedCols.map(([col, field]) => (
+                    <th key={col} className="text-left text-xs font-semibold text-muted-foreground px-3 py-2 whitespace-nowrap">
                       {DB_FIELDS.find(f => f.key === field)?.label || field}
                     </th>
                   ))}
@@ -333,9 +450,9 @@ export default function ImportLeadsPage() {
               </thead>
               <tbody>
                 {previewRows.map((row, i) => (
-                  <tr key={i} className="border-b border-border/50 last:border-0">
-                    {Object.entries(mapping).filter(([,v]) => v).map(([col]) => (
-                      <td key={col} className="px-3 py-2 text-xs truncate max-w-[180px]">
+                  <tr key={i} className="border-b border-border/50 last:border-0 hover:bg-muted/10">
+                    {mappedCols.map(([col]) => (
+                      <td key={col} className="px-3 py-2 text-foreground truncate max-w-[160px]">
                         {row[col] || <span className="text-muted-foreground/50">—</span>}
                       </td>
                     ))}
@@ -348,10 +465,10 @@ export default function ImportLeadsPage() {
           <div className="flex gap-3 justify-end">
             <button onClick={() => setStep("map")}
               className="px-4 py-2 text-sm rounded-md border border-border hover:bg-muted transition-colors">
-              Back
+              ← Back
             </button>
             <button onClick={handleImport}
-              className="px-4 py-2 text-sm rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors font-medium">
+              className="px-5 py-2 text-sm rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors font-medium">
               Import {csvRows.length} Leads →
             </button>
           </div>
@@ -363,7 +480,7 @@ export default function ImportLeadsPage() {
         <div className="flex flex-col items-center justify-center py-20 gap-4">
           <Loader2 className="h-8 w-8 animate-spin text-primary" />
           <p className="font-medium">Importing leads...</p>
-          <p className="text-xs text-muted-foreground">Please wait, do not close this page</p>
+          <p className="text-xs text-muted-foreground">Do not close this page</p>
         </div>
       )}
 
@@ -375,7 +492,9 @@ export default function ImportLeadsPage() {
             <p className="text-xl font-bold">Import Complete</p>
             <p className="text-sm text-muted-foreground mt-1">
               <span className="text-emerald-600 font-semibold">{results.success} leads imported</span>
-              {results.failed > 0 && <span className="text-red-500 ml-2">· {results.failed} failed (missing name/phone)</span>}
+              {results.failed > 0 && (
+                <span className="text-red-500 ml-2">· {results.failed} skipped (no phone or name)</span>
+              )}
             </p>
           </div>
           <div className="flex gap-3">
@@ -383,27 +502,18 @@ export default function ImportLeadsPage() {
               className="px-4 py-2 text-sm rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors font-medium">
               View Leads Pipeline
             </button>
+            <button onClick={() => router.push("/kpi")}
+              className="px-4 py-2 text-sm rounded-md bg-emerald-600 text-white hover:bg-emerald-700 transition-colors font-medium">
+              View KPI
+            </button>
             <button onClick={() => { setStep("upload"); setCsvRows([]); setCsvHeaders([]); setMapping({}); setFileName(""); }}
               className="px-4 py-2 text-sm rounded-md border border-border hover:bg-muted transition-colors">
-              Import Another File
+              Import Another
             </button>
           </div>
         </div>
       )}
 
-      {/* Helper text */}
-      {step === "upload" && (
-        <div className="rounded-lg bg-muted/30 p-4 space-y-2">
-          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">CSV Format Tips</p>
-          <ul className="text-xs text-muted-foreground space-y-1">
-            <li>• First row must be column headers</li>
-            <li>• Required columns: <span className="font-medium text-foreground">First Name</span> and <span className="font-medium text-foreground">Phone</span></li>
-            <li>• Column names are auto-detected — you can rename them in the next step</li>
-            <li>• Dates should be in MM/DD/YYYY or YYYY-MM-DD format</li>
-            <li>• Export your Google Sheet or existing CRM as CSV and upload directly</li>
-          </ul>
-        </div>
-      )}
     </div>
   );
 }
