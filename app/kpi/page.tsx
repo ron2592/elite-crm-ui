@@ -14,7 +14,8 @@ import KpiInsights, { InsightData } from '@/components/KpiInsights'
 
 // ── Types ──────────────────────────────────────────────────────────────────
 interface LeadRow {
-  id: string; status: string; contact_type: string | null; lsa_status: string | null;
+  id: string; first_name?: string; last_name?: string; phone?: string;
+  status: string; contact_type: string | null; lsa_status: string | null;
   initial_contract_value: number; created_at: string; source_id: string | null;
   metadata: { salesperson?: string } | null;
   lead_sources: { name: string } | null;
@@ -52,7 +53,7 @@ function fmt$(n: number) {
 function pct(a: number, b: number) { return b === 0 ? '—' : Math.round((a / b) * 100) + '%' }
 function fmtDate(d: Date) { return `${MONTHS[d.getMonth()]} ${d.getDate()}` }
 
-// ── Collapsible metric (appointments / revenue) ────────────────────────────
+// ── Components ─────────────────────────────────────────────────────────────
 function ExpandMetric({ label, value, color = '', children }: {
   label: string; value: React.ReactNode; color?: string; children: React.ReactNode
 }) {
@@ -91,7 +92,6 @@ function Section({ title, badge, defaultOpen = true, children }: {
   )
 }
 
-// ── Bold Metric Card — matching Marketing Spend style ──────────────────────
 function MetricCard({ label, value, sub, color = '' }: {
   label: string; value: string | number; sub?: string; color?: string
 }) {
@@ -147,7 +147,7 @@ export default function KPIPage() {
     const { start, end } = range
 
     const [leadsRes, paymentsRes, spendRes, srcRes] = await Promise.all([
-      supabase.from('leads').select('id,status,contact_type,lsa_status,initial_contract_value,created_at,source_id,metadata,lead_sources(name)').gte('created_at', start).lt('created_at', end).eq('archived', false),
+      supabase.from('leads').select('id,first_name,last_name,phone,status,contact_type,lsa_status,initial_contract_value,created_at,source_id,metadata,lead_sources(name)').gte('created_at', start).lt('created_at', end).eq('archived', false),
       supabase.from('payments').select('amount,paid_at,lead_id').gte('paid_at', start).lt('paid_at', end),
       supabase.from('marketing_spend').select('id,period_start,source_name,source_id,amount_spent,lead_sources(name)').gte('period_start', start).lt('period_start', end),
       supabase.from('lead_sources').select('id,name').order('name'),
@@ -371,7 +371,6 @@ export default function KPIPage() {
                 </button>
               </div>
             </div>
-
             {showSpendForm && (
               <div className="px-6 py-4 border-b border-primary/20 bg-primary/5">
                 <p className="text-xs font-semibold text-primary uppercase tracking-wide mb-3">Add Spend — {periodLabel}</p>
@@ -401,7 +400,6 @@ export default function KPIPage() {
                 </div>
               </div>
             )}
-
             <div className="px-6 py-4">
               {spendBySrc.length === 0 ? (
                 <p className="text-sm text-muted-foreground text-center py-2">No spend logged for {periodLabel}. Click "Log Spend" to add.</p>
@@ -426,10 +424,8 @@ export default function KPIPage() {
             </div>
           </div>
 
-          {/* 2. KEY METRICS — bold cards */}
+          {/* 2. KEY METRICS */}
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-
-            {/* Total Leads */}
             <div className="rounded-lg border border-border bg-card overflow-hidden">
               <div className="px-4 py-4">
                 <p className="text-xs text-muted-foreground font-semibold uppercase tracking-wide mb-2">Total Leads</p>
@@ -445,8 +441,6 @@ export default function KPIPage() {
                 </div>
               </div>
             </div>
-
-            {/* Total Appointments — expandable */}
             <div className="rounded-lg border border-border bg-card overflow-hidden">
               <ExpandMetric label="Total Appointments" value={kpi.totalAppts}>
                 <div className="space-y-2">
@@ -455,8 +449,6 @@ export default function KPIPage() {
                 </div>
               </ExpandMetric>
             </div>
-
-            {/* Total Revenue — expandable */}
             <div className="rounded-lg border border-border bg-card overflow-hidden">
               <ExpandMetric label="Total Revenue" value={fmt$(kpi.totalRev)} color="text-emerald-600">
                 <div className="space-y-2">
@@ -466,31 +458,12 @@ export default function KPIPage() {
                 </div>
               </ExpandMetric>
             </div>
-
-            {/* Appt Acquisition Cost */}
-            <MetricCard
-              label="Appt Acquisition Cost"
-              value={kpi.apptAcqCost > 0 ? fmt$(kpi.apptAcqCost) : '—'}
-              sub={kpi.totalSpend > 0 ? 'spend ÷ in-person appts' : 'log spend to calculate'}
-            />
-
-            {/* Project Acquisition Cost */}
-            <MetricCard
-              label="Marketing Proj. Acq. Cost"
-              value={kpi.projAcqCost > 0 ? fmt$(kpi.projAcqCost) : '—'}
-              sub={kpi.totalSpend > 0 ? 'spend ÷ jobs closed' : 'log spend to calculate'}
-            />
-
-            {/* Close Rate */}
-            <MetricCard
-              label="Overall Close Rate"
-              value={pct(kpi.wonCount, kpi.total)}
-              sub={`${kpi.wonCount} won / ${kpi.total} leads`}
-              color={kpi.wonCount / Math.max(kpi.total, 1) >= 0.3 ? 'text-emerald-600' : 'text-foreground'}
-            />
+            <MetricCard label="Appt Acquisition Cost" value={kpi.apptAcqCost > 0 ? fmt$(kpi.apptAcqCost) : '—'} sub={kpi.totalSpend > 0 ? 'spend ÷ in-person appts' : 'log spend to calculate'} />
+            <MetricCard label="Marketing Proj. Acq. Cost" value={kpi.projAcqCost > 0 ? fmt$(kpi.projAcqCost) : '—'} sub={kpi.totalSpend > 0 ? 'spend ÷ jobs closed' : 'log spend to calculate'} />
+            <MetricCard label="Overall Close Rate" value={pct(kpi.wonCount, kpi.total)} sub={`${kpi.wonCount} won / ${kpi.total} leads`} color={kpi.wonCount / Math.max(kpi.total, 1) >= 0.3 ? 'text-emerald-600' : 'text-foreground'} />
           </div>
 
-          {/* 3. SOURCE PERFORMANCE TABLE */}
+          {/* 3. SOURCE PERFORMANCE */}
           <Section title="Lead Source Performance" badge={`${srcList.length} sources`} defaultOpen>
             {srcList.length === 0 ? (
               <p className="text-sm text-muted-foreground text-center py-4">No leads for this period.</p>
@@ -517,19 +490,12 @@ export default function KPIPage() {
                         const crColor = cr >= 40 ? 'text-emerald-600 font-bold' : cr >= 20 ? 'text-yellow-600 font-bold' : 'text-red-500 font-bold'
                         return (
                           <tr key={src.name} className="border-b border-border/50 hover:bg-muted/20">
-                            <td className="py-3 pr-3">
-                              <div className="flex items-center gap-2">
-                                <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: SRC_COLORS[i % SRC_COLORS.length] }} />
-                                <span className="font-semibold">{src.name}</span>
-                              </div>
-                            </td>
+                            <td className="py-3 pr-3"><div className="flex items-center gap-2"><div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: SRC_COLORS[i % SRC_COLORS.length] }} /><span className="font-semibold">{src.name}</span></div></td>
                             <td className="py-3 pr-3 font-semibold">{src.total}</td>
                             <td className="py-3 pr-3 text-muted-foreground">{src.lsaCharged}</td>
                             <td className="py-3 pr-3 font-semibold">{src.inPerson}</td>
                             <td className="py-3 pr-3 text-muted-foreground">{src.phoneQ}</td>
-                            <td className="py-3 pr-3">
-                              <span className="px-2 py-0.5 rounded-full text-xs bg-emerald-100 text-emerald-700 font-bold dark:bg-emerald-900/30 dark:text-emerald-400">{src.won}</span>
-                            </td>
+                            <td className="py-3 pr-3"><span className="px-2 py-0.5 rounded-full text-xs bg-emerald-100 text-emerald-700 font-bold dark:bg-emerald-900/30 dark:text-emerald-400">{src.won}</span></td>
                             <td className={`py-3 pr-3 ${crColor}`}>{src.total > 0 ? cr + '%' : '—'}</td>
                             <td className="py-3 pr-3 font-bold text-emerald-600">{src.contracted > 0 ? fmt$(src.contracted) : '—'}</td>
                             <td className="py-3 pr-3 text-muted-foreground">{srcSpend > 0 ? fmt$(srcSpend) : '—'}</td>
@@ -554,7 +520,6 @@ export default function KPIPage() {
                     </tbody>
                   </table>
                 </div>
-
                 {srcList.some(s => s.contracted > 0) && (
                   <div className="mt-4 pt-4 border-t border-border">
                     <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Revenue by source</p>
@@ -611,6 +576,60 @@ export default function KPIPage() {
               </div>
             </Section>
           )}
+
+          {/* 6. LEADS THIS PERIOD */}
+          <Section title="Leads This Period" badge={`${filtered.length} leads`} defaultOpen={false}>
+            {filtered.length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center py-4">No leads for this period.</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-border">
+                      {['Name','Phone','Source','Salesperson','Contact Type','LSA Status','Stage','Contract Value','Date'].map(h => (
+                        <th key={h} className="text-left text-xs text-muted-foreground font-semibold pb-2 pr-3 whitespace-nowrap">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filtered.map((lead, i) => {
+                      const name = `${lead.first_name || ''} ${lead.last_name || ''}`.trim() || '—'
+                      const source = (lead.lead_sources as any)?.name || '—'
+                      const salesperson = lead.metadata?.salesperson || '—'
+                      const contactType = lead.contact_type === 'in_person' ? '🏠 In-Person'
+                        : lead.contact_type === 'phone_quote' ? '📞 Phone' : '—'
+                      const lsaStatus = lead.lsa_status
+                        ? lead.lsa_status.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase())
+                        : '—'
+                      const isWon = WON_STAGES.includes(lead.status)
+                      const stageColor = isWon ? 'text-emerald-600 font-semibold'
+                        : lead.status === 'lost' ? 'text-red-500'
+                        : 'text-muted-foreground'
+                      const stageLabel = lead.status.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase())
+                      const date = new Date(lead.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+                      return (
+                        <tr key={lead.id} className={`border-b border-border/40 hover:bg-muted/20 ${i % 2 === 0 ? '' : 'bg-muted/10'}`}>
+                          <td className="py-2.5 pr-3 font-semibold whitespace-nowrap">{name}</td>
+                          <td className="py-2.5 pr-3 text-muted-foreground text-xs">{lead.phone || '—'}</td>
+                          <td className="py-2.5 pr-3">
+                            <span className="text-xs px-2 py-0.5 rounded-full bg-muted font-medium">{source}</span>
+                          </td>
+                          <td className="py-2.5 pr-3 text-muted-foreground">{salesperson}</td>
+                          <td className="py-2.5 pr-3 text-muted-foreground text-xs">{contactType}</td>
+                          <td className="py-2.5 pr-3 text-muted-foreground text-xs">{lsaStatus}</td>
+                          <td className={`py-2.5 pr-3 text-xs ${stageColor}`}>{stageLabel}</td>
+                          <td className="py-2.5 pr-3 font-semibold text-emerald-600">
+                            {lead.initial_contract_value > 0 ? fmt$(lead.initial_contract_value) : '—'}
+                          </td>
+                          <td className="py-2.5 pr-3 text-muted-foreground text-xs">{date}</td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </Section>
 
         </div>
       )}
