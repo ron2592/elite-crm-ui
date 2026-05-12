@@ -10,56 +10,73 @@ import {
 
 // ── CRM Fields ─────────────────────────────────────────────────────────────────
 const DB_FIELDS = [
-  { key: "phone",                   label: "Phone",                      required: false },
-  { key: "first_name",              label: "First Name",                 required: false },
-  { key: "last_name",               label: "Last Name",                  required: false },
-  { key: "full_name",               label: "Full Name (auto-split)",     required: false },
-  { key: "location",                label: "Location (auto-parse city)", required: false },
-  { key: "client_city",             label: "City",                       required: false },
-  { key: "client_address",          label: "Street Address",             required: false },
-  { key: "client_state",            label: "State",                      required: false },
-  { key: "client_zip",              label: "ZIP Code",                   required: false },
+  { key: "phone",                   label: "Phone",                            required: false },
+  { key: "first_name",              label: "First Name",                       required: false },
+  { key: "last_name",               label: "Last Name",                        required: false },
+  { key: "full_name",               label: "Full Name (auto-split)",           required: false },
+  { key: "email",                   label: "Email",                            required: false },
+  { key: "location",                label: "Location (auto-parse city)",       required: false },
+  { key: "client_city",             label: "City",                             required: false },
+  { key: "client_address",          label: "Street Address",                   required: false },
+  { key: "client_state",            label: "State",                            required: false },
+  { key: "client_zip",              label: "ZIP Code",                         required: false },
   { key: "lsa_status",              label: "LSA Status (Charged/Credited/etc)", required: false },
-  { key: "contact_type",            label: "Contact Type",               required: false },
+  { key: "contact_type",            label: "Contact Type",                     required: false },
   { key: "visited",                 label: "Visited? (true/false → in_person)", required: false },
-  { key: "estimate_sent",           label: "Estimate Sent? (true/false)", required: false },
-  { key: "job_closed",              label: "Job Closed? (true/false)",   required: false },
-  { key: "bad_lead",                label: "Bad Lead? (true/false)",     required: false },
-  { key: "initial_contract_value",  label: "Contract Value ($)",         required: false },
-  { key: "created_at",              label: "Date Received",              required: false },
-  { key: "meta_salesperson",        label: "Salesperson",                required: false },
-  { key: "meta_job_type",           label: "Job Type",                   required: false },
-  { key: "meta_notes",              label: "Notes",                      required: false },
+  { key: "estimate_sent",           label: "Estimate Sent? (true/false)",      required: false },
+  { key: "job_closed",              label: "Job Closed? (true/false)",         required: false },
+  { key: "bad_lead",                label: "Bad Lead? (true/false)",           required: false },
+  { key: "initial_contract_value",  label: "Contract Value — Initial ($)",     required: false },
+  { key: "created_at",              label: "Date Received",                    required: false },
+  { key: "meta_salesperson",        label: "Salesperson",                      required: false },
+  { key: "meta_job_type",           label: "Job Type",                         required: false },
+  { key: "meta_notes",              label: "Notes",                            required: false },
 ];
 
 // ── Auto-detect column mapping ─────────────────────────────────────────────────
 function autoMap(headers: string[]): Record<string, string> {
   const map: Record<string, string> = {};
   const n = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+
+  // Columns that should ALWAYS be skipped — calculated/derived fields
+  const alwaysSkip = ["projectrevenue", "changeorders"];
+
   const aliases: Record<string, string[]> = {
-    phone:                  ["customer", "customersnum", "phonenumber", "mobile", "cell", "telephone", "tel", "unnamed0"],
+    // FIX 1: Added "contact" and "contactnum" to catch "Contact #" from LSA CSV
+    phone:                  ["contact", "contactnum", "customernum", "customersnum", "phonenumber", "mobile", "cell", "telephone", "tel", "unnamed0"],
     first_name:             ["firstname", "fname", "givenname"],
     last_name:              ["lastname", "lname", "surname"],
     full_name:              ["name", "fullname", "clientname", "customername"],
+    email:                  ["email", "emailaddress", "mail"],
     location:               ["location"],
     client_city:            ["city", "town"],
     client_address:         ["address", "street", "streetaddress"],
     client_state:           ["state", "province"],
     client_zip:             ["zip", "zipcode", "postalcode", "postal"],
-    lsa_status:             ["leadstatus", "lsastatus", "status2"],
-    contact_type:           ["leadtype", "contacttype", "type"],
+    lsa_status:             ["leadstatus", "lsastatus"],
+    contact_type:           ["leadtype", "contacttype"],
     visited:                ["visited"],
-    estimate_sent:          ["estimatesent", "estimate"],
-    job_closed:             ["jobclosed", "closed", "won"],
-    bad_lead:               ["badlead", "bad"],
-    initial_contract_value: ["initialvolume", "projectrevenue", "revenue", "contractvalue", "amount", "value"],
-    created_at:             ["leadreceived", "datereceived", "date", "createdat", "received"],
+    estimate_sent:          ["estimatesent"],
+    job_closed:             ["jobclosed"],
+    bad_lead:               ["badlead"],
+    // FIX 2: Only "initialvolume" and "contractvalue" → Contract Value
+    // Removed "projectrevenue" (calculated: initial + COs) and generic "revenue","amount","value"
+    initial_contract_value: ["initialvolume", "contractvalue"],
+    created_at:             ["leadreceived", "datereceived", "createdat", "received"],
     meta_salesperson:       ["technicians", "salesperson", "assignedto", "rep", "agent"],
     meta_job_type:          ["jobtype", "job", "service", "worktype"],
     meta_notes:             ["notes", "note", "comments", "description"],
   };
+
   headers.forEach(h => {
     const normalized = n(h);
+
+    // Always skip calculated columns
+    if (alwaysSkip.includes(normalized)) {
+      map[h] = ""; // empty = Skip
+      return;
+    }
+
     for (const [field, aliasList] of Object.entries(aliases)) {
       if (normalized === n(field) || aliasList.some(a => normalized.includes(a))) {
         map[h] = field;
@@ -67,6 +84,7 @@ function autoMap(headers: string[]): Record<string, string> {
       }
     }
   });
+
   return map;
 }
 
@@ -162,6 +180,7 @@ function buildLead(row: Record<string, string>, mapping: Record<string, string>,
       case "first_name":             lead.first_name = val; hasIdentifier = true; break;
       case "last_name":              lead.last_name = val; break;
       case "full_name":              Object.assign(lead, parseName(val)); hasIdentifier = true; break;
+      case "email":                  lead.email = val; break;
       case "location":               Object.assign(lead, parseLocation(val)); break;
       case "client_city":            lead.client_city = val; break;
       case "client_address":         lead.client_address = val; break;
@@ -188,6 +207,9 @@ function buildLead(row: Record<string, string>, mapping: Record<string, string>,
     if (bad_lead) lead.bad_lead = true;
   }
 
+  // Default status if nothing set
+  if (!lead.status) lead.status = "new_lead";
+
   return { lead, hasIdentifier };
 }
 
@@ -196,16 +218,15 @@ export default function ImportLeadsPage() {
   const router = useRouter();
   const fileRef = useRef<HTMLInputElement>(null);
 
-  const [step, setStep]         = useState<"upload" | "map" | "preview" | "importing" | "done">("upload");
+  const [step, setStep]             = useState<"upload" | "map" | "preview" | "importing" | "done">("upload");
   const [csvHeaders, setCsvHeaders] = useState<string[]>([]);
-  const [csvRows, setCsvRows]   = useState<Record<string, string>[]>([]);
-  const [mapping, setMapping]   = useState<Record<string, string>>({});
-  const [errors, setErrors]     = useState<string[]>([]);
-  const [results, setResults]   = useState({ success: 0, failed: 0 });
-  const [fileName, setFileName] = useState("");
-  const [dragging, setDragging] = useState(false);
+  const [csvRows, setCsvRows]       = useState<Record<string, string>[]>([]);
+  const [mapping, setMapping]       = useState<Record<string, string>>({});
+  const [errors, setErrors]         = useState<string[]>([]);
+  const [results, setResults]       = useState({ success: 0, failed: 0 });
+  const [fileName, setFileName]     = useState("");
+  const [dragging, setDragging]     = useState(false);
 
-  // Lead source
   const [sources, setSources]               = useState<{ id: string; name: string }[]>([]);
   const [selectedSource, setSelectedSource] = useState("");
   const [newSourceName, setNewSourceName]   = useState("");
@@ -242,7 +263,6 @@ export default function ImportLeadsPage() {
     setStep("importing");
     let success = 0, failed = 0;
 
-    // Get or create source
     let sourceId: string | null = null;
     if (selectedSource === "__new__" && newSourceName.trim()) {
       const { data } = await supabase.from("lead_sources").insert({ name: newSourceName.trim() }).select().single();
@@ -251,7 +271,6 @@ export default function ImportLeadsPage() {
       sourceId = selectedSource;
     }
 
-    // Build leads
     const leadsToInsert: any[] = [];
     csvRows.forEach(row => {
       const { lead, hasIdentifier } = buildLead(row, mapping, sourceId);
@@ -259,7 +278,6 @@ export default function ImportLeadsPage() {
       leadsToInsert.push(lead);
     });
 
-    // Batch insert
     for (let i = 0; i < leadsToInsert.length; i += 50) {
       const batch = leadsToInsert.slice(i, i + 50);
       const { error } = await supabase.from("leads").insert(batch);
@@ -271,9 +289,9 @@ export default function ImportLeadsPage() {
     setStep("done");
   }
 
-  const mappedCount  = Object.values(mapping).filter(Boolean).length;
-  const previewRows  = csvRows.slice(0, 5);
-  const mappedCols   = Object.entries(mapping).filter(([, v]) => v && v !== "skip");
+  const mappedCount = Object.values(mapping).filter(Boolean).length;
+  const previewRows = csvRows.slice(0, 5);
+  const mappedCols  = Object.entries(mapping).filter(([, v]) => v && v !== "skip");
 
   return (
     <div className="max-w-3xl mx-auto space-y-6 p-6">
@@ -341,8 +359,9 @@ export default function ImportLeadsPage() {
             <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Tips</p>
             <p className="text-xs text-muted-foreground">• First row must be column headers</p>
             <p className="text-xs text-muted-foreground">• Columns are auto-detected — you can adjust in the next step</p>
-            <p className="text-xs text-muted-foreground">• LSA Status: Charged, Submitted (bad lead), Credited, Not charged</p>
-            <p className="text-xs text-muted-foreground">• Export from Google Sheets or JobNimbus as CSV and upload directly</p>
+            <p className="text-xs text-muted-foreground">• LSA Status values: Charged, Submitted (bad lead), Credited, Not charged</p>
+            <p className="text-xs text-muted-foreground">• Project Revenue and Change Orders are auto-skipped — they are calculated fields</p>
+            <p className="text-xs text-muted-foreground">• Map "Initial volume" → Contract Value ($) for the signed contract amount</p>
           </div>
         </>
       )}
@@ -393,24 +412,30 @@ export default function ImportLeadsPage() {
               <p className="text-xs text-muted-foreground">Preview value shown on right</p>
             </div>
             <div className="divide-y divide-border">
-              {csvHeaders.map(col => (
-                <div key={col} className="flex items-center gap-3 px-4 py-2.5">
-                  <span className="text-xs font-mono bg-muted px-2 py-0.5 rounded w-40 truncate shrink-0">{col}</span>
-                  <span className="text-muted-foreground text-xs">→</span>
-                  <select
-                    value={mapping[col] || ""}
-                    onChange={e => setMapping(prev => ({ ...prev, [col]: e.target.value }))}
-                    className={`flex-1 rounded-md border px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-primary/40 ${
-                      mapping[col] ? "border-primary/50 bg-primary/5 text-primary font-medium" : "border-border bg-background text-muted-foreground"}`}>
-                    <option value="">— Skip —</option>
-                    {DB_FIELDS.map(f => <option key={f.key} value={f.key}>{f.label}</option>)}
-                  </select>
-                  {mapping[col] && <span className="text-xs text-emerald-600 font-medium shrink-0">✓</span>}
-                  <span className="text-xs text-muted-foreground w-28 truncate shrink-0 hidden sm:block">
-                    {String(csvRows[0]?.[col] || "").slice(0, 25) || "—"}
-                  </span>
-                </div>
-              ))}
+              {csvHeaders.map(col => {
+                const isSkipped = !mapping[col]
+                return (
+                  <div key={col} className={`flex items-center gap-3 px-4 py-2.5 ${isSkipped ? 'opacity-50' : ''}`}>
+                    <span className="text-xs font-mono bg-muted px-2 py-0.5 rounded w-40 truncate shrink-0">{col}</span>
+                    <span className="text-muted-foreground text-xs">→</span>
+                    <select
+                      value={mapping[col] || ""}
+                      onChange={e => setMapping(prev => ({ ...prev, [col]: e.target.value }))}
+                      className={`flex-1 rounded-md border px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-primary/40 ${
+                        mapping[col] ? "border-primary/50 bg-primary/5 text-primary font-medium" : "border-border bg-background text-muted-foreground"}`}>
+                      <option value="">— Skip —</option>
+                      {DB_FIELDS.map(f => <option key={f.key} value={f.key}>{f.label}</option>)}
+                    </select>
+                    {mapping[col]
+                      ? <span className="text-xs text-emerald-600 font-medium shrink-0 w-6">✓</span>
+                      : <span className="text-xs text-muted-foreground shrink-0 w-6">—</span>
+                    }
+                    <span className="text-xs text-muted-foreground w-28 truncate shrink-0 hidden sm:block">
+                      {String(csvRows[0]?.[col] || "").slice(0, 25) || "—"}
+                    </span>
+                  </div>
+                )
+              })}
             </div>
           </div>
 
@@ -497,7 +522,7 @@ export default function ImportLeadsPage() {
               )}
             </p>
           </div>
-          <div className="flex gap-3">
+          <div className="flex gap-3 flex-wrap justify-center">
             <button onClick={() => router.push("/leads")}
               className="px-4 py-2 text-sm rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors font-medium">
               View Leads Pipeline
