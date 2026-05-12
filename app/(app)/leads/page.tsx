@@ -1,11 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import { Lead, LeadStatus } from "@/types";
 import KanbanColumn from "@/components/leads/KanbanColumn";
 import LeadDetailDialog from "@/components/leads/LeadDetailDialog";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronLeft, ChevronRight, Upload } from "lucide-react";
 
 const MONTH_NAMES = ["January","February","March","April","May","June",
   "July","August","September","October","November","December"];
@@ -27,6 +28,7 @@ function normalizeStatus(raw: string): LeadStatus {
 
 export default function LeadsPage() {
   const now = new Date();
+  const router = useRouter();
   const [allLeads, setAllLeads] = useState<Lead[]>([]);
   const [changeOrderTotals, setChangeOrderTotals] = useState<Record<string, number>>({});
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
@@ -43,7 +45,7 @@ export default function LeadsPage() {
   }
   function goToNextMonth() {
     const nextMonth = selectedMonth === 11 ? 0 : selectedMonth + 1;
-    const nextYear = selectedMonth === 11 ? selectedYear + 1 : selectedYear;
+    const nextYear  = selectedMonth === 11 ? selectedYear + 1 : selectedYear;
     if (nextYear > now.getFullYear() || (nextYear === now.getFullYear() && nextMonth > now.getMonth())) return;
     setSelectedMonth(nextMonth);
     setSelectedYear(nextYear);
@@ -64,7 +66,6 @@ export default function LeadsPage() {
     }));
     setAllLeads(normalizedLeads as Lead[]);
 
-    // Fetch won change order totals for closed_won leads
     const closedWonIds = normalizedLeads
       .filter((l: any) => l.status === "closed_won")
       .map((l: any) => l.id);
@@ -109,9 +110,8 @@ export default function LeadsPage() {
     return () => { supabase.removeChannel(channel); };
   }, []);
 
-  // Filter by month unless viewAll is on
   const monthStart = new Date(selectedYear, selectedMonth, 1);
-  const monthEnd = new Date(selectedYear, selectedMonth + 1, 0, 23, 59, 59);
+  const monthEnd   = new Date(selectedYear, selectedMonth + 1, 0, 23, 59, 59);
 
   const leads = viewAll
     ? allLeads
@@ -120,28 +120,23 @@ export default function LeadsPage() {
         return received >= monthStart && received <= monthEnd;
       });
 
-  const handleLeadClick = (lead: Lead) => { setSelectedLead(lead); setDialogOpen(true); };
-
-  const handleStageChange = async (leadId: string, newStatus: LeadStatus) => {
-    // Update locally across ALL leads regardless of month filter
+  const handleLeadClick    = (lead: Lead) => { setSelectedLead(lead); setDialogOpen(true); };
+  const handleStageChange  = async (leadId: string, newStatus: LeadStatus) => {
     setAllLeads(prev => prev.map(l => (l as any).id === leadId ? { ...l, status: newStatus } : l));
     const { error } = await supabase.from("leads").update({ status: newStatus }).eq("id", leadId);
     if (error) { console.error("Failed to update lead status:", error.message); fetchLeads(); }
   };
 
   const leadsByStage = ALL_STAGES.reduce<Record<LeadStatus, Lead[]>>(
-    (acc, stage) => {
-      acc[stage] = leads.filter(lead => lead.status === stage);
-      return acc;
-    },
+    (acc, stage) => { acc[stage] = leads.filter(lead => lead.status === stage); return acc; },
     {} as Record<LeadStatus, Lead[]>
   );
 
   const pipelineValue = leads
     .filter(l => SALES_STAGES.includes(l.status as LeadStatus))
     .reduce((sum, lead: any) => {
-      const initial = Number(lead.estimated_amount || lead.initial_contract_value || 0);
-      const coTotal = changeOrderTotals[(lead as any).id] || 0;
+      const initial  = Number(lead.estimated_amount || lead.initial_contract_value || 0);
+      const coTotal  = changeOrderTotals[(lead as any).id] || 0;
       return sum + initial + coTotal;
     }, 0);
 
@@ -149,24 +144,22 @@ export default function LeadsPage() {
 
   return (
     <>
-      {/* Header row */}
+      {/* ── Header row ── */}
       <div className="mb-4 flex items-center justify-between flex-wrap gap-3">
 
-        {/* Month selector — hidden when viewAll is on */}
+        {/* Left: month selector or "All Leads" label */}
         {!viewAll ? (
           <div className="flex items-center gap-3">
-            <button onClick={goToPrevMonth} className="flex h-8 w-8 items-center justify-center rounded-md border border-border hover:bg-muted transition-colors">
+            <button onClick={goToPrevMonth}
+              className="flex h-8 w-8 items-center justify-center rounded-md border border-border hover:bg-muted transition-colors">
               <ChevronLeft className="h-4 w-4" />
             </button>
             <div className="text-center min-w-[150px]">
               <p className="font-semibold text-sm">{MONTH_NAMES[selectedMonth]} {selectedYear}</p>
               {isCurrentMonth && <p className="text-xs text-muted-foreground">Current month</p>}
             </div>
-            <button
-              onClick={goToNextMonth}
-              disabled={isCurrentMonth}
-              className="flex h-8 w-8 items-center justify-center rounded-md border border-border hover:bg-muted transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-            >
+            <button onClick={goToNextMonth} disabled={isCurrentMonth}
+              className="flex h-8 w-8 items-center justify-center rounded-md border border-border hover:bg-muted transition-colors disabled:opacity-30 disabled:cursor-not-allowed">
               <ChevronRight className="h-4 w-4" />
             </button>
             {!isCurrentMonth && (
@@ -183,7 +176,7 @@ export default function LeadsPage() {
           </div>
         )}
 
-        {/* Right side: stats + view all toggle */}
+        {/* Right: stats + Import CSV + View all toggle */}
         <div className="flex items-center gap-3">
           <span className="text-sm text-muted-foreground">
             {leads.length} lead{leads.length !== 1 ? "s" : ""}
@@ -192,7 +185,19 @@ export default function LeadsPage() {
             )}
           </span>
           <span className="text-sm text-muted-foreground">·</span>
-          <span className="text-sm font-medium text-emerald-600">${pipelineValue.toLocaleString()} pipeline value</span>
+          <span className="text-sm font-medium text-emerald-600">
+            ${pipelineValue.toLocaleString()} pipeline value
+          </span>
+
+          {/* ── Import CSV button ── */}
+          <button
+            onClick={() => router.push("/leads/import")}
+            className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md border border-border hover:bg-muted text-muted-foreground transition-colors font-medium"
+          >
+            <Upload className="h-3.5 w-3.5" /> Import CSV
+          </button>
+
+          {/* View all toggle */}
           <button
             onClick={() => setViewAll(v => !v)}
             className={`text-xs px-3 py-1.5 rounded-md border font-medium transition-colors ${
@@ -206,7 +211,7 @@ export default function LeadsPage() {
         </div>
       </div>
 
-      {/* Sales Pipeline */}
+      {/* ── Sales Pipeline ── */}
       <div className="mb-2">
         <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Sales Pipeline</p>
         <div className="overflow-x-auto pb-4">
@@ -225,7 +230,7 @@ export default function LeadsPage() {
         </div>
       </div>
 
-      {/* Dead Leads */}
+      {/* ── Dead Leads ── */}
       <div>
         <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Dead Leads</p>
         <div className="overflow-x-auto pb-6">
