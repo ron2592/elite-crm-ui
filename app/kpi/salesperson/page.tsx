@@ -4,9 +4,10 @@ import { useState, useEffect, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabaseClient'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts'
-import { ChevronLeft, ChevronRight, TrendingUp } from 'lucide-react'
+import { ChevronLeft, ChevronRight, TrendingUp, Plus, Trash2, X, UserPlus } from 'lucide-react'
 
 // ── Types ──────────────────────────────────────────────────────────────────
+interface Salesperson { id: string; name: string }
 interface LeadRow {
   id: string; status: string; contact_type: string | null;
   initial_contract_value: number; created_at: string;
@@ -15,25 +16,22 @@ interface LeadRow {
 }
 interface PaymentRow { amount: number; paid_at: string; lead_id: string }
 
+// ── Constants ──────────────────────────────────────────────────────────────
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
-const WON_STAGES = ['closed_won', 'won']
-const ESTIMATED_STAGES = ['estimate_sent', 'closed_won', 'won', 'lost']
-
-// Auto-assign colors based on index — fully dynamic, no hardcoded names
+const WON_STAGES    = ['closed_won', 'won']
+const EST_STAGES    = ['estimate_sent', 'closed_won', 'won', 'lost']
 const PALETTE = [
-  { bg: 'bg-blue-950/30',   border: 'border-blue-700',   text: 'text-blue-400',   bar: '#378ADD' },
-  { bg: 'bg-purple-950/30', border: 'border-purple-700', text: 'text-purple-400', bar: '#8b5cf6' },
-  { bg: 'bg-emerald-950/30',border: 'border-emerald-700',text: 'text-emerald-400',bar: '#10b981' },
-  { bg: 'bg-orange-950/30', border: 'border-orange-700', text: 'text-orange-400', bar: '#f97316' },
-  { bg: 'bg-pink-950/30',   border: 'border-pink-700',   text: 'text-pink-400',   bar: '#ec4899' },
+  { bg: 'bg-blue-950/30',    border: 'border-blue-700',    text: 'text-blue-400',    bar: '#378ADD' },
+  { bg: 'bg-purple-950/30',  border: 'border-purple-700',  text: 'text-purple-400',  bar: '#8b5cf6' },
+  { bg: 'bg-emerald-950/30', border: 'border-emerald-700', text: 'text-emerald-400', bar: '#10b981' },
+  { bg: 'bg-orange-950/30',  border: 'border-orange-700',  text: 'text-orange-400',  bar: '#f97316' },
+  { bg: 'bg-pink-950/30',    border: 'border-pink-700',    text: 'text-pink-400',    bar: '#ec4899' },
 ]
 const DEFAULT_PAL = { bg: 'bg-gray-800/50', border: 'border-gray-600', text: 'text-gray-400', bar: '#6b7280' }
 
-function fmt$(n: number) {
-  if (n >= 1000) return '$' + (n / 1000).toFixed(1).replace(/\.0$/, '') + 'k'
-  return '$' + Math.round(n).toLocaleString()
-}
-function pct(a: number, b: number) { return b === 0 ? '—' : Math.round((a / b) * 100) + '%' }
+// ── Helpers ────────────────────────────────────────────────────────────────
+const fmt$ = (n: number) => n >= 1000 ? '$' + (n/1000).toFixed(1).replace(/\.0$/,'') + 'k' : '$' + Math.round(n).toLocaleString()
+const pct  = (a: number, b: number) => b === 0 ? '—' : Math.round((a/b)*100) + '%'
 
 function Stat({ label, value }: { label: string; value: string | number }) {
   return (
@@ -44,90 +42,135 @@ function Stat({ label, value }: { label: string; value: string | number }) {
   )
 }
 
+// ── Main ──────────────────────────────────────────────────────────────────
 export default function SalespersonKPIPage() {
   const today = new Date()
   const router = useRouter()
   const [year, setYear]   = useState(today.getFullYear())
   const [month, setMonth] = useState(today.getMonth())
 
-  const [leads, setLeads]       = useState<LeadRow[]>([])
-  const [payments, setPayments] = useState<PaymentRow[]>([])
-  const [trendLeads, setTrendLeads] = useState<any[]>([])
-  const [loading, setLoading]   = useState(true)
+  const [salespersons, setSalespersons] = useState<Salesperson[]>([])
+  const [leads, setLeads]               = useState<LeadRow[]>([])
+  const [payments, setPayments]         = useState<PaymentRow[]>([])
+  const [trendLeads, setTrendLeads]     = useState<any[]>([])
+  const [loading, setLoading]           = useState(true)
+
+  // Manage salespersons UI
+  const [showManager, setShowManager]   = useState(false)
+  const [newName, setNewName]           = useState('')
+  const [saving, setSaving]             = useState(false)
 
   useEffect(() => { fetchAll() }, [year, month])
 
   async function fetchAll() {
     setLoading(true)
-    const start = new Date(year, month, 1).toISOString()
-    const end   = new Date(year, month + 1, 1).toISOString()
+    const start      = new Date(year, month, 1).toISOString()
+    const end        = new Date(year, month + 1, 1).toISOString()
     const trendStart = new Date(year, month - 5, 1).toISOString()
 
-    const [leadsRes, paymentsRes, trendRes] = await Promise.all([
+    const [spRes, leadsRes, paymentsRes, trendRes] = await Promise.all([
+      supabase.from('salespersons').select('id, name').order('name'),
       supabase.from('leads').select('id,status,contact_type,initial_contract_value,created_at,metadata,lead_sources(name)').gte('created_at', start).lt('created_at', end).eq('archived', false),
       supabase.from('payments').select('amount,paid_at,lead_id').gte('paid_at', start).lt('paid_at', end),
       supabase.from('leads').select('status,initial_contract_value,created_at,metadata').gte('created_at', trendStart).lt('created_at', end).eq('archived', false),
     ])
 
+    setSalespersons(spRes.data || [])
     setLeads((leadsRes.data as any[]) || [])
     setPayments(paymentsRes.data || [])
     setTrendLeads(trendRes.data || [])
     setLoading(false)
   }
 
-  // ── Per-salesperson data ──────────────────────────────────────────────
-  const { spData, allSP } = useMemo(() => {
-    const map: Record<string, {
-      name: string; leads: number; inPerson: number; phoneQ: number;
-      estimated: number; won: number; contracted: number; actual: number;
-      sourceBreakdown: Record<string, number>
-    }> = {}
+  // ── Add salesperson ────────────────────────────────────────────────────
+  async function addSalesperson() {
+    if (!newName.trim()) return
+    setSaving(true)
+    const { data, error } = await supabase
+      .from('salespersons')
+      .insert({ name: newName.trim() })
+      .select().single()
+    if (!error && data) {
+      setSalespersons(s => [...s, data].sort((a, b) => a.name.localeCompare(b.name)))
+      setNewName('')
+    } else if (error?.code === '23505') {
+      alert(`"${newName.trim()}" already exists.`)
+    }
+    setSaving(false)
+  }
 
+  // ── Delete salesperson ─────────────────────────────────────────────────
+  async function deleteSalesperson(id: string, name: string) {
+    if (!confirm(`Remove "${name}" from salesperson list? Their past lead data is not affected.`)) return
+    await supabase.from('salespersons').delete().eq('id', id)
+    setSalespersons(s => s.filter(sp => sp.id !== id))
+  }
+
+  // ── Build stats per salesperson ────────────────────────────────────────
+  const spData = useMemo(() => {
     const payByLead: Record<string, number> = {}
     payments.forEach(p => { payByLead[p.lead_id] = (payByLead[p.lead_id] || 0) + Number(p.amount) })
 
+    // Build stats from leads
+    const statsMap: Record<string, {
+      leads: number; inPerson: number; phoneQ: number; estimated: number;
+      won: number; contracted: number; actual: number;
+      sourceBreakdown: Record<string, number>
+    }> = {}
+
     leads.forEach(l => {
-      // Pull salesperson — handle null/undefined/empty
-      const sp = (l.metadata?.salesperson || '').trim() || 'Unassigned'
-      if (!map[sp]) map[sp] = { name: sp, leads: 0, inPerson: 0, phoneQ: 0, estimated: 0, won: 0, contracted: 0, actual: 0, sourceBreakdown: {} }
-      map[sp].leads++
-      if (l.contact_type === 'in_person')   map[sp].inPerson++
-      if (l.contact_type === 'phone_quote') map[sp].phoneQ++
-      if (ESTIMATED_STAGES.includes(l.status)) map[sp].estimated++
+      const rawSP = (l.metadata?.salesperson || '').trim()
+      if (!rawSP) return
+      // Match case-insensitively to salesperson name
+      const matched = salespersons.find(s => s.name.toLowerCase() === rawSP.toLowerCase())
+      const spName = matched?.name || rawSP
+      if (!statsMap[spName]) statsMap[spName] = { leads: 0, inPerson: 0, phoneQ: 0, estimated: 0, won: 0, contracted: 0, actual: 0, sourceBreakdown: {} }
+      statsMap[spName].leads++
+      if (l.contact_type === 'in_person')   statsMap[spName].inPerson++
+      if (l.contact_type === 'phone_quote') statsMap[spName].phoneQ++
+      if (EST_STAGES.includes(l.status))    statsMap[spName].estimated++
       if (WON_STAGES.includes(l.status)) {
-        map[sp].won++
-        map[sp].contracted += Number(l.initial_contract_value || 0)
-        map[sp].actual += payByLead[l.id] || 0
+        statsMap[spName].won++
+        statsMap[spName].contracted += Number(l.initial_contract_value || 0)
+        statsMap[spName].actual += payByLead[l.id] || 0
       }
-      const srcName = (l.lead_sources as any)?.name || 'Unknown'
-      map[sp].sourceBreakdown[srcName] = (map[sp].sourceBreakdown[srcName] || 0) + 1
+      const src = (l.lead_sources as any)?.name || 'Unknown'
+      statsMap[spName].sourceBreakdown[src] = (statsMap[spName].sourceBreakdown[src] || 0) + 1
     })
 
-    const spData = Object.values(map).sort((a, b) => b.leads - a.leads)
-    const allSP = spData.map(s => s.name)
-    return { spData, allSP }
-  }, [leads, payments])
+    // Always return ALL salespersons, even those with 0 leads
+    return salespersons.map(sp => ({
+      id:   sp.id,
+      name: sp.name,
+      ...(statsMap[sp.name] || {
+        leads: 0, inPerson: 0, phoneQ: 0, estimated: 0,
+        won: 0, contracted: 0, actual: 0, sourceBreakdown: {},
+      })
+    }))
+  }, [salespersons, leads, payments])
 
-  // ── 6-month trend per salesperson ────────────────────────────────────
+  // ── 6-month trend ─────────────────────────────────────────────────────
   const trendData = useMemo(() => {
     const tMap: Record<string, Record<string, number>> = {}
     for (let i = 5; i >= 0; i--) {
       const d = new Date(year, month - i, 1)
       tMap[`${MONTHS[d.getMonth()]} ${String(d.getFullYear()).slice(2)}`] = {}
     }
-
     trendLeads.forEach((l: any) => {
       const d  = new Date(l.created_at)
       const k  = `${MONTHS[d.getMonth()]} ${String(d.getFullYear()).slice(2)}`
       if (!tMap[k]) return
-      const sp = (l.metadata?.salesperson || '').trim() || 'Unassigned'
-      if (!tMap[k][sp]) tMap[k][sp] = 0
-      if (WON_STAGES.includes(l.status)) tMap[k][sp + '_rev'] = (tMap[k][sp + '_rev'] || 0) + Number(l.initial_contract_value || 0)
+      const rawSP = (l.metadata?.salesperson || '').trim()
+      if (!rawSP) return
+      const matched = salespersons.find(s => s.name.toLowerCase() === rawSP.toLowerCase())
+      const sp = matched?.name || rawSP
       tMap[k][sp + '_leads'] = (tMap[k][sp + '_leads'] || 0) + 1
+      if (WON_STAGES.includes(l.status)) {
+        tMap[k][sp + '_rev'] = (tMap[k][sp + '_rev'] || 0) + Number(l.initial_contract_value || 0)
+      }
     })
-
     return Object.entries(tMap).map(([label, v]) => ({ label, ...v }))
-  }, [trendLeads, year, month])
+  }, [trendLeads, salespersons, year, month])
 
   function prevMonth() { if (month === 0) { setMonth(11); setYear(y => y - 1) } else setMonth(m => m - 1) }
   function nextMonth() { if (month === 11) { setMonth(0); setYear(y => y + 1) } else setMonth(m => m + 1) }
@@ -137,11 +180,11 @@ export default function SalespersonKPIPage() {
   return (
     <div className="min-h-screen bg-gray-950 text-gray-100">
 
-      {/* Header */}
+      {/* ── Header ── */}
       <div className="sticky top-0 z-50 bg-gray-900 border-b border-gray-800 px-6 py-3 flex items-center justify-between shadow-xl">
         <div className="flex items-center gap-3">
           <button onClick={() => router.push('/kpi')}
-            className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md border border-gray-700 hover:bg-gray-800 text-gray-400 transition-colors">
+            className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md border border-gray-700 hover:bg-gray-800 text-gray-400">
             ← KPI Dashboard
           </button>
           <div>
@@ -149,31 +192,105 @@ export default function SalespersonKPIPage() {
             <div className="text-gray-500 text-xs">Individual KPI breakdown</div>
           </div>
         </div>
-        <div className="flex items-center gap-1 rounded-lg border border-gray-700 px-2 py-1">
-          <button onClick={prevMonth} className="p-1 hover:bg-gray-800 rounded"><ChevronLeft className="h-4 w-4" /></button>
-          <span className="text-sm font-medium w-24 text-center text-white">{monthLabel}</span>
-          <button onClick={nextMonth} className="p-1 hover:bg-gray-800 rounded"><ChevronRight className="h-4 w-4" /></button>
+        <div className="flex items-center gap-2">
+          {/* Manage button */}
+          <button onClick={() => setShowManager(v => !v)}
+            className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md border transition-colors font-medium ${showManager ? 'bg-purple-700 border-purple-600 text-white' : 'border-gray-700 hover:bg-gray-800 text-gray-400'}`}>
+            <UserPlus className="h-3.5 w-3.5" /> Manage Salespersons
+          </button>
+          {/* Month nav */}
+          <div className="flex items-center gap-1 rounded-lg border border-gray-700 px-2 py-1">
+            <button onClick={prevMonth} className="p-1 hover:bg-gray-800 rounded"><ChevronLeft className="h-4 w-4" /></button>
+            <span className="text-sm font-medium w-24 text-center text-white">{monthLabel}</span>
+            <button onClick={nextMonth} className="p-1 hover:bg-gray-800 rounded"><ChevronRight className="h-4 w-4" /></button>
+          </div>
         </div>
       </div>
 
       <div className="max-w-6xl mx-auto px-6 py-8 space-y-6">
 
+        {/* ── Salesperson Manager ── */}
+        {showManager && (
+          <div className="bg-gray-900 rounded-xl border-2 border-purple-800 overflow-hidden">
+            <div className="px-6 py-3 border-b border-gray-800 bg-purple-900/20 flex items-center justify-between">
+              <div>
+                <h2 className="text-sm font-semibold text-purple-300">Manage Salespersons</h2>
+                <p className="text-xs text-gray-500 mt-0.5">Add or remove salespersons. All registered names always appear on this page, even with 0 leads.</p>
+              </div>
+              <button onClick={() => setShowManager(false)} className="text-gray-500 hover:text-gray-300">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="p-6">
+              {/* Add new */}
+              <div className="flex gap-2 mb-5">
+                <input
+                  className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-purple-500 placeholder-gray-600"
+                  placeholder="Enter salesperson name (e.g. Ron, Ray, Carlos...)"
+                  value={newName}
+                  onChange={e => setNewName(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && addSalesperson()}
+                />
+                <button onClick={addSalesperson} disabled={saving || !newName.trim()}
+                  className="flex items-center gap-1.5 px-4 py-2 bg-purple-700 hover:bg-purple-600 text-white rounded-lg text-sm font-medium disabled:opacity-40 transition-colors">
+                  <Plus className="h-4 w-4" /> Add
+                </button>
+              </div>
+
+              {/* Current list */}
+              {salespersons.length === 0 ? (
+                <p className="text-sm text-gray-500 text-center py-4">No salespersons added yet.</p>
+              ) : (
+                <div className="space-y-2">
+                  {salespersons.map((sp, i) => {
+                    const c = PALETTE[i] || DEFAULT_PAL
+                    const stats = spData.find(s => s.id === sp.id)
+                    const totalLeadsAll = leads.length // total leads this month
+                    return (
+                      <div key={sp.id} className="flex items-center gap-3 bg-gray-800 rounded-lg px-4 py-3 border border-gray-700">
+                        <div className={`w-8 h-8 rounded-full border-2 ${c.border} flex items-center justify-center text-sm font-bold ${c.text}`}>
+                          {sp.name.charAt(0).toUpperCase()}
+                        </div>
+                        <span className="flex-1 font-medium text-white">{sp.name}</span>
+                        <span className="text-xs text-gray-500">
+                          {stats?.leads || 0} leads in {monthLabel}
+                        </span>
+                        <button onClick={() => deleteSalesperson(sp.id, sp.name)}
+                          className="flex items-center gap-1 text-xs px-3 py-1.5 text-red-400 hover:text-red-300 border border-red-900 hover:border-red-700 rounded-lg transition-colors">
+                          <Trash2 className="h-3 w-3" /> Remove
+                        </button>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+
+              <p className="text-xs text-gray-600 mt-4 border-t border-gray-800 pt-3">
+                ⚠️ Make sure lead records use the exact same name spelling (e.g. "Ron" not "ron" or "Ronald"). Names are matched case-insensitively.
+              </p>
+            </div>
+          </div>
+        )}
+
         {loading ? (
           <div className="flex items-center justify-center py-24 text-gray-500">Loading...</div>
-        ) : spData.length === 0 ? (
+        ) : salespersons.length === 0 ? (
           <div className="text-center py-24 text-gray-500">
-            <p>No leads found for {monthLabel}.</p>
-            <p className="text-xs mt-2">Make sure salesperson is set in lead metadata.</p>
+            <p className="text-lg mb-2">No salespersons added yet.</p>
+            <button onClick={() => setShowManager(true)}
+              className="text-sm px-4 py-2 bg-purple-700 hover:bg-purple-600 text-white rounded-lg mt-2">
+              + Add Salespersons
+            </button>
           </div>
         ) : (
           <>
             {/* ── Summary banner ── */}
-            <div className="grid grid-cols-3 gap-4">
+            <div className={`grid gap-4 ${spData.length === 1 ? 'grid-cols-1 max-w-sm' : spData.length === 2 ? 'grid-cols-2' : 'grid-cols-3'}`}>
               {spData.map((sp, i) => {
                 const c = PALETTE[i] || DEFAULT_PAL
                 return (
-                  <div key={sp.name} className={`rounded-xl border-2 ${c.border} bg-gray-900 px-5 py-4 flex items-center gap-4`}>
-                    <div className={`w-12 h-12 rounded-full border-2 ${c.border} flex items-center justify-center text-xl font-bold ${c.text}`}>
+                  <div key={sp.id} className={`rounded-xl border-2 ${c.border} bg-gray-900 px-5 py-4 flex items-center gap-4`}>
+                    <div className={`w-12 h-12 rounded-full border-2 ${c.border} flex items-center justify-center text-xl font-bold ${c.text} flex-shrink-0`}>
                       {sp.name.charAt(0).toUpperCase()}
                     </div>
                     <div className="flex-1 min-w-0">
@@ -193,21 +310,8 @@ export default function SalespersonKPIPage() {
             <div className={`grid gap-4 ${spData.length === 1 ? 'grid-cols-1 max-w-md mx-auto' : spData.length === 2 ? 'grid-cols-2' : 'grid-cols-3'}`}>
               {spData.map((sp, i) => {
                 const c = PALETTE[i] || DEFAULT_PAL
-                const metrics = [
-                  { label: 'Leads',    value: sp.leads },
-                  { label: 'In-Person',value: sp.inPerson },
-                  { label: 'Phone Q',  value: sp.phoneQ },
-                  { label: 'Estimates',value: sp.estimated },
-                  { label: 'Won',      value: sp.won },
-                  { label: 'Close %',  value: pct(sp.won, sp.leads) },
-                ]
-                const bars = [
-                  { label: 'Overall close rate',   won: sp.won, total: sp.leads },
-                  { label: 'In-person close rate',  won: sp.won, total: sp.inPerson },
-                  { label: 'Estimate close rate',   won: sp.won, total: sp.estimated },
-                ]
                 return (
-                  <div key={sp.name} className={`rounded-xl border-2 ${c.border} ${c.bg} p-5`}>
+                  <div key={sp.id} className={`rounded-xl border-2 ${c.border} ${c.bg} p-5`}>
                     <div className="flex items-center gap-3 mb-5">
                       <div className={`w-10 h-10 rounded-full border-2 ${c.border} flex items-center justify-center text-lg font-bold ${c.text}`}>
                         {sp.name.charAt(0).toUpperCase()}
@@ -218,24 +322,37 @@ export default function SalespersonKPIPage() {
                       </div>
                     </div>
 
+                    {/* Stats grid */}
                     <div className="grid grid-cols-3 gap-3 mb-5">
-                      {metrics.map(m => <Stat key={m.label} label={m.label} value={m.value} />)}
+                      <Stat label="Leads"     value={sp.leads} />
+                      <Stat label="In-Person" value={sp.inPerson} />
+                      <Stat label="Phone Q"   value={sp.phoneQ} />
+                      <Stat label="Estimates" value={sp.estimated} />
+                      <Stat label="Won"       value={sp.won} />
+                      <Stat label="Close %"   value={pct(sp.won, sp.leads)} />
                     </div>
 
+                    {/* Progress bars */}
                     <div className="space-y-3 mb-5">
-                      {bars.map(b => (
-                        <div key={b.label}>
+                      {[
+                        { label: 'Overall close rate',   a: sp.won, b: sp.leads },
+                        { label: 'In-person close rate', a: sp.won, b: sp.inPerson },
+                        { label: 'Estimate close rate',  a: sp.won, b: sp.estimated },
+                      ].map(bar => (
+                        <div key={bar.label}>
                           <div className="flex justify-between text-xs text-gray-500 mb-1">
-                            <span>{b.label}</span>
-                            <span className={c.text}>{pct(b.won, b.total)}</span>
+                            <span>{bar.label}</span>
+                            <span className={c.text}>{pct(bar.a, bar.b)}</span>
                           </div>
                           <div className="h-2 bg-gray-800 rounded-full overflow-hidden">
-                            <div className="h-full rounded-full" style={{ background: c.bar, width: `${b.total > 0 ? Math.min((b.won/b.total)*100, 100) : 0}%` }} />
+                            <div className="h-full rounded-full transition-all"
+                              style={{ background: c.bar, width: `${bar.b > 0 ? Math.min((bar.a/bar.b)*100, 100) : 0}%` }} />
                           </div>
                         </div>
                       ))}
                     </div>
 
+                    {/* Revenue */}
                     <div className="grid grid-cols-2 gap-2 border-t border-gray-700/50 pt-4 mb-4">
                       <div className="bg-gray-900/60 rounded-lg p-3 text-center">
                         <div className="text-xs text-gray-500 mb-1">Contracted</div>
@@ -247,7 +364,8 @@ export default function SalespersonKPIPage() {
                       </div>
                     </div>
 
-                    {Object.keys(sp.sourceBreakdown).length > 0 && (
+                    {/* Source breakdown */}
+                    {Object.keys(sp.sourceBreakdown).length > 0 ? (
                       <div className="border-t border-gray-700/50 pt-4">
                         <div className="text-xs text-gray-500 mb-2 font-medium uppercase tracking-wide">Leads by source</div>
                         <div className="space-y-1">
@@ -258,6 +376,10 @@ export default function SalespersonKPIPage() {
                             </div>
                           ))}
                         </div>
+                      </div>
+                    ) : (
+                      <div className="border-t border-gray-700/50 pt-4 text-center text-xs text-gray-600">
+                        No leads assigned for {monthLabel}
                       </div>
                     )}
                   </div>
@@ -278,29 +400,29 @@ export default function SalespersonKPIPage() {
                         <th className="text-left px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Metric</th>
                         {spData.map((sp, i) => {
                           const c = PALETTE[i] || DEFAULT_PAL
-                          return <th key={sp.name} className={`text-left px-5 py-3 text-xs font-semibold uppercase tracking-wide ${c.text}`}>{sp.name}</th>
+                          return <th key={sp.id} className={`text-left px-5 py-3 text-xs font-semibold uppercase tracking-wide ${c.text}`}>{sp.name}</th>
                         })}
                       </tr>
                     </thead>
                     <tbody>
                       {[
-                        { label: 'Total Leads',        fn: (s: typeof spData[0]) => s.leads },
-                        { label: 'In-Person Visits',   fn: (s: typeof spData[0]) => s.inPerson },
-                        { label: 'Phone Quotes',       fn: (s: typeof spData[0]) => s.phoneQ },
-                        { label: 'Estimates Sent',     fn: (s: typeof spData[0]) => s.estimated },
-                        { label: 'Closed Won',         fn: (s: typeof spData[0]) => s.won },
-                        { label: 'Close Rate',         fn: (s: typeof spData[0]) => pct(s.won, s.leads) },
-                        { label: 'In-Person Close %',  fn: (s: typeof spData[0]) => pct(s.won, s.inPerson) },
-                        { label: 'Estimate Close %',   fn: (s: typeof spData[0]) => pct(s.won, s.estimated) },
-                        { label: 'Contracted Rev',     fn: (s: typeof spData[0]) => fmt$(s.contracted) },
-                        { label: 'Collected Rev',      fn: (s: typeof spData[0]) => fmt$(s.actual) },
-                        { label: 'Rev / Won Job',      fn: (s: typeof spData[0]) => s.won > 0 ? fmt$(s.contracted / s.won) : '—' },
+                        { label: 'Total Leads',       fn: (s: typeof spData[0]) => s.leads },
+                        { label: 'In-Person',         fn: (s: typeof spData[0]) => s.inPerson },
+                        { label: 'Phone Quotes',      fn: (s: typeof spData[0]) => s.phoneQ },
+                        { label: 'Estimates Sent',    fn: (s: typeof spData[0]) => s.estimated },
+                        { label: 'Closed Won',        fn: (s: typeof spData[0]) => s.won },
+                        { label: 'Close Rate',        fn: (s: typeof spData[0]) => pct(s.won, s.leads) },
+                        { label: 'In-Person Close %', fn: (s: typeof spData[0]) => pct(s.won, s.inPerson) },
+                        { label: 'Estimate Close %',  fn: (s: typeof spData[0]) => pct(s.won, s.estimated) },
+                        { label: 'Contracted Rev',    fn: (s: typeof spData[0]) => fmt$(s.contracted) },
+                        { label: 'Collected Rev',     fn: (s: typeof spData[0]) => fmt$(s.actual) },
+                        { label: 'Rev / Won Job',     fn: (s: typeof spData[0]) => s.won > 0 ? fmt$(s.contracted/s.won) : '—' },
                       ].map((row, ri) => (
                         <tr key={row.label} className={`border-b border-gray-800/50 hover:bg-gray-800/20 ${ri % 2 === 0 ? '' : 'bg-gray-800/10'}`}>
                           <td className="px-5 py-3 text-xs font-medium text-gray-400 uppercase tracking-wide">{row.label}</td>
                           {spData.map((sp, i) => {
                             const c = PALETTE[i] || DEFAULT_PAL
-                            return <td key={sp.name} className={`px-5 py-3 font-semibold ${c.text}`}>{row.fn(sp)}</td>
+                            return <td key={sp.id} className={`px-5 py-3 font-semibold ${c.text}`}>{row.fn(sp)}</td>
                           })}
                         </tr>
                       ))}
@@ -316,12 +438,12 @@ export default function SalespersonKPIPage() {
                 <TrendingUp className="h-4 w-4 text-gray-400" />
                 <h2 className="text-sm font-semibold text-gray-300 uppercase tracking-wide">6-Month — Contracted Revenue</h2>
                 <div className="ml-auto flex gap-4">
-                  {allSP.map((sp, i) => {
+                  {spData.map((sp, i) => {
                     const c = PALETTE[i] || DEFAULT_PAL
                     return (
-                      <div key={sp} className="flex items-center gap-1.5">
+                      <div key={sp.id} className="flex items-center gap-1.5">
                         <div className="w-2.5 h-2.5 rounded-full" style={{ background: c.bar }} />
-                        <span className="text-xs text-gray-400">{sp}</span>
+                        <span className="text-xs text-gray-400">{sp.name}</span>
                       </div>
                     )
                   })}
@@ -332,20 +454,21 @@ export default function SalespersonKPIPage() {
                   <BarChart data={trendData} barGap={4}>
                     <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
                     <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#9ca3af' }} axisLine={false} tickLine={false} />
-                    <YAxis tick={{ fontSize: 11, fill: '#9ca3af' }} axisLine={false} tickLine={false} tickFormatter={v => '$' + (v/1000).toFixed(0) + 'k'} />
+                    <YAxis tick={{ fontSize: 11, fill: '#9ca3af' }} axisLine={false} tickLine={false} tickFormatter={v => '$'+(v/1000).toFixed(0)+'k'} />
                     <Tooltip
                       contentStyle={{ background: '#1f2937', border: '1px solid #374151', borderRadius: '8px' }}
                       labelStyle={{ color: '#f9fafb', fontSize: 12 }}
                       formatter={(v: number) => fmt$(v)}
                     />
-                    {allSP.map((sp, i) => {
+                    {spData.map((sp, i) => {
                       const c = PALETTE[i] || DEFAULT_PAL
-                      return <Bar key={sp} dataKey={sp + '_rev'} name={sp} fill={c.bar} radius={[3,3,0,0]} />
+                      return <Bar key={sp.id} dataKey={sp.name + '_rev'} name={sp.name} fill={c.bar} radius={[3,3,0,0]} />
                     })}
                   </BarChart>
                 </ResponsiveContainer>
               </div>
             </div>
+
           </>
         )}
       </div>
