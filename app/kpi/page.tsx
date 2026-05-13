@@ -116,6 +116,9 @@ export default function KPIPage() {
   const [month, setMonth] = useState(today.getMonth())
   const [weekOffset, setWeekOffset] = useState(0)
   const [filterSrc, setFilterSrc] = useState('')
+  // ── Custom date range for weekly view ──────────────────────────────────
+  const [customStart, setCustomStart] = useState(todayStr())
+  const [customEnd,   setCustomEnd]   = useState(todayStr())
 
   const [leads, setLeads]       = useState<LeadRow[]>([])
   const [payments, setPayments] = useState<PaymentRow[]>([])
@@ -126,23 +129,25 @@ export default function KPIPage() {
   const [loading, setLoading]   = useState(true)
 
   const [showSpendForm, setShowSpendForm] = useState(false)
-  const [spendForm, setSpendForm] = useState({ source_id: '', amount: '', date: todayStr() })
+  const [spendForm, setSpendForm] = useState({ source_id: '', amount: '', period_start: todayStr(), period_end: todayStr() })
   const [savingSpend, setSavingSpend] = useState(false)
   const [deletingSpendId, setDeletingSpendId] = useState<string | null>(null)
 
+  // ── Date range computation ─────────────────────────────────────────────
   const range = useMemo(() => {
     if (viewMode === 'monthly') return monthRange(year, month)
-    return weekRange(weekOffset)
-  }, [viewMode, year, month, weekOffset])
+    // Weekly = custom date range set by user
+    const start = new Date(customStart + 'T00:00:00').toISOString()
+    const end   = new Date(customEnd   + 'T23:59:59').toISOString()
+    return { start, end }
+  }, [viewMode, year, month, customStart, customEnd])
 
   const periodLabel = useMemo(() => {
     if (viewMode === 'monthly') return `${MONTHS[month]} ${year}`
-    const { monday } = weekRange(weekOffset)
-    const sunday = new Date(monday); sunday.setDate(monday.getDate() + 6)
-    if (weekOffset === 0) return `This week (${fmtDate(monday)} – ${fmtDate(sunday)})`
-    if (weekOffset === -1) return `Last week (${fmtDate(monday)} – ${fmtDate(sunday)})`
-    return `${fmtDate(monday)} – ${fmtDate(sunday)}`
-  }, [viewMode, year, month, weekOffset])
+    // Weekly = show the selected date range
+    if (customStart === customEnd) return customStart
+    return `${customStart} – ${customEnd}`
+  }, [viewMode, year, month, customStart, customEnd])
 
   useEffect(() => { fetchAll() }, [range])
 
@@ -153,7 +158,7 @@ export default function KPIPage() {
     const [leadsRes, paymentsRes, spendRes, srcRes] = await Promise.all([
       supabase.from('leads').select('id,first_name,last_name,phone,status,contact_type,lsa_status,initial_contract_value,created_at,source_id,metadata,lead_sources(name)').gte('created_at', start).lt('created_at', end).eq('archived', false),
       supabase.from('payments').select('amount,paid_at,lead_id').gte('paid_at', start).lt('paid_at', end),
-      supabase.from('marketing_spend').select('id,period_start,source_name,source_id,amount_spent,lead_sources(name)').gte('period_start', start.split('T')[0]).lt('period_start', end.split('T')[0]),
+      supabase.from('marketing_spend').select('id,period_start,period_end,source_name,source_id,amount_spent,lead_sources(name)').gte('period_start', start.split('T')[0]).lte('period_start', end.split('T')[0]),
       supabase.from('lead_sources').select('id,name').order('name'),
     ])
 
@@ -233,14 +238,17 @@ export default function KPIPage() {
   }, [filtered, payments, spend, changeOrders, filterSrc])
 
   const spendBySrc = useMemo(() => {
-    const map: Record<string, { id: string; name: string; amount: number; source_id: string | null; date: string }> = {}
+    const map: Record<string, { id: string; name: string; amount: number; source_id: string | null; period_start: string; period_end: string }> = {}
     spend.forEach(row => {
       const key = row.source_id || row.source_name || 'unknown'
       const name = (row.lead_sources as any)?.name || row.source_name || 'Unknown'
-      if (!map[key]) map[key] = { id: row.id, name, amount: 0, source_id: row.source_id, date: row.period_start }
+      if (!map[key]) map[key] = { id: row.id, name, amount: 0, source_id: row.source_id, period_start: row.period_start, period_end: (row as any).period_end || row.period_start }
       map[key].amount += Number(row.amount_spent || 0)
-      // keep the most recent id for delete (if multiple entries per source)
-      if (row.period_start > map[key].date) { map[key].id = row.id; map[key].date = row.period_start }
+      if (row.period_start > map[key].period_start) {
+        map[key].id = row.id
+        map[key].period_start = row.period_start
+        map[key].period_end = (row as any).period_end || row.period_start
+      }
     })
     return Object.values(map).sort((a, b) => b.amount - a.amount)
   }, [spend])
@@ -271,13 +279,13 @@ export default function KPIPage() {
     setSavingSpend(true)
     const src = sources.find(s => s.id === spendForm.source_id)
     await supabase.from('marketing_spend').insert({
-      period_start: spendForm.date,
-      period_end:   spendForm.date,
+      period_start: spendForm.period_start,
+      period_end:   spendForm.period_end,
       source_id:    spendForm.source_id || null,
       source_name:  src?.name || null,
       amount_spent: Number(spendForm.amount),
     })
-    setSpendForm({ source_id: '', amount: '', date: todayStr() })
+    setSpendForm({ source_id: '', amount: '', period_start: todayStr(), period_end: todayStr() })
     setShowSpendForm(false)
     setSavingSpend(false)
     fetchAll()
@@ -291,12 +299,14 @@ export default function KPIPage() {
   }
 
   function prevPeriod() {
-    if (viewMode === 'monthly') { if (month === 0) { setMonth(11); setYear(y => y - 1) } else setMonth(m => m - 1) }
-    else setWeekOffset(w => w - 1)
+    if (viewMode === 'monthly') {
+      if (month === 0) { setMonth(11); setYear(y => y - 1) } else setMonth(m => m - 1)
+    }
   }
   function nextPeriod() {
-    if (viewMode === 'monthly') { if (month === 11) { setMonth(0); setYear(y => y + 1) } else setMonth(m => m + 1) }
-    else setWeekOffset(w => Math.min(w + 1, 0))
+    if (viewMode === 'monthly') {
+      if (month === 11) { setMonth(0); setYear(y => y + 1) } else setMonth(m => m + 1)
+    }
   }
 
   const maxRev = Math.max(...srcList.map(s => s.contracted), 1)
@@ -354,10 +364,42 @@ export default function KPIPage() {
             )}
           </div>
           <div className="flex items-center gap-1 rounded-lg border border-border px-2 py-1">
-            <button onClick={prevPeriod} className="p-1 hover:bg-muted rounded"><ChevronLeft className="h-4 w-4" /></button>
-            <span className="text-sm font-medium w-48 text-center">{periodLabel}</span>
-            <button onClick={nextPeriod} disabled={viewMode === 'weekly' && weekOffset === 0}
-              className="p-1 hover:bg-muted rounded disabled:opacity-30"><ChevronRight className="h-4 w-4" /></button>
+            {viewMode === 'monthly' ? (
+              <>
+                <button onClick={prevPeriod} className="p-1 hover:bg-muted rounded"><ChevronLeft className="h-4 w-4" /></button>
+                <span className="text-sm font-medium w-48 text-center">{periodLabel}</span>
+                <button onClick={nextPeriod} disabled={viewMode === 'monthly' && month === today.getMonth() && year === today.getFullYear()}
+                  className="p-1 hover:bg-muted rounded disabled:opacity-30"><ChevronRight className="h-4 w-4" /></button>
+              </>
+            ) : (
+              // Weekly = date range pickers
+              <div className="flex items-center gap-2 px-1">
+                <span className="text-xs text-muted-foreground">From</span>
+                <input type="date" value={customStart}
+                  onChange={e => {
+                    setCustomStart(e.target.value)
+                    if (e.target.value > customEnd) setCustomEnd(e.target.value)
+                  }}
+                  className="text-xs rounded border border-border bg-background px-2 py-1 focus:outline-none focus:ring-1 focus:ring-primary/40" />
+                <span className="text-xs text-muted-foreground">To</span>
+                <input type="date" value={customEnd} min={customStart}
+                  onChange={e => setCustomEnd(e.target.value)}
+                  className="text-xs rounded border border-border bg-background px-2 py-1 focus:outline-none focus:ring-1 focus:ring-primary/40" />
+                <button
+                  onClick={() => {
+                    // Quick shortcut: set to current week Mon-Sun
+                    const now = new Date()
+                    const mon = new Date(now)
+                    mon.setDate(now.getDate() - ((now.getDay() + 6) % 7))
+                    const sun = new Date(mon); sun.setDate(mon.getDate() + 6)
+                    setCustomStart(mon.toISOString().split('T')[0])
+                    setCustomEnd(sun.toISOString().split('T')[0])
+                  }}
+                  className="text-xs px-2 py-1 rounded border border-border hover:bg-muted text-muted-foreground whitespace-nowrap">
+                  This week
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -404,18 +446,29 @@ export default function KPIPage() {
               </div>
             </div>
 
-            {/* ── Spend Form with Date Picker ── */}
+            {/* ── Spend Form with Date Range ── */}
             {showSpendForm && (
               <div className="px-6 py-4 border-b border-primary/20 bg-primary/5">
                 <p className="text-xs font-semibold text-primary uppercase tracking-wide mb-3">Add Spend</p>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                  {/* Date picker */}
+                <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+                  {/* Period start */}
                   <div>
-                    <label className="text-xs text-muted-foreground block mb-1">Date</label>
+                    <label className="text-xs text-muted-foreground block mb-1">From</label>
                     <input
                       type="date"
-                      value={spendForm.date}
-                      onChange={e => setSpendForm({...spendForm, date: e.target.value})}
+                      value={spendForm.period_start}
+                      onChange={e => setSpendForm({...spendForm, period_start: e.target.value})}
+                      className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
+                    />
+                  </div>
+                  {/* Period end */}
+                  <div>
+                    <label className="text-xs text-muted-foreground block mb-1">To</label>
+                    <input
+                      type="date"
+                      value={spendForm.period_end}
+                      min={spendForm.period_start}
+                      onChange={e => setSpendForm({...spendForm, period_end: e.target.value})}
                       className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
                     />
                   </div>
@@ -437,7 +490,7 @@ export default function KPIPage() {
                   </div>
                   {/* Actions */}
                   <div className="flex items-end gap-2">
-                    <button onClick={handleAddSpend} disabled={savingSpend || !spendForm.amount || !spendForm.date}
+                    <button onClick={handleAddSpend} disabled={savingSpend || !spendForm.amount || !spendForm.period_start}
                       className="flex-1 flex items-center justify-center gap-1.5 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-40 transition-colors">
                       <Save className="h-3.5 w-3.5" /> {savingSpend ? 'Saving...' : 'Save'}
                     </button>
@@ -447,6 +500,9 @@ export default function KPIPage() {
                     </button>
                   </div>
                 </div>
+                <p className="text-xs text-muted-foreground mt-2">
+                  Tip: Log cumulative billing total for the period. e.g. May 1–13 = $490.43
+                </p>
               </div>
             )}
 
@@ -482,8 +538,12 @@ export default function KPIPage() {
                           </button>
                         </div>
                         <p className="text-xl font-bold">{fmt$(row.amount)}</p>
-                        {row.date && (
-                          <p className="text-xs text-muted-foreground mt-0.5">{row.date}</p>
+                        {row.period_start && (
+                          <p className="text-xs text-muted-foreground mt-0.5">
+                            {row.period_start === row.period_end
+                              ? row.period_start
+                              : `${row.period_start} – ${row.period_end}`}
+                          </p>
                         )}
                         {cpl > 0 && <p className="text-xs text-muted-foreground mt-1">{fmt$(cpl)} / charged lead</p>}
                       </div>
