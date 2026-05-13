@@ -48,7 +48,8 @@ function weekRange(weekOffset: number) {
 function fmt$(n: number) {
   if (n >= 1000000) return '$' + (n / 1000000).toFixed(1) + 'M'
   if (n >= 1000) return '$' + (n / 1000).toFixed(1).replace(/\.0$/, '') + 'k'
-  return '$' + Math.round(n).toLocaleString()
+  // ✅ Show cents for values under $1000
+  return '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
 function pct(a: number, b: number) { return b === 0 ? '—' : Math.round((a / b) * 100) + '%' }
 function fmtDate(d: Date) { return `${MONTHS[d.getMonth()]} ${d.getDate()}` }
@@ -110,6 +111,7 @@ export default function KPIPage() {
   const today = new Date()
   const router = useRouter()
   const [viewMode, setViewMode] = useState<'monthly' | 'weekly'>('monthly')
+  const [kpiDropdownOpen, setKpiDropdownOpen] = useState(false)
   const [year, setYear]   = useState(today.getFullYear())
   const [month, setMonth] = useState(today.getMonth())
   const [weekOffset, setWeekOffset] = useState(0)
@@ -315,21 +317,41 @@ export default function KPIPage() {
           </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          <button onClick={() => router.push('/kpi/salesperson')}
-            className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md border border-border hover:bg-muted text-muted-foreground">
-            <UserCheck className="h-3.5 w-3.5" /> Salesperson KPI
-          </button>
           <button onClick={() => window.print()}
             className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md border border-border hover:bg-muted text-muted-foreground">
             <Printer className="h-3.5 w-3.5" /> Export PDF
           </button>
-          <div className="flex rounded-lg border border-border overflow-hidden">
-            {(['monthly','weekly'] as const).map(v => (
-              <button key={v} onClick={() => { setViewMode(v); setWeekOffset(0) }}
-                className={`px-3 py-1.5 text-xs font-medium capitalize transition-colors ${viewMode === v ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'}`}>
-                {v}
-              </button>
-            ))}
+
+          {/* ── KPI View Dropdown ── */}
+          <div className="relative">
+            <button
+              onClick={() => setKpiDropdownOpen(v => !v)}
+              className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md border border-border hover:bg-muted text-muted-foreground font-medium">
+              KPI Views
+              <ChevronDown className="h-3.5 w-3.5" />
+            </button>
+            {kpiDropdownOpen && (
+              <div className="absolute right-0 top-full mt-1 w-48 rounded-lg border border-border bg-background shadow-lg z-50 overflow-hidden">
+                <button
+                  onClick={() => { setViewMode('monthly'); setKpiDropdownOpen(false); }}
+                  className={`w-full text-left px-4 py-2.5 text-sm hover:bg-muted transition-colors flex items-center justify-between ${viewMode === 'monthly' ? 'font-semibold text-primary' : ''}`}>
+                  Monthly KPI
+                  {viewMode === 'monthly' && <span className="text-xs text-primary">●</span>}
+                </button>
+                <button
+                  onClick={() => { setViewMode('weekly'); setWeekOffset(0); setKpiDropdownOpen(false); }}
+                  className={`w-full text-left px-4 py-2.5 text-sm hover:bg-muted transition-colors flex items-center justify-between ${viewMode === 'weekly' ? 'font-semibold text-primary' : ''}`}>
+                  Weekly KPI
+                  {viewMode === 'weekly' && <span className="text-xs text-primary">●</span>}
+                </button>
+                <div className="border-t border-border" />
+                <button
+                  onClick={() => { router.push('/kpi/salesperson'); setKpiDropdownOpen(false); }}
+                  className="w-full text-left px-4 py-2.5 text-sm hover:bg-muted transition-colors text-muted-foreground">
+                  Salesperson KPI
+                </button>
+              </div>
+            )}
           </div>
           <div className="flex items-center gap-1 rounded-lg border border-border px-2 py-1">
             <button onClick={prevPeriod} className="p-1 hover:bg-muted rounded"><ChevronLeft className="h-4 w-4" /></button>

@@ -15,7 +15,6 @@ const statusLabels: Record<string, string> = {
   cancelled_appointment: "Cancelled Appt", lost: "Lost", not_qualified: "Not Qualified",
 };
 
-// LSA status config — label + Tailwind classes for the inline card
 const LSA_STATUS_CONFIG: Record<string, { label: string; classes: string }> = {
   charged:     { label: "Charged",     classes: "bg-emerald-100 text-emerald-700" },
   submitted:   { label: "Submitted",   classes: "bg-yellow-100 text-yellow-700" },
@@ -81,15 +80,16 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
   const [savingReasonLost, setSavingReasonLost] = useState(false);
   const [savedReasonLost, setSavedReasonLost] = useState(false);
   const [currentStatus, setCurrentStatus] = useState<string>((lead as any)?.status || "new");
-  // Inline salesperson state
   const [inlineSalesperson, setInlineSalesperson] = useState<string>("");
   const [savingInlineSalesperson, setSavingInlineSalesperson] = useState(false);
-  // ── NEW: LSA status + contact type ──────────────────────────────────────
+  // ── Inline job type (editable without full edit mode) ──
+  const [inlineJobType, setInlineJobType] = useState<string>("");
+  const [savingInlineJobType, setSavingInlineJobType] = useState(false);
+  // ── LSA status + contact type ──
   const [lsaStatus, setLsaStatus] = useState<string>("not_charged");
   const [savingLsaStatus, setSavingLsaStatus] = useState(false);
   const [contactType, setContactType] = useState<string>("");
   const [savingContactType, setSavingContactType] = useState(false);
-  // ────────────────────────────────────────────────────────────────────────
 
   const leadId = (lead as any)?.id;
 
@@ -98,7 +98,7 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
       const raw = lead as any;
       setCurrentStatus(raw.status || "new");
       setInlineSalesperson(raw.metadata?.salesperson || "");
-      // Load new fields
+      setInlineJobType(raw.metadata?.job_type || "");
       setLsaStatus(raw.lsa_status || "not_charged");
       setContactType(raw.contact_type || "");
     }
@@ -121,7 +121,7 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
   useEffect(() => {
     if (lead && editMode) {
       const l = lead as any;
-      setEditFields({ first_name: l.first_name || "", last_name: l.last_name || "", phone: l.phone || "", email: l.email || "", address_line_1: l.address_line_1 || "", city: l.city || "", state: l.state || "", zip: l.zip || l.postal_code || "", source_id: l.source_id || "", job_type: l.metadata?.job_type || "", salesperson: l.metadata?.salesperson || "", notes: l.metadata?.notes || "" });
+      setEditFields({ first_name: l.first_name || "", last_name: l.last_name || "", phone: l.phone || "", email: l.email || "", address_line_1: l.address_line_1 || l.client_address || "", city: l.city || l.client_city || "", state: l.state || l.client_state || "", zip: l.zip || l.postal_code || l.client_zip || "", source_id: l.source_id || "", job_type: l.metadata?.job_type || "", salesperson: l.metadata?.salesperson || "", notes: l.metadata?.notes || "" });
     }
   }, [editMode, lead]);
 
@@ -158,13 +158,15 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
 
   if (!lead) return null;
   const l = lead as any;
-  const displayName = l.lead_name || l.first_name || "Unnamed Lead";
+  const displayName = l.lead_name || `${l.first_name || ""} ${l.last_name || ""}`.trim() || "Unnamed Lead";
   const initials = displayName.split(" ").map((n: string) => n[0]).join("").toUpperCase().slice(0, 2);
   const phone = l.phone || "No phone";
   const email = l.email || "No email";
-  const address = l.address_line_1 ? `${l.address_line_1}${l.city ? ", " + l.city : ""}${l.state ? ", " + l.state : ""}` : "No address";
+  const address = (l.address_line_1 || l.client_address)
+    ? `${l.address_line_1 || l.client_address}${(l.city || l.client_city) ? ", " + (l.city || l.client_city) : ""}${(l.state || l.client_state) ? ", " + (l.state || l.client_state) : ""}`
+    : "No address";
   const source = l.lead_sources?.name || l.source_email || l.metadata?.lead_source || "No source";
-  const jobType = l.metadata?.job_type || "";
+  const jobType = inlineJobType || l.metadata?.job_type || "";
   const notes = l.metadata?.notes || "";
   const createdAt = l.created_at;
   const currentEstimated = Number(l.estimated_amount || 0);
@@ -178,10 +180,9 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
   const isClosedWon = ["closed_won", "won"].includes(currentStatus);
   const isLost = currentStatus === "lost";
   const showFullContract = isClosedWon || isLost;
-  // Show contact_type toggle from estimate_sent onward
   const showContactType = isEstimateSent || showFullContract;
 
-  // ── NEW handlers ─────────────────────────────────────────────────────────
+  // ── Handlers ──────────────────────────────────────────────────────────────
   const handleLsaStatusChange = async (val: string) => {
     setLsaStatus(val);
     setSavingLsaStatus(true);
@@ -191,7 +192,6 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
   };
 
   const handleContactTypeChange = async (val: string) => {
-    // Toggle off if already selected
     const next = contactType === val ? "" : val;
     setContactType(next);
     setSavingContactType(true);
@@ -199,14 +199,21 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
     setSavingContactType(false);
     if (onLeadUpdated) onLeadUpdated(leadId);
   };
-  // ─────────────────────────────────────────────────────────────────────────
 
-  // Inline salesperson save
   const handleInlineSalespersonChange = async (val: string) => {
     setInlineSalesperson(val);
     setSavingInlineSalesperson(true);
     await supabase.from("leads").update({ metadata: { ...l.metadata, salesperson: val || null } }).eq("id", leadId);
     setSavingInlineSalesperson(false);
+    if (onLeadUpdated) onLeadUpdated(leadId);
+  };
+
+  // ✅ NEW: inline job type save
+  const handleInlineJobTypeChange = async (val: string) => {
+    setInlineJobType(val);
+    setSavingInlineJobType(true);
+    await supabase.from("leads").update({ metadata: { ...l.metadata, job_type: val || null } }).eq("id", leadId);
+    setSavingInlineJobType(false);
     if (onLeadUpdated) onLeadUpdated(leadId);
   };
 
@@ -231,12 +238,22 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
   const handleSaveEdit = async () => {
     setEditSaving(true);
     const fullName = `${editFields.first_name} ${editFields.last_name}`.trim();
-    const updates: any = { lead_name: fullName, phone: editFields.phone, email: editFields.email, address_line_1: editFields.address_line_1, city: editFields.city, state: editFields.state, postal_code: editFields.zip, metadata: { ...l.metadata, job_type: editFields.job_type || null, salesperson: editFields.salesperson || null, notes: editFields.notes || null } };
+    const updates: any = {
+      lead_name: fullName,
+      phone: editFields.phone,
+      email: editFields.email,
+      client_address: editFields.address_line_1,
+      client_city: editFields.city,
+      client_state: editFields.state,
+      client_zip: editFields.zip,
+      metadata: { ...l.metadata, job_type: editFields.job_type || null, salesperson: editFields.salesperson || null, notes: editFields.notes || null }
+    };
     if (editFields.source_id) updates.source_id = editFields.source_id;
     const { error } = await supabase.from("leads").update(updates).eq("id", leadId);
     setEditSaving(false);
     if (error) { alert("Failed to save: " + error.message); return; }
     setInlineSalesperson(editFields.salesperson || "");
+    setInlineJobType(editFields.job_type || "");
     setEditMode(false); setSaveEditSuccess(true); setTimeout(() => setSaveEditSuccess(false), 3000);
     if (onLeadUpdated) onLeadUpdated(leadId);
   };
@@ -334,7 +351,6 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
       setSaveEditSuccess(false); setShowAddChangeOrder(false); setShowAddCOPayment(null);
       setAppointmentAt(""); setAppointmentNotes(""); setSavedAppointment(false);
       setReasonLost(""); setSavedReasonLost(false);
-      // Reset new fields
       setLsaStatus("not_charged"); setContactType("");
     }
     onOpenChange(val);
@@ -346,7 +362,6 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
 
   const coStatusColors: Record<string, string> = { pending: "bg-yellow-100 text-yellow-700", won: "bg-emerald-100 text-emerald-700", lost: "bg-red-100 text-red-600" };
 
-  // ── Contact type toggle — reusable UI block ──────────────────────────────
   const ContactTypeToggle = () => (
     <div className="rounded-lg border border-border p-3 space-y-2">
       <div className="flex items-center justify-between">
@@ -354,30 +369,17 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
         {savingContactType && <span className="text-xs text-blue-400">saving...</span>}
       </div>
       <div className="flex gap-2">
-        <button
-          onClick={() => handleContactTypeChange("in_person")}
-          className={`flex-1 text-xs px-3 py-2 rounded-md border font-medium transition-colors ${
-            contactType === "in_person"
-              ? "bg-primary text-primary-foreground border-primary"
-              : "border-border hover:bg-muted text-muted-foreground"
-          }`}
-        >
+        <button onClick={() => handleContactTypeChange("in_person")}
+          className={`flex-1 text-xs px-3 py-2 rounded-md border font-medium transition-colors ${contactType === "in_person" ? "bg-primary text-primary-foreground border-primary" : "border-border hover:bg-muted text-muted-foreground"}`}>
           🏠 In-Person Visit
         </button>
-        <button
-          onClick={() => handleContactTypeChange("phone_quote")}
-          className={`flex-1 text-xs px-3 py-2 rounded-md border font-medium transition-colors ${
-            contactType === "phone_quote"
-              ? "bg-primary text-primary-foreground border-primary"
-              : "border-border hover:bg-muted text-muted-foreground"
-          }`}
-        >
+        <button onClick={() => handleContactTypeChange("phone_quote")}
+          className={`flex-1 text-xs px-3 py-2 rounded-md border font-medium transition-colors ${contactType === "phone_quote" ? "bg-primary text-primary-foreground border-primary" : "border-border hover:bg-muted text-muted-foreground"}`}>
           📞 Phone Quote
         </button>
       </div>
     </div>
   );
-  // ─────────────────────────────────────────────────────────────────────────
 
   return (
     <Dialog open={open} onOpenChange={handleOpen}>
@@ -414,7 +416,7 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
             <div className="flex items-center gap-2 rounded-md bg-emerald-500/10 border border-emerald-500/30 px-3 py-2 text-sm text-emerald-600 font-medium">✓ Lead updated successfully</div>
           )}
 
-          {/* EDIT MODE */}
+          {/* ── EDIT MODE ── */}
           {editMode && (
             <div className="rounded-lg border border-primary/30 bg-primary/5 p-4 space-y-3">
               <p className="text-xs font-semibold text-primary uppercase tracking-wide">Edit Lead Info</p>
@@ -445,7 +447,7 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
             </div>
           )}
 
-          {/* STATUS CARDS */}
+          {/* ── STATUS CARDS (non-edit mode) ── */}
           {!editMode && (
             <div className="grid grid-cols-2 gap-3">
               {/* Status */}
@@ -459,27 +461,21 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
                 <p className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
                   Salesperson {savingInlineSalesperson && <span className="text-blue-400 text-xs">saving...</span>}
                 </p>
-                <select
-                  value={inlineSalesperson}
-                  onChange={(e) => handleInlineSalespersonChange(e.target.value)}
-                  className="w-full bg-transparent font-semibold text-sm focus:outline-none cursor-pointer"
-                >
+                <select value={inlineSalesperson} onChange={(e) => handleInlineSalespersonChange(e.target.value)}
+                  className="w-full bg-transparent font-semibold text-sm focus:outline-none cursor-pointer">
                   <option value="">Not assigned</option>
                   {SALESPERSONS.map(s => <option key={s} value={s}>{s}</option>)}
                 </select>
               </div>
 
-              {/* ── NEW: LSA Status inline dropdown ── */}
+              {/* LSA Status inline dropdown */}
               <div className="rounded-lg bg-muted/50 p-3">
                 <p className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
                   LSA Status {savingLsaStatus && <span className="text-blue-400 text-xs">saving...</span>}
                 </p>
                 <div className="flex items-center gap-2">
-                  <select
-                    value={lsaStatus}
-                    onChange={(e) => handleLsaStatusChange(e.target.value)}
-                    className="w-full bg-transparent font-semibold text-sm focus:outline-none cursor-pointer"
-                  >
+                  <select value={lsaStatus} onChange={(e) => handleLsaStatusChange(e.target.value)}
+                    className="w-full bg-transparent font-semibold text-sm focus:outline-none cursor-pointer">
                     {Object.entries(LSA_STATUS_CONFIG).map(([val, cfg]) => (
                       <option key={val} value={val}>{cfg.label}</option>
                     ))}
@@ -491,16 +487,21 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
                   )}
                 </div>
               </div>
-              {/* ─────────────────────────────────────── */}
 
-              {jobType && (
-                <div className="rounded-lg bg-muted/50 p-3">
-                  <p className="text-xs text-muted-foreground mb-1">Job Type</p>
-                  <p className="font-semibold text-sm">{jobType}</p>
-                </div>
-              )}
+              {/* ✅ Job Type — now an editable inline dropdown */}
+              <div className="rounded-lg bg-muted/50 p-3">
+                <p className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
+                  Job Type {savingInlineJobType && <span className="text-blue-400 text-xs">saving...</span>}
+                </p>
+                <select value={inlineJobType} onChange={(e) => handleInlineJobTypeChange(e.target.value)}
+                  className="w-full bg-transparent font-semibold text-sm focus:outline-none cursor-pointer">
+                  <option value="">— Select type —</option>
+                  {JOB_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                </select>
+              </div>
+
               {source && source !== "No source" && (
-                <div className="rounded-lg bg-muted/50 p-3">
+                <div className="rounded-lg bg-muted/50 p-3 col-span-2">
                   <p className="text-xs text-muted-foreground mb-1">Lead Source</p>
                   <p className="font-semibold text-sm">{source}</p>
                 </div>
@@ -508,7 +509,7 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
             </div>
           )}
 
-          {/* APPOINTMENT PICKER */}
+          {/* ── APPOINTMENT PICKER ── */}
           {!editMode && isAppointmentStage && (
             <div className="rounded-lg border border-blue-200 bg-blue-50/50 dark:bg-blue-950/20 p-4 space-y-3">
               <p className="text-xs font-semibold text-blue-700 uppercase tracking-wide flex items-center gap-1">
@@ -530,13 +531,11 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
             </div>
           )}
 
-          {/* ESTIMATE + CONTACT TYPE */}
+          {/* ── ESTIMATE ── */}
           {!editMode && isEstimateSent && (
             <div className="rounded-lg border border-border p-4 space-y-3">
               <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1"><DollarSign className="h-3 w-3" /> Estimate</p>
-              {/* ── NEW: Contact Type toggle ── */}
               <ContactTypeToggle />
-              {/* ──────────────────────────── */}
               <div>
                 <label className="text-xs text-muted-foreground mb-1 block">Estimated Amount <span className="text-foreground font-medium">(${currentEstimated.toLocaleString()})</span></label>
                 <input type="number" placeholder={String(currentEstimated)} value={estimatedAmount} onChange={(e) => setEstimatedAmount(e.target.value)} className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" />
@@ -547,16 +546,14 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
             </div>
           )}
 
-          {/* FULL CONTRACT */}
+          {/* ── FULL CONTRACT ── */}
           {!editMode && showFullContract && (
             <div className="rounded-lg border border-border p-4 space-y-3">
               <div className="flex items-center justify-between">
                 <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1"><DollarSign className="h-3 w-3" /> Initial Contract</p>
                 {jobType && <span className="text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 font-medium">{jobType}</span>}
               </div>
-              {/* ── NEW: Contact Type toggle (also visible in full contract) ── */}
               <ContactTypeToggle />
-              {/* ─────────────────────────────────────────────────────────────── */}
               {l.metadata?.initial_contract_description && <p className="text-xs text-muted-foreground italic">{l.metadata.initial_contract_description}</p>}
               <div className="grid grid-cols-2 gap-3">
                 <div><label className="text-xs text-muted-foreground mb-1 block">Estimated Amount <span className="text-foreground font-medium">(${currentEstimated.toLocaleString()})</span></label><input type="number" placeholder={String(currentEstimated)} value={estimatedAmount} onChange={(e) => setEstimatedAmount(e.target.value)} className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" /></div>
@@ -609,7 +606,7 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
             </div>
           )}
 
-          {/* CHANGE ORDERS */}
+          {/* ── CHANGE ORDERS ── */}
           {!editMode && showFullContract && (
             <>
               {changeOrders.map((co) => {
@@ -699,7 +696,7 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
             </>
           )}
 
-          {/* REASON LOST */}
+          {/* ── REASON LOST ── */}
           {!editMode && isLost && (
             <div className="rounded-lg border border-red-200 bg-red-50/50 dark:bg-red-950/20 p-4 space-y-3">
               <p className="text-xs font-semibold text-red-600 uppercase tracking-wide">Reason Lost</p>
@@ -710,13 +707,19 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
             </div>
           )}
 
-          {/* CONTACT INFO */}
+          {/* ── CONTACT INFO ── */}
           {!editMode && (
             <div className="space-y-2.5">
               <div className="flex items-center gap-2.5 text-sm"><Phone className="h-4 w-4 text-muted-foreground" /><span>{phone}</span></div>
               <div className="flex items-center gap-2.5 text-sm"><Mail className="h-4 w-4 text-muted-foreground" /><span>{email}</span></div>
               <div className="flex items-center gap-2.5 text-sm"><MapPin className="h-4 w-4 text-muted-foreground" /><span>{address}</span></div>
-              {createdAt && <div className="flex items-center gap-2.5 text-sm"><Calendar className="h-4 w-4 text-muted-foreground" /><span>Added {new Date(createdAt).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}</span></div>}
+              {/* ✅ CHANGED: "Added" → "Lead received" */}
+              {createdAt && (
+                <div className="flex items-center gap-2.5 text-sm">
+                  <Calendar className="h-4 w-4 text-muted-foreground" />
+                  <span>Lead received {new Date(createdAt).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}</span>
+                </div>
+              )}
             </div>
           )}
 
@@ -727,7 +730,7 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
             </div>
           )}
 
-          {/* MOVE TO STAGE */}
+          {/* ── MOVE TO STAGE ── */}
           {!editMode && (
             <div>
               <p className="text-xs text-muted-foreground mb-2">Move to stage</p>

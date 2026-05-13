@@ -4,13 +4,13 @@ import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import {
-  Search, Trash2, Download, Filter, ChevronDown,
-  CheckSquare, Square, Loader2, AlertTriangle, X,
-  LayoutList, LayoutGrid, RefreshCw, Phone, Mail,
-  MapPin, Tag, Calendar, User
+  Search, Trash2, Download, CheckSquare, Square,
+  Loader2, AlertTriangle, X, RefreshCw, Pencil,
 } from "lucide-react";
+import LeadDetailDialog from "@/components/leads/LeadDetailDialog";
+import { Lead } from "@/types";
 
-type Lead = {
+type LeadRow = {
   id: string;
   lead_name: string;
   first_name: string | null;
@@ -31,23 +31,24 @@ type Lead = {
 };
 
 const STATUS_LABELS: Record<string, string> = {
-  new_lead: "New Lead",
-  qualified: "Qualified",
-  appointment_set: "Appt Set",
-  estimate_sent: "Estimate Sent",
-  closed_won: "Closed Won",
-  cancelled: "Cancelled",
-  lost: "Lost",
+  new: "New Lead", new_lead: "New Lead",
+  open: "New Lead", contacted: "Qualified",
+  appointment_set: "Appt Set", estimate_sent: "Estimate Sent",
+  closed_won: "Closed Won", won: "Closed Won",
+  cancelled_appointment: "Cancelled", lost: "Lost",
   not_qualified: "Not Qualified",
 };
 
 const STATUS_COLORS: Record<string, string> = {
+  new: "bg-blue-100 text-blue-700",
   new_lead: "bg-blue-100 text-blue-700",
-  qualified: "bg-purple-100 text-purple-700",
+  open: "bg-blue-100 text-blue-700",
+  contacted: "bg-purple-100 text-purple-700",
   appointment_set: "bg-yellow-100 text-yellow-700",
   estimate_sent: "bg-orange-100 text-orange-700",
   closed_won: "bg-emerald-100 text-emerald-700",
-  cancelled: "bg-gray-100 text-gray-500",
+  won: "bg-emerald-100 text-emerald-700",
+  cancelled_appointment: "bg-gray-100 text-gray-500",
   lost: "bg-red-100 text-red-600",
   not_qualified: "bg-gray-100 text-gray-500",
 };
@@ -57,24 +58,28 @@ const LSA_COLORS: Record<string, string> = {
   credited: "text-emerald-600",
   not_charged: "text-gray-400",
   in_review: "text-amber-500",
+  submitted: "text-yellow-600",
 };
 
-export default function LeadsListPage() {
+export default function ContactsPage() {
   const router = useRouter();
-  const [leads, setLeads] = useState<Lead[]>([]);
-  const [filtered, setFiltered] = useState<Lead[]>([]);
+  const [leads, setLeads] = useState<LeadRow[]>([]);
+  const [filtered, setFiltered] = useState<LeadRow[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [deleting, setDeleting] = useState(false);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [sourceFilter, setSourceFilter] = useState("");
-  const [dateFilter, setDateFilter] = useState(""); // YYYY-MM-DD prefix
+  const [dateFilter, setDateFilter] = useState("");
   const [sources, setSources] = useState<{ id: string; name: string }[]>([]);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [importDates, setImportDates] = useState<string[]>([]);
 
-  // Load leads + sources
+  // ── Lead detail dialog ──
+  const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
+  const [dialogOpen, setDialogOpen] = useState(false);
+
   const loadLeads = useCallback(async () => {
     setLoading(true);
     const { data } = await supabase
@@ -86,12 +91,23 @@ export default function LeadsListPage() {
     setLeads(data || []);
     setLoading(false);
 
-    // Extract unique import dates (YYYY-MM-DD)
     const dates = [...new Set(
-      (data || []).map(l => l.created_at?.split("T")[0]).filter(Boolean)
+      (data || []).map((l: any) => l.created_at?.split("T")[0]).filter(Boolean)
     )].sort().reverse();
     setImportDates(dates as string[]);
   }, []);
+
+  async function fetchSingleLead(leadId: string) {
+    const { data } = await supabase
+      .from("leads")
+      .select("*, lead_sources(name)")
+      .eq("id", leadId)
+      .single();
+    if (data) {
+      setSelectedLead(data as Lead);
+      setLeads(prev => prev.map(l => l.id === leadId ? data as LeadRow : l));
+    }
+  }
 
   useEffect(() => {
     supabase.from("lead_sources").select("id,name").order("name")
@@ -99,7 +115,6 @@ export default function LeadsListPage() {
     loadLeads();
   }, [loadLeads]);
 
-  // Filter logic
   useEffect(() => {
     let f = [...leads];
     if (search.trim()) {
@@ -117,13 +132,8 @@ export default function LeadsListPage() {
     setFiltered(f);
   }, [leads, search, statusFilter, sourceFilter, dateFilter]);
 
-  // Selection
   const toggleAll = () => {
-    if (selected.size === filtered.length) {
-      setSelected(new Set());
-    } else {
-      setSelected(new Set(filtered.map(l => l.id)));
-    }
+    setSelected(selected.size === filtered.length ? new Set() : new Set(filtered.map(l => l.id)));
   };
 
   const toggleOne = (id: string) => {
@@ -132,39 +142,29 @@ export default function LeadsListPage() {
     setSelected(s);
   };
 
-  // Batch delete
   const handleDelete = async () => {
     if (selected.size === 0) return;
     setDeleting(true);
     const ids = [...selected];
-
-    // Delete in batches of 100
     for (let i = 0; i < ids.length; i += 100) {
       await supabase.from("leads").delete().in("id", ids.slice(i, i + 100));
     }
-
     setSelected(new Set());
     setShowDeleteConfirm(false);
     setDeleting(false);
     await loadLeads();
   };
 
-  // Export selected as CSV
   const handleExport = () => {
     const rows = filtered.filter(l => selected.size === 0 || selected.has(l.id));
     const headers = ["Name", "Phone", "Email", "City", "State", "Status", "LSA Status", "Source", "Date"];
     const csv = [
       headers.join(","),
       ...rows.map(l => [
-        `"${l.lead_name || ""}"`,
-        `"${l.phone || ""}"`,
-        `"${l.email || ""}"`,
-        `"${l.client_city || ""}"`,
-        `"${l.client_state || ""}"`,
-        `"${STATUS_LABELS[l.status] || l.status}"`,
-        `"${l.lsa_status || ""}"`,
-        `"${(l.lead_sources as any)?.name || ""}"`,
-        `"${l.created_at?.split("T")[0] || ""}"`,
+        `"${l.lead_name || ""}"`, `"${l.phone || ""}"`, `"${l.email || ""}"`,
+        `"${l.client_city || ""}"`, `"${l.client_state || ""}"`,
+        `"${STATUS_LABELS[l.status] || l.status}"`, `"${l.lsa_status || ""}"`,
+        `"${(l.lead_sources as any)?.name || ""}"`, `"${l.created_at?.split("T")[0] || ""}"`,
       ].join(","))
     ].join("\n");
     const blob = new Blob([csv], { type: "text/csv" });
@@ -172,6 +172,12 @@ export default function LeadsListPage() {
     const a = document.createElement("a");
     a.href = url; a.download = "leads-export.csv"; a.click();
     URL.revokeObjectURL(url);
+  };
+
+  // ── Open lead detail on row click ──
+  const handleRowClick = (lead: LeadRow) => {
+    setSelectedLead(lead as unknown as Lead);
+    setDialogOpen(true);
   };
 
   const allSelected = filtered.length > 0 && selected.size === filtered.length;
@@ -182,7 +188,7 @@ export default function LeadsListPage() {
       {/* Header */}
       <div className="flex items-center justify-between px-6 py-4 border-b border-border">
         <div>
-          <h1 className="text-lg font-bold">All Leads</h1>
+          <h1 className="text-lg font-bold">Contacts</h1>
           <p className="text-xs text-muted-foreground mt-0.5">
             {filtered.length} leads
             {selected.size > 0 && <span className="text-primary font-medium"> · {selected.size} selected</span>}
@@ -213,7 +219,6 @@ export default function LeadsListPage() {
 
       {/* Filters */}
       <div className="flex items-center gap-3 px-6 py-3 border-b border-border bg-muted/20 flex-wrap">
-        {/* Search */}
         <div className="relative flex-1 min-w-[200px] max-w-xs">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
           <input value={search} onChange={e => setSearch(e.target.value)}
@@ -224,35 +229,28 @@ export default function LeadsListPage() {
           </button>}
         </div>
 
-        {/* Status filter */}
         <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
           className="text-xs rounded-md border border-border bg-background px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-primary/40">
           <option value="">All Statuses</option>
-          {Object.entries(STATUS_LABELS).map(([k, v]) => (
-            <option key={k} value={k}>{v}</option>
+          {[...new Set(Object.keys(STATUS_LABELS))].map(k => (
+            <option key={k} value={k}>{STATUS_LABELS[k]}</option>
           ))}
         </select>
 
-        {/* Source filter */}
         <select value={sourceFilter} onChange={e => setSourceFilter(e.target.value)}
           className="text-xs rounded-md border border-border bg-background px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-primary/40">
           <option value="">All Sources</option>
           {sources.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
         </select>
 
-        {/* Import date filter — for batch deleting specific imports */}
         <select value={dateFilter} onChange={e => setDateFilter(e.target.value)}
           className="text-xs rounded-md border border-border bg-background px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-primary/40">
           <option value="">All Dates</option>
-          {importDates.map(d => (
-            <option key={d} value={d}>{d}</option>
-          ))}
+          {importDates.map(d => <option key={d} value={d}>{d}</option>)}
         </select>
 
-        {/* Select all for current filter */}
         {dateFilter && (
-          <button onClick={toggleAll}
-            className="text-xs text-primary hover:underline font-medium">
+          <button onClick={toggleAll} className="text-xs text-primary hover:underline font-medium">
             {allSelected ? "Deselect all" : `Select all ${filtered.length} on ${dateFilter}`}
           </button>
         )}
@@ -270,7 +268,7 @@ export default function LeadsListPage() {
         {loading ? (
           <div className="flex items-center justify-center py-20 gap-3 text-muted-foreground">
             <Loader2 className="h-5 w-5 animate-spin" />
-            <span className="text-sm">Loading leads...</span>
+            <span className="text-sm">Loading contacts...</span>
           </div>
         ) : filtered.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
@@ -297,12 +295,14 @@ export default function LeadsListPage() {
                 <th className="text-left px-3 py-2.5 font-semibold text-muted-foreground">Status</th>
                 <th className="text-left px-3 py-2.5 font-semibold text-muted-foreground">Source</th>
                 <th className="text-left px-3 py-2.5 font-semibold text-muted-foreground">LSA</th>
-                <th className="text-left px-3 py-2.5 font-semibold text-muted-foreground">Date</th>
+                <th className="text-left px-3 py-2.5 font-semibold text-muted-foreground">Lead Received</th>
+                <th className="w-16 px-3 py-2.5"></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border/50">
               {filtered.map(lead => (
                 <tr key={lead.id}
+                  onClick={() => handleRowClick(lead)}
                   className={`hover:bg-muted/20 transition-colors cursor-pointer ${selected.has(lead.id) ? "bg-primary/5" : ""}`}>
                   <td className="px-3 py-2.5" onClick={e => { e.stopPropagation(); toggleOne(lead.id); }}>
                     {selected.has(lead.id)
@@ -310,7 +310,7 @@ export default function LeadsListPage() {
                       : <Square className="h-4 w-4 text-muted-foreground" />
                     }
                   </td>
-                  <td className="px-3 py-2.5" onClick={() => router.push(`/leads?id=${lead.id}`)}>
+                  <td className="px-3 py-2.5">
                     <div className="font-medium text-foreground truncate max-w-[160px]">
                       {lead.lead_name || <span className="text-muted-foreground italic">No name</span>}
                     </div>
@@ -331,10 +331,19 @@ export default function LeadsListPage() {
                     {(lead.lead_sources as any)?.name || "—"}
                   </td>
                   <td className={`px-3 py-2.5 font-medium ${LSA_COLORS[lead.lsa_status || ""] || "text-muted-foreground"}`}>
-                    {lead.lsa_status ? lead.lsa_status.replace("_", " ") : "—"}
+                    {lead.lsa_status ? lead.lsa_status.replace(/_/g, " ") : "—"}
                   </td>
+                  {/* ✅ CHANGED: "Date" → "Lead Received" */}
                   <td className="px-3 py-2.5 text-muted-foreground whitespace-nowrap">
-                    {lead.created_at?.split("T")[0] || "—"}
+                    {lead.created_at
+                      ? new Date(lead.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
+                      : "—"}
+                  </td>
+                  {/* ✅ Edit button per row */}
+                  <td className="px-3 py-2.5" onClick={e => { e.stopPropagation(); handleRowClick(lead); }}>
+                    <button className="flex items-center gap-1 text-xs px-2 py-1 rounded-md border border-border hover:bg-muted hover:text-primary transition-colors text-muted-foreground">
+                      <Pencil className="h-3 w-3" /> Edit
+                    </button>
                   </td>
                 </tr>
               ))}
@@ -347,13 +356,11 @@ export default function LeadsListPage() {
       {filtered.length > 0 && (
         <div className="px-6 py-2.5 border-t border-border bg-muted/10 flex items-center justify-between text-xs text-muted-foreground">
           <span>{filtered.length} leads shown · {leads.length} total</span>
-          {selected.size > 0 && (
-            <span className="text-primary font-medium">{selected.size} selected</span>
-          )}
+          {selected.size > 0 && <span className="text-primary font-medium">{selected.size} selected</span>}
         </div>
       )}
 
-      {/* Delete confirmation modal */}
+      {/* Delete confirmation */}
       {showDeleteConfirm && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
           <div className="bg-background rounded-xl border border-border p-6 max-w-md w-full mx-4 shadow-xl">
@@ -384,6 +391,15 @@ export default function LeadsListPage() {
           </div>
         </div>
       )}
+
+      {/* ✅ Lead Detail Dialog — opens on row click */}
+      <LeadDetailDialog
+        lead={selectedLead}
+        open={dialogOpen}
+        onOpenChange={(open) => { setDialogOpen(open); if (!open) loadLeads(); }}
+        onLeadUpdated={(leadId) => fetchSingleLead(leadId)}
+        onLeadDeleted={() => { setDialogOpen(false); loadLeads(); }}
+      />
     </div>
   );
 }
