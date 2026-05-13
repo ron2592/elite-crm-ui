@@ -29,8 +29,24 @@ function formatPhone(value: string) {
   return `(${digits.slice(0,3)}) ${digits.slice(3,6)}-${digits.slice(6)}`;
 }
 
-export default function AddLeadModal() {
-  const [open, setOpen] = useState(false);
+function todayStr() {
+  return new Date().toISOString().split("T")[0];
+}
+
+interface AddLeadModalProps {
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+}
+
+export default function AddLeadModal({ open: externalOpen, onOpenChange }: AddLeadModalProps = {}) {
+  const [internalOpen, setInternalOpen] = useState(false);
+
+  // Use external control if provided, otherwise internal
+  const open = externalOpen !== undefined ? externalOpen : internalOpen;
+  const setOpen = (val: boolean) => {
+    if (onOpenChange) onOpenChange(val);
+    else setInternalOpen(val);
+  };
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
   const [zipLooking, setZipLooking] = useState(false);
@@ -40,19 +56,20 @@ export default function AddLeadModal() {
     last_name: "",
     phone: "",
     email: "",
-    address_line_1: "",
-    city: "",
-    state: "",
-    postal_code: "",
+    client_address: "",   // ✅ matches schema
+    client_city: "",       // ✅ matches schema
+    client_state: "",      // ✅ matches schema
+    client_zip: "",        // ✅ matches schema
     lead_source: "",
     job_type: "",
     salesperson: "",
     estimated_amount: "",
     payment_method: "",
     notes: "",
+    date_received: todayStr(), // ✅ NEW: lead received date
   });
 
-  const handleChange = (e: any) => {
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target;
     if (name === "phone") {
       setForm({ ...form, phone: formatPhone(value) });
@@ -70,10 +87,10 @@ export default function AddLeadModal() {
         const data = await res.json();
         const place = data.places?.[0];
         if (place) {
-          setForm((prev) => ({
+          setForm(prev => ({
             ...prev,
-            city: place["place name"] || prev.city,
-            state: place["state abbreviation"] || prev.state,
+            client_city:  place["place name"]           || prev.client_city,
+            client_state: place["state abbreviation"]   || prev.client_state,
           }));
         }
       }
@@ -82,8 +99,8 @@ export default function AddLeadModal() {
   };
 
   const handleSubmit = async () => {
-    if (!form.first_name.trim() || !form.phone.trim()) {
-      alert("First name and phone are required.");
+    if (!form.first_name.trim() && !form.phone.trim()) {
+      alert("First name or phone is required.");
       return;
     }
     setLoading(true);
@@ -93,21 +110,29 @@ export default function AddLeadModal() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          lead_name: full_name,
-          last_name: form.last_name.trim() || null,
-          phone: form.phone,
-          email: form.email,
-          address_line_1: form.address_line_1,
-          city: form.city,
-          state: form.state,
-          postal_code: form.postal_code,
-          lead_source: form.lead_source,
-          job_type: form.job_type,
-          salesperson: form.salesperson,
-          estimated_amount: form.estimated_amount ? Number(form.estimated_amount) : 0,
-          payment_method: form.payment_method,
-          notes: form.notes,
-          archived: false,
+          lead_name:     full_name || form.phone,
+          phone:         form.phone         || null,
+          email:         form.email         || null,
+          // ✅ correct schema column names
+          client_address: form.client_address || null,
+          client_city:    form.client_city    || null,
+          client_state:   form.client_state   || null,
+          client_zip:     form.client_zip     || null,
+          // source — API route resolves by name
+          lead_source:   form.lead_source    || null,
+          // metadata fields
+          meta_job_type:       form.job_type       || null,
+          meta_salesperson:    form.salesperson     || null,
+          meta_notes:          form.notes           || null,
+          meta_payment_method: form.payment_method  || null,
+          initial_contract_value: form.estimated_amount ? Number(form.estimated_amount) : 0,
+          // ✅ lead received date
+          created_at:    form.date_received
+            ? new Date(form.date_received + "T00:00:00").toISOString()
+            : new Date().toISOString(),
+          status:        "new_lead",
+          archived:      false,
+          bad_lead:      false,
         }),
       });
       const data = await res.json();
@@ -118,13 +143,14 @@ export default function AddLeadModal() {
           setOpen(false);
           setForm({
             first_name: "", last_name: "", phone: "", email: "",
-            address_line_1: "", city: "", state: "", postal_code: "",
+            client_address: "", client_city: "", client_state: "", client_zip: "",
             lead_source: "", job_type: "", salesperson: "",
             estimated_amount: "", payment_method: "", notes: "",
+            date_received: todayStr(),
           });
         }, 1500);
       } else {
-        alert("Error: " + data.error);
+        alert("Error: " + (data.error || "Unknown error"));
       }
     } catch (err) {
       alert("Something went wrong.");
@@ -133,146 +159,173 @@ export default function AddLeadModal() {
     }
   };
 
+  // Standalone trigger button (only shown when not externally controlled)
+  const TriggerButton = externalOpen === undefined ? (
+    <Button
+      size="sm"
+      variant="ghost"
+      className="w-full justify-start gap-2 px-3 py-2.5 h-auto rounded-none text-sm font-normal"
+      onClick={() => setOpen(true)}
+    >
+      <Plus className="h-3.5 w-3.5 text-muted-foreground" />
+      Add Lead
+    </Button>
+  ) : null;
+
   return (
     <>
-      <Button size="sm" className="gap-1.5 h-8" onClick={() => setOpen(true)}>
-        <Plus className="h-3.5 w-3.5" />
-        <span className="hidden sm:inline">Add Lead</span>
-      </Button>
+      {TriggerButton}
 
       {open && (
-        <div className="fixed inset-0 flex items-center justify-center bg-black/50 z-50 p-4">
-          <div className="bg-white dark:bg-zinc-900 rounded-lg p-6 w-full max-w-md max-h-[90vh] overflow-y-auto space-y-3">
+        <div className="fixed inset-0 flex items-center justify-center bg-black/50 z-[100] p-4">
+          <div className="bg-background rounded-xl border border-border shadow-xl p-6 w-full max-w-md max-h-[90vh] overflow-y-auto space-y-3">
 
             {/* Success State */}
             {success ? (
               <div className="flex flex-col items-center justify-center py-8 gap-3">
                 <CheckCircle className="h-12 w-12 text-emerald-500" />
                 <p className="text-lg font-semibold text-emerald-600">Lead Saved!</p>
-                <p className="text-sm text-gray-500">The lead has been added to your pipeline.</p>
+                <p className="text-sm text-muted-foreground">The lead has been added to your pipeline.</p>
               </div>
             ) : (
               <>
-                <h2 className="text-lg font-semibold">Add Lead</h2>
+                <div className="flex items-center justify-between mb-1">
+                  <h2 className="text-lg font-semibold">Add New Lead</h2>
+                </div>
 
                 <div className="grid grid-cols-2 gap-3">
+
+                  {/* ✅ Date Received — first field, most important */}
+                  <div className="col-span-2">
+                    <label className="text-xs text-muted-foreground mb-1 block font-medium">
+                      Lead Received Date
+                    </label>
+                    <input
+                      type="date"
+                      name="date_received"
+                      value={form.date_received}
+                      onChange={handleChange}
+                      className="w-full border border-border rounded-md p-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/40"
+                    />
+                  </div>
+
                   {/* First + Last Name */}
                   <div>
-                    <label className="text-xs text-gray-500 mb-1 block">First Name *</label>
+                    <label className="text-xs text-muted-foreground mb-1 block">First Name</label>
                     <input
                       name="first_name"
                       placeholder="First name"
                       value={form.first_name}
                       onChange={handleChange}
-                      className="w-full border p-2 rounded text-sm dark:bg-zinc-800 dark:border-zinc-700"
+                      className="w-full border border-border rounded-md p-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/40"
                     />
                   </div>
                   <div>
-                    <label className="text-xs text-gray-500 mb-1 block">Last Name</label>
+                    <label className="text-xs text-muted-foreground mb-1 block">Last Name</label>
                     <input
                       name="last_name"
                       placeholder="Last name"
                       value={form.last_name}
                       onChange={handleChange}
-                      className="w-full border p-2 rounded text-sm dark:bg-zinc-800 dark:border-zinc-700"
+                      className="w-full border border-border rounded-md p-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/40"
                     />
                   </div>
 
                   {/* Phone + Email */}
                   <div>
-                    <label className="text-xs text-gray-500 mb-1 block">Phone *</label>
+                    <label className="text-xs text-muted-foreground mb-1 block">Phone *</label>
                     <input
                       name="phone"
                       placeholder="(201) 555-0000"
                       value={form.phone}
                       onChange={handleChange}
-                      className="w-full border p-2 rounded text-sm dark:bg-zinc-800 dark:border-zinc-700"
+                      className="w-full border border-border rounded-md p-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/40"
                     />
                   </div>
                   <div>
-                    <label className="text-xs text-gray-500 mb-1 block">Email</label>
+                    <label className="text-xs text-muted-foreground mb-1 block">Email</label>
                     <input
                       name="email"
                       placeholder="email@example.com"
                       value={form.email}
                       onChange={handleChange}
-                      className="w-full border p-2 rounded text-sm dark:bg-zinc-800 dark:border-zinc-700"
+                      className="w-full border border-border rounded-md p-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/40"
                     />
                   </div>
 
                   {/* Address */}
                   <div className="col-span-2">
-                    <label className="text-xs text-gray-500 mb-1 block">Address</label>
+                    <label className="text-xs text-muted-foreground mb-1 block">Address</label>
                     <input
-                      name="address_line_1"
+                      name="client_address"
                       placeholder="Street address"
-                      value={form.address_line_1}
+                      value={form.client_address}
                       onChange={handleChange}
-                      className="w-full border p-2 rounded text-sm dark:bg-zinc-800 dark:border-zinc-700"
+                      className="w-full border border-border rounded-md p-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/40"
                     />
                   </div>
 
-                  {/* Zip — auto fills city/state */}
+                  {/* Zip → auto-fills city/state */}
                   <div>
-                    <label className="text-xs text-gray-500 mb-1 block">
-                      Zip Code {zipLooking && <span className="text-blue-500">Looking up...</span>}
+                    <label className="text-xs text-muted-foreground mb-1 block">
+                      Zip {zipLooking && <span className="text-blue-500">Looking up...</span>}
                     </label>
                     <input
-                      name="postal_code"
+                      name="client_zip"
                       placeholder="07011"
                       maxLength={5}
-                      value={form.postal_code}
-                      onChange={(e) => {
+                      value={form.client_zip}
+                      onChange={e => {
                         const val = e.target.value.replace(/\D/g, "").slice(0, 5);
-                        setForm({ ...form, postal_code: val });
+                        setForm({ ...form, client_zip: val });
                         if (val.length === 5) handleZipLookup(val);
                       }}
-                      className="w-full border p-2 rounded text-sm dark:bg-zinc-800 dark:border-zinc-700"
+                      className="w-full border border-border rounded-md p-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/40"
                     />
                   </div>
 
-                  {/* City + State — auto filled */}
                   <div>
-                    <label className="text-xs text-gray-500 mb-1 block">City</label>
+                    <label className="text-xs text-muted-foreground mb-1 block">City</label>
                     <input
-                      name="city"
-                      placeholder="Auto-filled from zip"
-                      value={form.city}
+                      name="client_city"
+                      placeholder="Auto-filled"
+                      value={form.client_city}
                       onChange={handleChange}
-                      className="w-full border p-2 rounded text-sm dark:bg-zinc-800 dark:border-zinc-700"
+                      className="w-full border border-border rounded-md p-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/40"
                     />
                   </div>
+
                   <div className="col-span-2">
-                    <label className="text-xs text-gray-500 mb-1 block">State</label>
+                    <label className="text-xs text-muted-foreground mb-1 block">State</label>
                     <input
-                      name="state"
-                      placeholder="Auto-filled from zip"
-                      value={form.state}
+                      name="client_state"
+                      placeholder="Auto-filled"
+                      value={form.client_state}
                       onChange={handleChange}
-                      className="w-full border p-2 rounded text-sm dark:bg-zinc-800 dark:border-zinc-700"
+                      className="w-full border border-border rounded-md p-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/40"
                     />
                   </div>
 
                   {/* Lead Source + Job Type */}
                   <div>
-                    <label className="text-xs text-gray-500 mb-1 block">Lead Source</label>
+                    <label className="text-xs text-muted-foreground mb-1 block">Lead Source</label>
                     <select
                       name="lead_source"
                       value={form.lead_source}
                       onChange={handleChange}
-                      className="w-full border p-2 rounded text-sm dark:bg-zinc-800 dark:border-zinc-700"
+                      className="w-full border border-border rounded-md p-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/40"
                     >
                       <option value="">Select source</option>
                       {LEAD_SOURCES.map(s => <option key={s} value={s}>{s}</option>)}
                     </select>
                   </div>
                   <div>
-                    <label className="text-xs text-gray-500 mb-1 block">Job Type</label>
+                    <label className="text-xs text-muted-foreground mb-1 block">Job Type</label>
                     <select
                       name="job_type"
                       value={form.job_type}
                       onChange={handleChange}
-                      className="w-full border p-2 rounded text-sm dark:bg-zinc-800 dark:border-zinc-700"
+                      className="w-full border border-border rounded-md p-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/40"
                     >
                       <option value="">Select job type</option>
                       {JOB_TYPES.map(j => <option key={j} value={j}>{j}</option>)}
@@ -281,37 +334,37 @@ export default function AddLeadModal() {
 
                   {/* Salesperson + Estimated Amount */}
                   <div>
-                    <label className="text-xs text-gray-500 mb-1 block">Salesperson</label>
+                    <label className="text-xs text-muted-foreground mb-1 block">Salesperson</label>
                     <select
                       name="salesperson"
                       value={form.salesperson}
                       onChange={handleChange}
-                      className="w-full border p-2 rounded text-sm dark:bg-zinc-800 dark:border-zinc-700"
+                      className="w-full border border-border rounded-md p-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/40"
                     >
                       <option value="">Select</option>
                       {SALESPEOPLE.map(s => <option key={s} value={s}>{s}</option>)}
                     </select>
                   </div>
                   <div>
-                    <label className="text-xs text-gray-500 mb-1 block">Estimated Amount ($)</label>
+                    <label className="text-xs text-muted-foreground mb-1 block">Estimated Amount ($)</label>
                     <input
                       name="estimated_amount"
                       type="number"
                       placeholder="0"
                       value={form.estimated_amount}
                       onChange={handleChange}
-                      className="w-full border p-2 rounded text-sm dark:bg-zinc-800 dark:border-zinc-700"
+                      className="w-full border border-border rounded-md p-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/40"
                     />
                   </div>
 
                   {/* Payment Method */}
                   <div className="col-span-2">
-                    <label className="text-xs text-gray-500 mb-1 block">Payment Method</label>
+                    <label className="text-xs text-muted-foreground mb-1 block">Payment Method</label>
                     <select
                       name="payment_method"
                       value={form.payment_method}
                       onChange={handleChange}
-                      className="w-full border p-2 rounded text-sm dark:bg-zinc-800 dark:border-zinc-700"
+                      className="w-full border border-border rounded-md p-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/40"
                     >
                       <option value="">Select payment method</option>
                       {PAYMENT_METHODS.map(p => <option key={p} value={p}>{p}</option>)}
@@ -320,14 +373,14 @@ export default function AddLeadModal() {
 
                   {/* Notes */}
                   <div className="col-span-2">
-                    <label className="text-xs text-gray-500 mb-1 block">Notes</label>
+                    <label className="text-xs text-muted-foreground mb-1 block">Notes</label>
                     <textarea
                       name="notes"
                       placeholder="Job description or notes..."
                       value={form.notes}
                       onChange={handleChange}
                       rows={3}
-                      className="w-full border p-2 rounded text-sm dark:bg-zinc-800 dark:border-zinc-700"
+                      className="w-full border border-border rounded-md p-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/40 resize-none"
                     />
                   </div>
                 </div>
@@ -335,14 +388,14 @@ export default function AddLeadModal() {
                 <div className="flex justify-end gap-2 pt-2">
                   <button
                     onClick={() => setOpen(false)}
-                    className="px-4 py-2 text-sm text-gray-600"
+                    className="px-4 py-2 text-sm rounded-md border border-border hover:bg-muted transition-colors"
                   >
                     Cancel
                   </button>
                   <button
                     onClick={handleSubmit}
                     disabled={loading}
-                    className="bg-blue-600 text-white px-4 py-2 rounded text-sm disabled:opacity-50"
+                    className="bg-primary text-primary-foreground px-4 py-2 rounded-md text-sm font-medium disabled:opacity-50 hover:bg-primary/90 transition-colors"
                   >
                     {loading ? "Saving..." : "Save Lead"}
                   </button>

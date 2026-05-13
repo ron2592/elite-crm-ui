@@ -8,19 +8,20 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { supabase } from "@/lib/supabaseClient";
 
 const pageTitles: Record<string, { title: string; description: string }> = {
-  "/dashboard":     { title: "Dashboard",      description: "Welcome back, Jamie 👋" },
-  "/leads":         { title: "Leads Pipeline", description: "Manage and track your sales pipeline" },
-  "/leads/archived":{ title: "Archived Leads", description: "View and restore archived leads" },
-  "/production":    { title: "Production",     description: "Track jobs in progress" },
-  "/kpi":           { title: "KPI Dashboard",  description: "Performance metrics and insights" },
-  "/calendar":      { title: "Calendar",       description: "View your upcoming appointments" },
-  "/tasks":         { title: "Tasks",          description: "Stay on top of your to-dos" },
-  "/activities":    { title: "Activities",     description: "Review all lead interactions" },
-  "/settings":      { title: "Settings",       description: "Configure your workspace" },
+  "/dashboard":      { title: "Dashboard",      description: "Welcome back, Jamie 👋" },
+  "/leads":          { title: "Leads Pipeline", description: "Manage and track your sales pipeline" },
+  "/leads/list":     { title: "Contacts",       description: "All leads and contacts" },
+  "/leads/archived": { title: "Archived Leads", description: "View and restore archived leads" },
+  "/production":     { title: "Production",     description: "Track jobs in progress" },
+  "/kpi":            { title: "KPI Dashboard",  description: "Performance metrics and insights" },
+  "/calendar":       { title: "Calendar",       description: "View your upcoming appointments" },
+  "/tasks":          { title: "Tasks",          description: "Stay on top of your to-dos" },
+  "/activities":     { title: "Activities",     description: "Review all lead interactions" },
+  "/settings":       { title: "Settings",       description: "Configure your workspace" },
 };
 
 const statusLabels: Record<string, string> = {
-  new: "New", open: "New", contacted: "Qualified",
+  new: "New", open: "New", new_lead: "New", contacted: "Qualified",
   appointment_set: "Appt Set", estimate_sent: "Estimate Sent",
   closed_won: "Won", won: "Won",
   cancelled_appointment: "Cancelled", lost: "Lost", not_qualified: "Not Qualified",
@@ -28,6 +29,7 @@ const statusLabels: Record<string, string> = {
 
 const statusColors: Record<string, string> = {
   new: "bg-gray-100 text-gray-600", open: "bg-gray-100 text-gray-600",
+  new_lead: "bg-gray-100 text-gray-600",
   contacted: "bg-blue-100 text-blue-700", appointment_set: "bg-purple-100 text-purple-700",
   estimate_sent: "bg-yellow-100 text-yellow-700",
   closed_won: "bg-emerald-100 text-emerald-700", won: "bg-emerald-100 text-emerald-700",
@@ -50,25 +52,27 @@ export default function Header() {
   const router = useRouter();
   const pageInfo = pageTitles[pathname] ?? { title: "FlowCRM", description: "" };
 
-  // ── Search state ────────────────────────────────────────────────────────────
-  const [searchOpen, setSearchOpen]   = useState(false);
-  const [query, setQuery]             = useState("");
-  const [results, setResults]         = useState<SearchResult[]>([]);
-  const [searching, setSearching]     = useState(false);
-  const searchRef                     = useRef<HTMLDivElement>(null);
-  const inputRef                      = useRef<HTMLInputElement>(null);
+  // ── Search state ──────────────────────────────────────────────────────────
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [query, setQuery]           = useState("");
+  const [results, setResults]       = useState<SearchResult[]>([]);
+  const [searching, setSearching]   = useState(false);
+  const searchRef                   = useRef<HTMLDivElement>(null);
+  const inputRef                    = useRef<HTMLInputElement>(null);
 
-  // ── Quick add state ─────────────────────────────────────────────────────────
+  // ── Quick add state ───────────────────────────────────────────────────────
   const [quickAddOpen, setQuickAddOpen] = useState(false);
   const quickAddRef                     = useRef<HTMLDivElement>(null);
+
+  // ✅ FIX: AddLead modal state lives HERE, outside the dropdown conditional
+  // This prevents the modal from unmounting when the dropdown closes
+  const [addLeadOpen, setAddLeadOpen] = useState(false);
 
   // Close on outside click
   useEffect(() => {
     function handleClick(e: MouseEvent) {
       if (searchRef.current && !searchRef.current.contains(e.target as Node)) {
-        setSearchOpen(false);
-        setQuery("");
-        setResults([]);
+        setSearchOpen(false); setQuery(""); setResults([]);
       }
       if (quickAddRef.current && !quickAddRef.current.contains(e.target as Node)) {
         setQuickAddOpen(false);
@@ -86,13 +90,16 @@ export default function Header() {
   // Close on Escape
   useEffect(() => {
     function handleKey(e: KeyboardEvent) {
-      if (e.key === "Escape") { setSearchOpen(false); setQuery(""); setResults([]); setQuickAddOpen(false); }
+      if (e.key === "Escape") {
+        setSearchOpen(false); setQuery(""); setResults([]);
+        setQuickAddOpen(false);
+      }
     }
     document.addEventListener("keydown", handleKey);
     return () => document.removeEventListener("keydown", handleKey);
   }, []);
 
-  // ── Search function ─────────────────────────────────────────────────────────
+  // ── Search function ───────────────────────────────────────────────────────
   const doSearch = useCallback(async (q: string) => {
     if (!q.trim()) { setResults([]); return; }
     setSearching(true);
@@ -100,16 +107,16 @@ export default function Header() {
       .from("leads")
       .select("id, lead_name, first_name, phone, status, metadata, lead_sources(name)")
       .eq("archived", false)
-      .or(`lead_name.ilike.%${q}%,phone.ilike.%${q}%,address_line_1.ilike.%${q}%,city.ilike.%${q}%`)
+      .or(`lead_name.ilike.%${q}%,phone.ilike.%${q}%,client_city.ilike.%${q}%`)
       .limit(8);
     setResults((data || []).map((l: any) => ({
-      id: l.id,
+      id:        l.id,
       lead_name: l.lead_name || l.first_name || "Unnamed",
       first_name: l.first_name || "",
-      phone: l.phone || "",
-      status: l.status || "new",
-      source: l.lead_sources?.name || "",
-      metadata: l.metadata,
+      phone:     l.phone || "",
+      status:    l.status || "new",
+      source:    l.lead_sources?.name || "",
+      metadata:  l.metadata,
     })));
     setSearching(false);
   }, []);
@@ -121,10 +128,7 @@ export default function Header() {
   }, [query, doSearch]);
 
   const handleResultClick = (leadId: string) => {
-    setSearchOpen(false);
-    setQuery("");
-    setResults([]);
-    // Navigate to leads page with the lead ID as a query param
+    setSearchOpen(false); setQuery(""); setResults([]);
     router.push(`/leads?open=${leadId}`);
   };
 
@@ -163,9 +167,7 @@ export default function Header() {
                   <X className="h-3.5 w-3.5" />
                 </button>
               )}
-
-              {/* Results dropdown */}
-              {(query.length > 0) && (
+              {query.length > 0 && (
                 <div className="absolute top-10 left-0 w-80 rounded-lg border border-border bg-background shadow-lg z-50 overflow-hidden">
                   {searching ? (
                     <div className="flex items-center justify-center gap-2 py-4 text-xs text-muted-foreground">
@@ -228,10 +230,13 @@ export default function Header() {
           {quickAddOpen && (
             <div className="absolute right-0 top-10 w-44 rounded-lg border border-border bg-background shadow-lg z-50 overflow-hidden">
               <p className="px-3 py-2 text-xs font-semibold text-muted-foreground uppercase tracking-wide border-b border-border">Quick Add</p>
-              {/* Add Lead — reuses existing modal */}
-              <div onClick={() => setQuickAddOpen(false)} className="w-full">
-                <AddLeadModal />
-              </div>
+              {/* ✅ FIX: Button closes dropdown AND opens modal — modal is mounted OUTSIDE this block */}
+              <button
+                onClick={() => { setQuickAddOpen(false); setAddLeadOpen(true); }}
+                className="w-full flex items-center gap-2 px-3 py-2.5 text-sm hover:bg-muted/50 transition-colors text-left"
+              >
+                <Plus className="h-3.5 w-3.5 text-muted-foreground" /> Add Lead
+              </button>
               <button
                 onClick={() => { setQuickAddOpen(false); router.push("/tasks"); }}
                 className="w-full flex items-center gap-2 px-3 py-2.5 text-sm hover:bg-muted/50 transition-colors text-left"
@@ -241,6 +246,9 @@ export default function Header() {
             </div>
           )}
         </div>
+
+        {/* ✅ FIX: AddLeadModal lives OUTSIDE {quickAddOpen && ...} so it never unmounts prematurely */}
+        <AddLeadModal open={addLeadOpen} onOpenChange={setAddLeadOpen} />
 
       </div>
     </header>
