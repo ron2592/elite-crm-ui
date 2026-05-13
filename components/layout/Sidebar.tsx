@@ -15,22 +15,23 @@ import {
   BarChart2,
   LogOut,
   Archive,
-  Upload,
   FileText,
+  List,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { supabase } from "@/lib/supabaseClient";
 
 const navItems = [
-  { href: "/dashboard",      label: "Dashboard",  icon: LayoutDashboard },
-  { href: "/leads",          label: "Leads",       icon: Users },
-  { href: "/leads/archived", label: "Archived",    icon: Archive },
-  { href: "/production",     label: "Production",  icon: HardHat },
-  { href: "/estimates",      label: "Estimates",   icon: FileText },
-  { href: "/kpi",            label: "KPI",         icon: BarChart2 },
-  { href: "/calendar",       label: "Calendar",    icon: CalendarDays },
-  { href: "/tasks",          label: "Tasks",       icon: CheckSquare },
-  { href: "/activities",     label: "Activities",  icon: Activity },
+  { href: "/dashboard",      label: "Dashboard",       icon: LayoutDashboard },
+  { href: "/leads",          label: "Leads Pipeline",  icon: Users,    exact: true },
+  { href: "/leads/list",     label: "Contacts",        icon: List },
+  { href: "/leads/archived", label: "Archived",        icon: Archive },
+  { href: "/production",     label: "Production",      icon: HardHat },
+  { href: "/estimates",      label: "Estimates",       icon: FileText },
+  { href: "/kpi",            label: "KPI",             icon: BarChart2 },
+  { href: "/calendar",       label: "Calendar",        icon: CalendarDays },
+  { href: "/tasks",          label: "Tasks",           icon: CheckSquare },
+  { href: "/activities",     label: "Activities",      icon: Activity },
 ];
 
 const bottomItems = [
@@ -63,7 +64,10 @@ export default function Sidebar() {
         </p>
         {navItems.map((item) => {
           const Icon = item.icon;
-          const isActive = pathname === item.href || pathname.startsWith(item.href + "/");
+          // "exact" items only highlight on exact match (e.g. /leads but not /leads/list)
+          const isActive = item.exact
+            ? pathname === item.href
+            : pathname === item.href || pathname.startsWith(item.href + "/");
           return (
             <Link
               key={item.href}
