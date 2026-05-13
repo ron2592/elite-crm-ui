@@ -8,7 +8,7 @@ import {
 } from 'recharts'
 import {
   ChevronLeft, ChevronRight, ChevronDown, ChevronUp,
-  Plus, Save, X, Loader2, LayoutDashboard, Printer, UserCheck,
+  Plus, Save, X, Loader2, LayoutDashboard, Printer, UserCheck, Trash2,
 } from 'lucide-react'
 import KpiInsights, { InsightData } from '@/components/KpiInsights'
 
@@ -52,6 +52,7 @@ function fmt$(n: number) {
 }
 function pct(a: number, b: number) { return b === 0 ? '—' : Math.round((a / b) * 100) + '%' }
 function fmtDate(d: Date) { return `${MONTHS[d.getMonth()]} ${d.getDate()}` }
+function todayStr() { return new Date().toISOString().split('T')[0] }
 
 // ── Components ─────────────────────────────────────────────────────────────
 function ExpandMetric({ label, value, color = '', children }: {
@@ -123,8 +124,9 @@ export default function KPIPage() {
   const [loading, setLoading]   = useState(true)
 
   const [showSpendForm, setShowSpendForm] = useState(false)
-  const [spendForm, setSpendForm] = useState({ source_id: '', amount: '' })
+  const [spendForm, setSpendForm] = useState({ source_id: '', amount: '', date: todayStr() })
   const [savingSpend, setSavingSpend] = useState(false)
+  const [deletingSpendId, setDeletingSpendId] = useState<string | null>(null)
 
   const range = useMemo(() => {
     if (viewMode === 'monthly') return monthRange(year, month)
@@ -149,7 +151,7 @@ export default function KPIPage() {
     const [leadsRes, paymentsRes, spendRes, srcRes] = await Promise.all([
       supabase.from('leads').select('id,first_name,last_name,phone,status,contact_type,lsa_status,initial_contract_value,created_at,source_id,metadata,lead_sources(name)').gte('created_at', start).lt('created_at', end).eq('archived', false),
       supabase.from('payments').select('amount,paid_at,lead_id').gte('paid_at', start).lt('paid_at', end),
-      supabase.from('marketing_spend').select('id,period_start,source_name,source_id,amount_spent,lead_sources(name)').gte('period_start', start).lt('period_start', end),
+      supabase.from('marketing_spend').select('id,period_start,source_name,source_id,amount_spent,lead_sources(name)').gte('period_start', start.split('T')[0]).lt('period_start', end.split('T')[0]),
       supabase.from('lead_sources').select('id,name').order('name'),
     ])
 
@@ -229,12 +231,14 @@ export default function KPIPage() {
   }, [filtered, payments, spend, changeOrders, filterSrc])
 
   const spendBySrc = useMemo(() => {
-    const map: Record<string, { name: string; amount: number; source_id: string | null }> = {}
+    const map: Record<string, { id: string; name: string; amount: number; source_id: string | null; date: string }> = {}
     spend.forEach(row => {
       const key = row.source_id || row.source_name || 'unknown'
       const name = (row.lead_sources as any)?.name || row.source_name || 'Unknown'
-      if (!map[key]) map[key] = { name, amount: 0, source_id: row.source_id }
+      if (!map[key]) map[key] = { id: row.id, name, amount: 0, source_id: row.source_id, date: row.period_start }
       map[key].amount += Number(row.amount_spent || 0)
+      // keep the most recent id for delete (if multiple entries per source)
+      if (row.period_start > map[key].date) { map[key].id = row.id; map[key].date = row.period_start }
     })
     return Object.values(map).sort((a, b) => b.amount - a.amount)
   }, [spend])
@@ -264,17 +268,23 @@ export default function KPIPage() {
     if (!spendForm.amount || Number(spendForm.amount) <= 0) return
     setSavingSpend(true)
     const src = sources.find(s => s.id === spendForm.source_id)
-    const { start } = range
     await supabase.from('marketing_spend').insert({
-      period_start: start.split('T')[0],
-      period_end:   new Date(year, month + 1, 0).toISOString().split('T')[0],
+      period_start: spendForm.date,
+      period_end:   spendForm.date,
       source_id:    spendForm.source_id || null,
       source_name:  src?.name || null,
       amount_spent: Number(spendForm.amount),
     })
-    setSpendForm({ source_id: '', amount: '' })
+    setSpendForm({ source_id: '', amount: '', date: todayStr() })
     setShowSpendForm(false)
     setSavingSpend(false)
+    fetchAll()
+  }
+
+  async function handleDeleteSpend(id: string) {
+    setDeletingSpendId(id)
+    await supabase.from('marketing_spend').delete().eq('id', id)
+    setDeletingSpendId(null)
     fetchAll()
   }
 
@@ -371,50 +381,88 @@ export default function KPIPage() {
                 </button>
               </div>
             </div>
+
+            {/* ── Spend Form with Date Picker ── */}
             {showSpendForm && (
               <div className="px-6 py-4 border-b border-primary/20 bg-primary/5">
-                <p className="text-xs font-semibold text-primary uppercase tracking-wide mb-3">Add Spend — {periodLabel}</p>
-                <div className="grid grid-cols-3 gap-3">
+                <p className="text-xs font-semibold text-primary uppercase tracking-wide mb-3">Add Spend</p>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  {/* Date picker */}
+                  <div>
+                    <label className="text-xs text-muted-foreground block mb-1">Date</label>
+                    <input
+                      type="date"
+                      value={spendForm.date}
+                      onChange={e => setSpendForm({...spendForm, date: e.target.value})}
+                      className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
+                    />
+                  </div>
+                  {/* Source */}
                   <div>
                     <label className="text-xs text-muted-foreground block mb-1">Source</label>
                     <select value={spendForm.source_id} onChange={e => setSpendForm({...spendForm, source_id: e.target.value})}
-                      className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none">
+                      className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40">
                       <option value="">— Select —</option>
                       {sources.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                     </select>
                   </div>
+                  {/* Amount */}
                   <div>
                     <label className="text-xs text-muted-foreground block mb-1">Amount ($)</label>
                     <input type="number" placeholder="0.00" value={spendForm.amount}
                       onChange={e => setSpendForm({...spendForm, amount: e.target.value})}
-                      className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none" />
+                      className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" />
                   </div>
+                  {/* Actions */}
                   <div className="flex items-end gap-2">
-                    <button onClick={handleAddSpend} disabled={savingSpend || !spendForm.amount}
-                      className="flex-1 flex items-center justify-center gap-1.5 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-40">
+                    <button onClick={handleAddSpend} disabled={savingSpend || !spendForm.amount || !spendForm.date}
+                      className="flex-1 flex items-center justify-center gap-1.5 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-40 transition-colors">
                       <Save className="h-3.5 w-3.5" /> {savingSpend ? 'Saving...' : 'Save'}
                     </button>
                     <button onClick={() => setShowSpendForm(false)}
-                      className="rounded-md border border-border px-3 py-2 text-sm hover:bg-muted">Cancel</button>
+                      className="rounded-md border border-border px-3 py-2 text-sm hover:bg-muted transition-colors">
+                      Cancel
+                    </button>
                   </div>
                 </div>
               </div>
             )}
+
+            {/* ── Spend Cards ── */}
             <div className="px-6 py-4">
               {spendBySrc.length === 0 ? (
-                <p className="text-sm text-muted-foreground text-center py-2">No spend logged for {periodLabel}. Click "Log Spend" to add.</p>
+                <p className="text-sm text-muted-foreground text-center py-2">
+                  No spend logged for {periodLabel}. Click "Log Spend" to add.
+                </p>
               ) : (
                 <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
                   {spendBySrc.map((row, i) => {
                     const srcData = kpi.bySrc[row.source_id || ''] || { total: 0, inPerson: 0, won: 0, lsaCharged: 0 }
                     const cpl = srcData.lsaCharged > 0 ? row.amount / srcData.lsaCharged : 0
+                    const isDeleting = deletingSpendId === row.id
                     return (
-                      <div key={i} className="bg-background rounded-lg border border-border p-3">
-                        <div className="flex items-center gap-2 mb-2">
-                          <div className="w-2.5 h-2.5 rounded-full" style={{ background: SRC_COLORS[i % SRC_COLORS.length] }} />
-                          <span className="text-xs font-medium truncate">{row.name}</span>
+                      <div key={i} className="bg-background rounded-lg border border-border p-3 relative group">
+                        {/* Header row with name + delete button */}
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: SRC_COLORS[i % SRC_COLORS.length] }} />
+                            <span className="text-xs font-medium truncate">{row.name}</span>
+                          </div>
+                          <button
+                            onClick={() => handleDeleteSpend(row.id)}
+                            disabled={isDeleting}
+                            className="ml-2 shrink-0 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-red-500 transition-all disabled:opacity-50"
+                            title="Delete this spend entry">
+                            {isDeleting
+                              ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              : <Trash2 className="h-3.5 w-3.5" />
+                            }
+                          </button>
                         </div>
                         <p className="text-xl font-bold">{fmt$(row.amount)}</p>
+                        {row.date && (
+                          <p className="text-xs text-muted-foreground mt-0.5">{row.date}</p>
+                        )}
                         {cpl > 0 && <p className="text-xs text-muted-foreground mt-1">{fmt$(cpl)} / charged lead</p>}
                       </div>
                     )
