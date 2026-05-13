@@ -82,8 +82,10 @@ function autoMap(headers: string[]): Record<string, string> {
   };
 
   const fuzzy: Record<string, string[]> = {
+    // LSA inbox export columns (Google LSA download)
     phone:                  ["contactnum", "contacthash", "customernum", "customersnum",
-                             "mainphone", "phonenumber", "mobile", "cell", "tel", "unnamed0"],
+                             "mainphone", "phonenumber", "mobile", "cell", "tel", "unnamed0",
+                             "customer"],  // ← LSA inbox "Customer" column = phone number
     full_name:              ["display", "name", "fullname", "clientname", "customername"],
     first_name:             ["firstname", "fname"],
     last_name:              ["lastname", "lname"],
@@ -94,8 +96,8 @@ function autoMap(headers: string[]): Record<string, string> {
     client_address:         ["street", "streetaddress"],
     client_state:           ["province"],
     client_zip:             ["zipcode", "postalcode", "postal"],
-    lsa_status:             ["leadstatus", "lsastatus", "leadstatusvalue"],
-    contact_type:           ["leadtype"],
+    lsa_status:             ["leadstatus", "lsastatus", "leadstatusvalue", "chargestatus"],
+    contact_type:           ["leadtype", "contacttype"],
     visited:                ["visited"],
     estimate_sent:          ["estimatesent"],
     job_closed:             ["jobclosed"],
@@ -170,12 +172,12 @@ function parseLocation(loc: string) {
 
 function mapLsaStatus(val: string) {
   const v = (val || "").trim().toLowerCase();
-  if (v === "charged")                            return { lsa_status: "charged",     bad_lead: false };
-  if (v === "submitted")                          return { lsa_status: "charged",     bad_lead: true  };
-  if (v === "not charged" || v === "not_charged") return { lsa_status: "not_charged", bad_lead: false };
-  if (v === "credited")                           return { lsa_status: "credited",    bad_lead: false };
-  if (v === "in review"  || v === "in_review")    return { lsa_status: "in_review",   bad_lead: true  };
-  return { lsa_status: null, bad_lead: false };
+  if (v === "charged")                              return { lsa_status: "charged",     bad_lead: false };
+  if (v === "submitted")                            return { lsa_status: "charged",     bad_lead: true  };
+  if (v === "not charged" || v === "not_charged")   return { lsa_status: "not_charged", bad_lead: false };
+  if (v === "credited")                             return { lsa_status: "credited",    bad_lead: false };
+  if (v === "in review"  || v === "in_review")      return { lsa_status: "in_review",   bad_lead: true  };
+  return { lsa_status: v || null, bad_lead: false }; // pass through unknown values
 }
 
 function parseRevenue(val: string) {
@@ -254,7 +256,17 @@ function buildLead(row: Record<string, string>, mapping: Record<string, string>,
       case "client_state":           lead.client_state = val; break;
       case "client_zip":             lead.client_zip = val; break;
       case "lsa_status":             lsaVal = val; break;
-      case "contact_type":           lead.contact_type = val; break;
+      case "contact_type": {
+        // Normalize any incoming value to valid DB values
+        const ct = val.toLowerCase().trim();
+        if (["phone call", "phone", "call", "phone_call"].includes(ct))
+          lead.contact_type = "phone_quote";
+        else if (["message", "request", "in person", "in-person", "visited", "in_person"].includes(ct))
+          lead.contact_type = "in_person";
+        else
+          lead.contact_type = val; // already correct (phone_quote / in_person)
+        break;
+      }
       case "visited":                if (parseBool(val)) lead.contact_type = "in_person"; break;
       case "estimate_sent":          if (parseBool(val)) lead.status = "estimate_sent"; break;
       case "job_closed":             if (parseBool(val)) lead.status = "closed_won"; break;
@@ -349,8 +361,23 @@ export default function ImportLeadsPage() {
       leadsToInsert.push(lead);
     });
 
-    for (let i = 0; i < leadsToInsert.length; i += 50) {
-      const batch = leadsToInsert.slice(i, i + 50);
+    // ── Deduplication: check existing phones before inserting ─────────────
+    const incomingPhones = leadsToInsert.map(l => l.phone).filter(Boolean);
+    let existingPhones = new Set<string>();
+    if (incomingPhones.length > 0) {
+      const { data: existing } = await supabase
+        .from("leads")
+        .select("phone")
+        .in("phone", incomingPhones);
+      existingPhones = new Set((existing || []).map((r: any) => r.phone));
+    }
+    const dedupedLeads = leadsToInsert.filter(l => {
+      if (l.phone && existingPhones.has(l.phone)) { skipped++; return false; }
+      return true;
+    });
+
+    for (let i = 0; i < dedupedLeads.length; i += 50) {
+      const batch = dedupedLeads.slice(i, i + 50);
       const { error } = await supabase.from("leads").insert(batch);
       if (error) {
         dbErrors += batch.length;
