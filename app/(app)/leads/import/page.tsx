@@ -58,13 +58,11 @@ function autoMap(headers: string[]): Record<string, string> {
   const map: Record<string, string> = {};
   const n = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
 
-  // Columns to ALWAYS skip — boolean flags, calculated fields, irrelevant
   const alwaysSkip = [
     "projectrevenue", "changeorders", "recordtype", "salesrep",
-    "contacted",  // ← boolean TRUE/FALSE, NOT a phone number
+    "contacted",
   ];
 
-  // Exact matches for standard template columns
   const exact: Record<string, string> = {
     "phone":          "phone",
     "first_name":     "first_name",
@@ -83,10 +81,7 @@ function autoMap(headers: string[]): Record<string, string> {
     "notes":          "meta_notes",
   };
 
-  // Fuzzy aliases for non-template formats (LSA export, JN export, etc.)
   const fuzzy: Record<string, string[]> = {
-    // Phone — only explicit phone-like column names
-    // "contact" removed — too greedy, also matches "Contacted" (boolean)
     phone:                  ["contactnum", "contacthash", "customernum", "customersnum",
                              "mainphone", "phonenumber", "mobile", "cell", "tel", "unnamed0"],
     full_name:              ["display", "name", "fullname", "clientname", "customername"],
@@ -99,7 +94,6 @@ function autoMap(headers: string[]): Record<string, string> {
     client_address:         ["street", "streetaddress"],
     client_state:           ["province"],
     client_zip:             ["zipcode", "postalcode", "postal"],
-    // LSA Status — "leadstatus" maps to lsa_status (NOT pipeline stage)
     lsa_status:             ["leadstatus", "lsastatus", "leadstatusvalue"],
     contact_type:           ["leadtype"],
     visited:                ["visited"],
@@ -115,19 +109,14 @@ function autoMap(headers: string[]): Record<string, string> {
 
   headers.forEach(h => {
     const normalized = n(h);
-    // 1. Always skip?
     if (alwaysSkip.includes(normalized)) return;
-    // 2. Exact template match?
     if (exact[normalized]) { map[h] = exact[normalized]; return; }
-    // 3. Fuzzy match
     for (const [field, aliases] of Object.entries(fuzzy)) {
       if (normalized === n(field) || aliases.some(a => normalized.includes(a))) {
         map[h] = field;
         return;
       }
     }
-    // 4. "Contact #" — the # gets stripped so normalized = "contact"
-    // Handle this special case explicitly
     if (normalized === "contact") { map[h] = "phone"; return; }
   });
 
@@ -179,19 +168,13 @@ function parseLocation(loc: string) {
   return { client_city: loc.trim() };
 }
 
-function parseName(name: string) {
-  if (!name?.trim()) return {};
-  const parts = name.trim().split(" ");
-  return { first_name: parts[0], last_name: parts.slice(1).join(" ") || null };
-}
-
 function mapLsaStatus(val: string) {
   const v = (val || "").trim().toLowerCase();
-  if (v === "charged")                          return { lsa_status: "charged",     bad_lead: false };
-  if (v === "submitted")                        return { lsa_status: "charged",     bad_lead: true  };
+  if (v === "charged")                            return { lsa_status: "charged",     bad_lead: false };
+  if (v === "submitted")                          return { lsa_status: "charged",     bad_lead: true  };
   if (v === "not charged" || v === "not_charged") return { lsa_status: "not_charged", bad_lead: false };
-  if (v === "credited")                         return { lsa_status: "credited",    bad_lead: false };
-  if (v === "in review"  || v === "in_review")  return { lsa_status: "in_review",   bad_lead: true  };
+  if (v === "credited")                           return { lsa_status: "credited",    bad_lead: false };
+  if (v === "in review"  || v === "in_review")    return { lsa_status: "in_review",   bad_lead: true  };
   return { lsa_status: null, bad_lead: false };
 }
 
@@ -233,6 +216,8 @@ function parseCSV(text: string): { headers: string[]; rows: Record<string, strin
 }
 
 // ── Build lead from row ───────────────────────────────────────────────────────
+// ⚠️ IMPORTANT: first_name and last_name are GENERATED ALWAYS columns in Supabase.
+// They auto-compute from lead_name via split_part(). Never insert them directly.
 function buildLead(row: Record<string, string>, mapping: Record<string, string>, sourceId: string | null) {
   const lead: any = {
     archived: false, status: "new_lead", source_id: sourceId,
@@ -240,15 +225,27 @@ function buildLead(row: Record<string, string>, mapping: Record<string, string>,
   };
   let hasIdentifier = false, lsaVal = "";
 
+  // Temp vars for name — we build lead_name from these, never set first/last on lead directly
+  let _firstName = "", _lastName = "";
+
   for (const [csvCol, crmField] of Object.entries(mapping)) {
     if (!crmField) continue;
     const val = String(row[csvCol] || "").trim();
     if (!val) continue;
     switch (crmField) {
-      case "phone":                  lead.phone = val; hasIdentifier = true; break;
-      case "first_name":             lead.first_name = val; hasIdentifier = true; break;
-      case "last_name":              lead.last_name = val; break;
-      case "full_name":              Object.assign(lead, parseName(val)); hasIdentifier = true; break;
+      case "phone":
+        lead.phone = val; hasIdentifier = true; break;
+
+      // ✅ FIX: Store in temp vars, NOT on lead object
+      case "first_name":
+        _firstName = val; hasIdentifier = true; break;
+      case "last_name":
+        _lastName = val; break;
+
+      // ✅ FIX: Set lead_name directly instead of spreading parseName()
+      case "full_name":
+        lead.lead_name = val; hasIdentifier = true; break;
+
       case "email":                  lead.email = val; break;
       case "jn_address":             Object.assign(lead, parseJNAddress(val)); break;
       case "location":               Object.assign(lead, parseLocation(val)); break;
@@ -276,10 +273,17 @@ function buildLead(row: Record<string, string>, mapping: Record<string, string>,
     if (bad_lead) lead.bad_lead = true;
   }
 
-// Set lead_name — required field (NOT NULL)
-  lead.lead_name = [lead.first_name, lead.last_name].filter(Boolean).join(" ").trim()
-    || lead.phone
-    || "Imported Lead"
+  // ✅ FIX: Build lead_name from temp vars if full_name mapping didn't already set it
+  if (!lead.lead_name) {
+    lead.lead_name = [_firstName, _lastName].filter(Boolean).join(" ").trim()
+      || lead.phone
+      || "Imported Lead";
+  }
+
+  // ✅ SAFETY NET: Explicitly delete generated columns before Supabase insert
+  // Supabase will throw "cannot insert a non-DEFAULT value into column" if these exist
+  delete lead.first_name;
+  delete lead.last_name;
 
   return { lead, hasIdentifier };
 }
