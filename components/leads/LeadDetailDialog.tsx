@@ -23,16 +23,26 @@ const LSA_STATUS_CONFIG: Record<string, { label: string; classes: string }> = {
   in_review:   { label: "In Review",   classes: "bg-blue-100 text-blue-700" },
 };
 
-const PAYMENT_TYPES = ["Deposit", "Progress Payment", "Final", "Installment"];
+const PAYMENT_TYPES   = ["Deposit", "Progress Payment", "Final", "Installment"];
 const PAYMENT_METHODS = ["Cash", "Check", "Zelle", "Credit Card", "Sunlight Financial", "Upgrade"];
-const JOB_TYPES = ["Roof Replacement", "Roof Repair", "Deck", "Siding", "Windows", "Painting", "Masonry", "Stucco", "Chimney", "Other"];
-const SALESPERSONS = ["Ron", "Ray", "Other (Phone)"];
+const SALESPERSONS    = ["Ron", "Ray", "Other (Phone)"];
+
+// ✅ Standard job types — "Other" triggers a free-text input
+const STANDARD_JOB_TYPES = [
+  "Roof Replacement", "Roof Repair", "Deck", "Siding",
+  "Windows", "Painting", "Masonry", "Stucco", "Chimney",
+];
 
 function formatPhone(value: string) {
   const digits = value.replace(/\D/g, "").slice(0, 10);
   if (digits.length <= 3) return digits;
   if (digits.length <= 6) return `(${digits.slice(0, 3)}) ${digits.slice(3)}`;
   return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`;
+}
+
+function toLocalDate(iso: string | null): string {
+  if (!iso) return new Date().toISOString().split("T")[0];
+  return new Date(iso).toISOString().split("T")[0];
 }
 
 interface Payment { id: string; amount: number; payment_type: string; payment_method: string; paid_at: string; notes: string; }
@@ -47,58 +57,69 @@ interface LeadDetailDialogProps {
 }
 
 export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChange, onLeadUpdated, onLeadDeleted }: LeadDetailDialogProps) {
-  const [estimatedAmount, setEstimatedAmount] = useState("");
-  const [contractValue, setContractValue] = useState("");
-  const [initialContractDescription, setInitialContractDescription] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
-  const [payments, setPayments] = useState<Payment[]>([]);
-  const [showAddPayment, setShowAddPayment] = useState(false);
-  const [newPayment, setNewPayment] = useState({ amount: "", payment_type: "Deposit", payment_method: "Cash", paid_at: new Date().toISOString().split("T")[0], notes: "" });
-  const [addingPayment, setAddingPayment] = useState(false);
-  const [leadSources, setLeadSources] = useState<{ id: string; name: string }[]>([]);
-  const [editMode, setEditMode] = useState(false);
-  const [saveEditSuccess, setSaveEditSuccess] = useState(false);
-  const [editFields, setEditFields] = useState({ first_name: "", last_name: "", phone: "", email: "", address_line_1: "", city: "", state: "", zip: "", source_id: "", job_type: "", salesperson: "", notes: "" });
-  const [editSaving, setEditSaving] = useState(false);
-  const [archiving, setArchiving] = useState(false);
-  const [deleting, setDeleting] = useState(false);
-  const [zipLooking, setZipLooking] = useState(false);
-  const [changeOrders, setChangeOrders] = useState<ChangeOrder[]>([]);
-  const [showAddChangeOrder, setShowAddChangeOrder] = useState(false);
-  const [newChangeOrder, setNewChangeOrder] = useState({ description: "", job_type: "", amount: "", status: "pending" as "pending" | "won" | "lost" });
-  const [addingChangeOrder, setAddingChangeOrder] = useState(false);
-  const [expandedChangeOrders, setExpandedChangeOrders] = useState<Set<string>>(new Set());
-  const [showAddCOPayment, setShowAddCOPayment] = useState<string | null>(null);
-  const [newCOPayment, setNewCOPayment] = useState({ amount: "", payment_type: "Deposit", payment_method: "Cash", paid_at: new Date().toISOString().split("T")[0], notes: "" });
-  const [addingCOPayment, setAddingCOPayment] = useState(false);
-  const [appointmentAt, setAppointmentAt] = useState("");
-  const [appointmentNotes, setAppointmentNotes] = useState("");
-  const [savingAppointment, setSavingAppointment] = useState(false);
-  const [savedAppointment, setSavedAppointment] = useState(false);
-  const [reasonLost, setReasonLost] = useState("");
-  const [savingReasonLost, setSavingReasonLost] = useState(false);
-  const [savedReasonLost, setSavedReasonLost] = useState(false);
-  const [currentStatus, setCurrentStatus] = useState<string>((lead as any)?.status || "new");
-  const [inlineSalesperson, setInlineSalesperson] = useState<string>("");
-  const [savingInlineSalesperson, setSavingInlineSalesperson] = useState(false);
-  // ── Inline job type (editable without full edit mode) ──
-  const [inlineJobType, setInlineJobType] = useState<string>("");
-  const [savingInlineJobType, setSavingInlineJobType] = useState(false);
-  // ── LSA status + contact type ──
-  const [lsaStatus, setLsaStatus] = useState<string>("not_charged");
-  const [savingLsaStatus, setSavingLsaStatus] = useState(false);
-  const [contactType, setContactType] = useState<string>("");
-  const [savingContactType, setSavingContactType] = useState(false);
+  const [estimatedAmount,              setEstimatedAmount]              = useState("");
+  const [contractValue,                setContractValue]                = useState("");
+  const [initialContractDescription,   setInitialContractDescription]   = useState("");
+  const [saving,                       setSaving]                       = useState(false);
+  const [saved,                        setSaved]                        = useState(false);
+  const [payments,                     setPayments]                     = useState<Payment[]>([]);
+  const [showAddPayment,               setShowAddPayment]               = useState(false);
+  const [newPayment,                   setNewPayment]                   = useState({ amount: "", payment_type: "Deposit", payment_method: "Cash", paid_at: new Date().toISOString().split("T")[0], notes: "" });
+  const [addingPayment,                setAddingPayment]                = useState(false);
+  const [leadSources,                  setLeadSources]                  = useState<{ id: string; name: string }[]>([]);
+  const [editMode,                     setEditMode]                     = useState(false);
+  const [saveEditSuccess,              setSaveEditSuccess]              = useState(false);
+  const [editFields,                   setEditFields]                   = useState({
+    first_name: "", last_name: "", phone: "", email: "",
+    address_line_1: "", city: "", state: "", zip: "",
+    source_id: "", job_type: "", custom_job_type: "",
+    salesperson: "", notes: "",
+    lead_received_date: "", // ✅ NEW: editable lead received date
+  });
+  const [editSaving,                   setEditSaving]                   = useState(false);
+  const [archiving,                    setArchiving]                    = useState(false);
+  const [deleting,                     setDeleting]                     = useState(false);
+  const [zipLooking,                   setZipLooking]                   = useState(false);
+  const [changeOrders,                 setChangeOrders]                 = useState<ChangeOrder[]>([]);
+  const [showAddChangeOrder,           setShowAddChangeOrder]           = useState(false);
+  const [newChangeOrder,               setNewChangeOrder]               = useState({ description: "", job_type: "", amount: "", status: "pending" as "pending" | "won" | "lost" });
+  const [addingChangeOrder,            setAddingChangeOrder]            = useState(false);
+  const [expandedChangeOrders,         setExpandedChangeOrders]         = useState<Set<string>>(new Set());
+  const [showAddCOPayment,             setShowAddCOPayment]             = useState<string | null>(null);
+  const [newCOPayment,                 setNewCOPayment]                 = useState({ amount: "", payment_type: "Deposit", payment_method: "Cash", paid_at: new Date().toISOString().split("T")[0], notes: "" });
+  const [addingCOPayment,              setAddingCOPayment]              = useState(false);
+  const [appointmentAt,                setAppointmentAt]                = useState("");
+  const [appointmentNotes,             setAppointmentNotes]             = useState("");
+  const [savingAppointment,            setSavingAppointment]            = useState(false);
+  const [savedAppointment,             setSavedAppointment]             = useState(false);
+  const [reasonLost,                   setReasonLost]                   = useState("");
+  const [savingReasonLost,             setSavingReasonLost]             = useState(false);
+  const [savedReasonLost,              setSavedReasonLost]              = useState(false);
+  const [currentStatus,                setCurrentStatus]                = useState<string>((lead as any)?.status || "new");
+  const [inlineSalesperson,            setInlineSalesperson]            = useState<string>("");
+  const [savingInlineSalesperson,      setSavingInlineSalesperson]      = useState(false);
+  const [inlineJobType,                setInlineJobType]                = useState<string>("");
+  const [inlineCustomJobType,          setInlineCustomJobType]          = useState<string>("");
+  const [savingInlineJobType,          setSavingInlineJobType]          = useState(false);
+  const [lsaStatus,                    setLsaStatus]                    = useState<string>("not_charged");
+  const [savingLsaStatus,              setSavingLsaStatus]              = useState(false);
+  const [contactType,                  setContactType]                  = useState<string>("");
+  const [savingContactType,            setSavingContactType]            = useState(false);
 
   const leadId = (lead as any)?.id;
+
+  // ✅ Whether inline job type is custom (not in standard list)
+  const inlineJobTypeDropdownVal = STANDARD_JOB_TYPES.includes(inlineJobType) ? inlineJobType : inlineJobType ? "Other" : "";
 
   useEffect(() => {
     if (lead) {
       const raw = lead as any;
+      const jobType = raw.metadata?.job_type || "";
       setCurrentStatus(raw.status || "new");
       setInlineSalesperson(raw.metadata?.salesperson || "");
-      setInlineJobType(raw.metadata?.job_type || "");
+      setInlineJobType(jobType);
+      // If stored value is non-standard, pre-fill the custom text box
+      setInlineCustomJobType(STANDARD_JOB_TYPES.includes(jobType) ? "" : jobType);
       setLsaStatus(raw.lsa_status || "not_charged");
       setContactType(raw.contact_type || "");
     }
@@ -121,7 +142,25 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
   useEffect(() => {
     if (lead && editMode) {
       const l = lead as any;
-      setEditFields({ first_name: l.first_name || "", last_name: l.last_name || "", phone: l.phone || "", email: l.email || "", address_line_1: l.address_line_1 || l.client_address || "", city: l.city || l.client_city || "", state: l.state || l.client_state || "", zip: l.zip || l.postal_code || l.client_zip || "", source_id: l.source_id || "", job_type: l.metadata?.job_type || "", salesperson: l.metadata?.salesperson || "", notes: l.metadata?.notes || "" });
+      const jobType = l.metadata?.job_type || "";
+      const isCustom = jobType && !STANDARD_JOB_TYPES.includes(jobType);
+      setEditFields({
+        first_name:         l.first_name         || "",
+        last_name:          l.last_name          || "",
+        phone:              l.phone              || "",
+        email:              l.email              || "",
+        address_line_1:     l.address_line_1     || l.client_address || "",
+        city:               l.city               || l.client_city    || "",
+        state:              l.state              || l.client_state   || "",
+        zip:                l.zip                || l.postal_code    || l.client_zip || "",
+        source_id:          l.source_id          || "",
+        job_type:           isCustom ? "Other"   : jobType,
+        custom_job_type:    isCustom ? jobType   : "",
+        salesperson:        l.metadata?.salesperson || "",
+        notes:              l.metadata?.notes    || "",
+        // ✅ Pre-fill lead received date from created_at
+        lead_received_date: toLocalDate(l.created_at),
+      });
     }
   }, [editMode, lead]);
 
@@ -159,33 +198,32 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
   if (!lead) return null;
   const l = lead as any;
   const displayName = l.lead_name || `${l.first_name || ""} ${l.last_name || ""}`.trim() || "Unnamed Lead";
-  const initials = displayName.split(" ").map((n: string) => n[0]).join("").toUpperCase().slice(0, 2);
-  const phone = l.phone || "No phone";
-  const email = l.email || "No email";
-  const address = (l.address_line_1 || l.client_address)
+  const initials    = displayName.split(" ").map((n: string) => n[0]).join("").toUpperCase().slice(0, 2);
+  const phone       = l.phone || "No phone";
+  const email       = l.email || "No email";
+  const address     = (l.address_line_1 || l.client_address)
     ? `${l.address_line_1 || l.client_address}${(l.city || l.client_city) ? ", " + (l.city || l.client_city) : ""}${(l.state || l.client_state) ? ", " + (l.state || l.client_state) : ""}`
     : "No address";
-  const source = l.lead_sources?.name || l.source_email || l.metadata?.lead_source || "No source";
-  const jobType = inlineJobType || l.metadata?.job_type || "";
-  const notes = l.metadata?.notes || "";
-  const createdAt = l.created_at;
+  const source      = l.lead_sources?.name || l.source_email || l.metadata?.lead_source || "No source";
+  const jobType     = inlineJobType || l.metadata?.job_type || "";
+  const notes       = l.metadata?.notes || "";
+  const createdAt   = l.created_at;
   const currentEstimated = Number(l.estimated_amount || 0);
-  const currentContract = contractValue !== "" ? Number(contractValue) : Number(l.initial_contract_value || 0);
-  const totalCollected = payments.reduce((sum, p) => sum + Number(p.amount), 0);
-  const balance = currentContract > 0 ? currentContract - totalCollected : 0;
-  const isFinancing = payments.some(p => p.payment_method === "Sunlight Financial" || p.payment_method === "Upgrade");
+  const currentContract  = contractValue !== "" ? Number(contractValue) : Number(l.initial_contract_value || 0);
+  const totalCollected   = payments.reduce((sum, p) => sum + Number(p.amount), 0);
+  const balance          = currentContract > 0 ? currentContract - totalCollected : 0;
+  const isFinancing      = payments.some(p => p.payment_method === "Sunlight Financial" || p.payment_method === "Upgrade");
 
   const isAppointmentStage = ["appointment_set", "cancelled_appointment", "closed_lost"].includes(currentStatus);
-  const isEstimateSent = currentStatus === "estimate_sent";
-  const isClosedWon = ["closed_won", "won"].includes(currentStatus);
-  const isLost = currentStatus === "lost";
-  const showFullContract = isClosedWon || isLost;
-  const showContactType = isEstimateSent || showFullContract;
+  const isEstimateSent     = currentStatus === "estimate_sent";
+  const isClosedWon        = ["closed_won", "won"].includes(currentStatus);
+  const isLost             = currentStatus === "lost";
+  const showFullContract   = isClosedWon || isLost;
 
   // ── Handlers ──────────────────────────────────────────────────────────────
+
   const handleLsaStatusChange = async (val: string) => {
-    setLsaStatus(val);
-    setSavingLsaStatus(true);
+    setLsaStatus(val); setSavingLsaStatus(true);
     await supabase.from("leads").update({ lsa_status: val }).eq("id", leadId);
     setSavingLsaStatus(false);
     if (onLeadUpdated) onLeadUpdated(leadId);
@@ -193,26 +231,25 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
 
   const handleContactTypeChange = async (val: string) => {
     const next = contactType === val ? "" : val;
-    setContactType(next);
-    setSavingContactType(true);
+    setContactType(next); setSavingContactType(true);
     await supabase.from("leads").update({ contact_type: next || null }).eq("id", leadId);
     setSavingContactType(false);
     if (onLeadUpdated) onLeadUpdated(leadId);
   };
 
   const handleInlineSalespersonChange = async (val: string) => {
-    setInlineSalesperson(val);
-    setSavingInlineSalesperson(true);
+    setInlineSalesperson(val); setSavingInlineSalesperson(true);
     await supabase.from("leads").update({ metadata: { ...l.metadata, salesperson: val || null } }).eq("id", leadId);
     setSavingInlineSalesperson(false);
     if (onLeadUpdated) onLeadUpdated(leadId);
   };
 
-  // ✅ NEW: inline job type save
-  const handleInlineJobTypeChange = async (val: string) => {
-    setInlineJobType(val);
-    setSavingInlineJobType(true);
-    await supabase.from("leads").update({ metadata: { ...l.metadata, job_type: val || null } }).eq("id", leadId);
+  // ✅ Inline job type — saves actual custom text, not "Other"
+  const handleInlineJobTypeSave = async (val: string) => {
+    const finalVal = val === "Other" ? inlineCustomJobType : val;
+    if (!finalVal && val === "Other") return; // don't save blank custom
+    setInlineJobType(finalVal); setSavingInlineJobType(true);
+    await supabase.from("leads").update({ metadata: { ...l.metadata, job_type: finalVal || null } }).eq("id", leadId);
     setSavingInlineJobType(false);
     if (onLeadUpdated) onLeadUpdated(leadId);
   };
@@ -220,9 +257,9 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
   const handleSaveAmounts = async () => {
     setSaving(true);
     const updates: any = {};
-    if (estimatedAmount !== "") updates.estimated_amount = Number(estimatedAmount);
-    if (contractValue !== "") updates.initial_contract_value = Number(contractValue);
-    if (initialContractDescription !== "") updates.metadata = { ...l.metadata, initial_contract_description: initialContractDescription };
+    if (estimatedAmount !== "")            updates.estimated_amount       = Number(estimatedAmount);
+    if (contractValue !== "")              updates.initial_contract_value = Number(contractValue);
+    if (initialContractDescription !== "") updates.metadata               = { ...l.metadata, initial_contract_description: initialContractDescription };
     if (Object.keys(updates).length > 0) await supabase.from("leads").update(updates).eq("id", leadId);
     setSaving(false); setSaved(true); setTimeout(() => setSaved(false), 2000);
   };
@@ -237,23 +274,40 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
 
   const handleSaveEdit = async () => {
     setEditSaving(true);
-    const fullName = `${editFields.first_name} ${editFields.last_name}`.trim();
+    const fullName  = `${editFields.first_name} ${editFields.last_name}`.trim();
+    // ✅ Resolve job type — if "Other" was selected, use the custom text
+    const finalJobType = editFields.job_type === "Other"
+      ? editFields.custom_job_type
+      : editFields.job_type;
+
     const updates: any = {
-      lead_name: fullName,
-      phone: editFields.phone,
-      email: editFields.email,
+      lead_name:     fullName,
+      phone:         editFields.phone,
+      email:         editFields.email,
       client_address: editFields.address_line_1,
-      client_city: editFields.city,
-      client_state: editFields.state,
-      client_zip: editFields.zip,
-      metadata: { ...l.metadata, job_type: editFields.job_type || null, salesperson: editFields.salesperson || null, notes: editFields.notes || null }
+      client_city:   editFields.city,
+      client_state:  editFields.state,
+      client_zip:    editFields.zip,
+      metadata: {
+        ...l.metadata,
+        job_type:    finalJobType  || null,
+        salesperson: editFields.salesperson || null,
+        notes:       editFields.notes       || null,
+      },
     };
     if (editFields.source_id) updates.source_id = editFields.source_id;
+
+    // ✅ Save lead received date — converts YYYY-MM-DD → ISO for Supabase
+    if (editFields.lead_received_date) {
+      updates.created_at = new Date(editFields.lead_received_date + "T00:00:00").toISOString();
+    }
+
     const { error } = await supabase.from("leads").update(updates).eq("id", leadId);
     setEditSaving(false);
     if (error) { alert("Failed to save: " + error.message); return; }
     setInlineSalesperson(editFields.salesperson || "");
-    setInlineJobType(editFields.job_type || "");
+    setInlineJobType(finalJobType || "");
+    setInlineCustomJobType(STANDARD_JOB_TYPES.includes(finalJobType) ? "" : finalJobType);
     setEditMode(false); setSaveEditSuccess(true); setTimeout(() => setSaveEditSuccess(false), 3000);
     if (onLeadUpdated) onLeadUpdated(leadId);
   };
@@ -325,8 +379,7 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
   const handleSaveAppointment = async () => {
     if (!appointmentAt) return;
     setSavingAppointment(true);
-    const isoDate = new Date(appointmentAt).toISOString();
-    await supabase.from("leads").update({ appointment_at: isoDate, appointment_notes: appointmentNotes || null }).eq("id", leadId);
+    await supabase.from("leads").update({ appointment_at: new Date(appointmentAt).toISOString(), appointment_notes: appointmentNotes || null }).eq("id", leadId);
     setSavingAppointment(false); setSavedAppointment(true);
     setTimeout(() => setSavedAppointment(false), 2000);
     if (onLeadUpdated) onLeadUpdated(leadId);
@@ -360,7 +413,11 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
     setExpandedChangeOrders(prev => { const next = new Set(prev); next.has(coId) ? next.delete(coId) : next.add(coId); return next; });
   };
 
-  const coStatusColors: Record<string, string> = { pending: "bg-yellow-100 text-yellow-700", won: "bg-emerald-100 text-emerald-700", lost: "bg-red-100 text-red-600" };
+  const coStatusColors: Record<string, string> = {
+    pending: "bg-yellow-100 text-yellow-700",
+    won:     "bg-emerald-100 text-emerald-700",
+    lost:    "bg-red-100 text-red-600",
+  };
 
   const ContactTypeToggle = () => (
     <div className="rounded-lg border border-border p-3 space-y-2">
@@ -397,13 +454,16 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
               </div>
             </div>
             <div className="flex items-center gap-2 mr-6">
-              <button onClick={() => setEditMode(!editMode)} className={`flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-md border transition-colors ${editMode ? "bg-primary text-primary-foreground border-primary" : "border-border hover:bg-muted"}`}>
+              <button onClick={() => setEditMode(!editMode)}
+                className={`flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-md border transition-colors ${editMode ? "bg-primary text-primary-foreground border-primary" : "border-border hover:bg-muted"}`}>
                 <Pencil className="h-3 w-3" />{editMode ? "Editing" : "Edit"}
               </button>
-              <button onClick={handleArchive} disabled={archiving} className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-md border border-border hover:bg-red-50 hover:text-red-600 hover:border-red-300 transition-colors disabled:opacity-40">
+              <button onClick={handleArchive} disabled={archiving}
+                className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-md border border-border hover:bg-red-50 hover:text-red-600 hover:border-red-300 transition-colors disabled:opacity-40">
                 <Archive className="h-3 w-3" />{archiving ? "..." : "Archive"}
               </button>
-              <button onClick={handleDelete} disabled={deleting} className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-md border border-border hover:bg-red-100 hover:text-red-700 hover:border-red-400 transition-colors disabled:opacity-40" title="Permanently delete">
+              <button onClick={handleDelete} disabled={deleting}
+                className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-md border border-border hover:bg-red-100 hover:text-red-700 hover:border-red-400 transition-colors disabled:opacity-40">
                 <Trash2 className="h-3 w-3" />{deleting ? "..." : "Delete"}
               </button>
             </div>
@@ -413,35 +473,93 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
         <div className="space-y-4 pt-2">
 
           {saveEditSuccess && (
-            <div className="flex items-center gap-2 rounded-md bg-emerald-500/10 border border-emerald-500/30 px-3 py-2 text-sm text-emerald-600 font-medium">✓ Lead updated successfully</div>
+            <div className="flex items-center gap-2 rounded-md bg-emerald-500/10 border border-emerald-500/30 px-3 py-2 text-sm text-emerald-600 font-medium">
+              ✓ Lead updated successfully
+            </div>
           )}
 
           {/* ── EDIT MODE ── */}
           {editMode && (
             <div className="rounded-lg border border-primary/30 bg-primary/5 p-4 space-y-3">
               <p className="text-xs font-semibold text-primary uppercase tracking-wide">Edit Lead Info</p>
+
               <div className="grid grid-cols-2 gap-2">
                 <div><label className="text-xs text-muted-foreground block mb-1">First Name</label><input value={editFields.first_name} onChange={(e) => setEditFields({ ...editFields, first_name: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" /></div>
                 <div><label className="text-xs text-muted-foreground block mb-1">Last Name</label><input value={editFields.last_name} onChange={(e) => setEditFields({ ...editFields, last_name: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" /></div>
               </div>
+
               <div className="grid grid-cols-2 gap-2">
                 <div><label className="text-xs text-muted-foreground block mb-1">Phone</label><input value={editFields.phone} onChange={(e) => setEditFields({ ...editFields, phone: formatPhone(e.target.value) })} placeholder="(201) 555-0000" className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" /></div>
                 <div><label className="text-xs text-muted-foreground block mb-1">Email</label><input value={editFields.email} onChange={(e) => setEditFields({ ...editFields, email: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" /></div>
               </div>
+
               <div><label className="text-xs text-muted-foreground block mb-1">Address</label><input value={editFields.address_line_1} onChange={(e) => setEditFields({ ...editFields, address_line_1: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" /></div>
+
               <div className="grid grid-cols-3 gap-2">
                 <div><label className="text-xs text-muted-foreground block mb-1">Zip {zipLooking && <span className="text-blue-500">...</span>}</label><input value={editFields.zip} maxLength={5} placeholder="07011" onChange={(e) => { const val = e.target.value.replace(/\D/g, "").slice(0, 5); setEditFields({ ...editFields, zip: val }); if (val.length === 5) handleZipLookup(val); }} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" /></div>
                 <div><label className="text-xs text-muted-foreground block mb-1">City</label><input value={editFields.city} onChange={(e) => setEditFields({ ...editFields, city: e.target.value })} placeholder="Auto-filled" className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" /></div>
                 <div><label className="text-xs text-muted-foreground block mb-1">State</label><input value={editFields.state} onChange={(e) => setEditFields({ ...editFields, state: e.target.value })} placeholder="Auto-filled" className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" /></div>
               </div>
+
               <div className="grid grid-cols-2 gap-2">
-                <div><label className="text-xs text-muted-foreground block mb-1">Lead Source</label><select value={editFields.source_id} onChange={(e) => setEditFields({ ...editFields, source_id: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"><option value="">— Select source —</option>{leadSources.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></div>
-                <div><label className="text-xs text-muted-foreground block mb-1">Job Type</label><select value={editFields.job_type} onChange={(e) => setEditFields({ ...editFields, job_type: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"><option value="">— Select type —</option>{JOB_TYPES.map((t) => <option key={t}>{t}</option>)}</select></div>
+                <div>
+                  <label className="text-xs text-muted-foreground block mb-1">Lead Source</label>
+                  <select value={editFields.source_id} onChange={(e) => setEditFields({ ...editFields, source_id: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40">
+                    <option value="">— Select source —</option>
+                    {leadSources.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs text-muted-foreground block mb-1">Job Type</label>
+                  <select value={editFields.job_type} onChange={(e) => setEditFields({ ...editFields, job_type: e.target.value, custom_job_type: "" })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40">
+                    <option value="">— Select type —</option>
+                    {STANDARD_JOB_TYPES.map((t) => <option key={t}>{t}</option>)}
+                    <option value="Other">Other (type below)</option>
+                  </select>
+                  {/* ✅ Show text input when "Other" is selected */}
+                  {editFields.job_type === "Other" && (
+                    <input
+                      type="text"
+                      placeholder="e.g. Gutters, Insulation..."
+                      value={editFields.custom_job_type}
+                      onChange={(e) => setEditFields({ ...editFields, custom_job_type: e.target.value })}
+                      className="mt-1.5 w-full rounded-md border border-primary/40 bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
+                      autoFocus
+                    />
+                  )}
+                </div>
               </div>
-              <div><label className="text-xs text-muted-foreground block mb-1">Salesperson</label><select value={editFields.salesperson} onChange={(e) => setEditFields({ ...editFields, salesperson: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"><option value="">— Select salesperson —</option>{SALESPERSONS.map((s) => <option key={s}>{s}</option>)}</select></div>
-              <div><label className="text-xs text-muted-foreground block mb-1">Notes</label><textarea value={editFields.notes} onChange={(e) => setEditFields({ ...editFields, notes: e.target.value })} rows={3} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40 resize-none" /></div>
+
+              <div>
+                <label className="text-xs text-muted-foreground block mb-1">Salesperson</label>
+                <select value={editFields.salesperson} onChange={(e) => setEditFields({ ...editFields, salesperson: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40">
+                  <option value="">— Select salesperson —</option>
+                  {SALESPERSONS.map((s) => <option key={s}>{s}</option>)}
+                </select>
+              </div>
+
+              <div>
+                <label className="text-xs text-muted-foreground block mb-1">Notes</label>
+                <textarea value={editFields.notes} onChange={(e) => setEditFields({ ...editFields, notes: e.target.value })} rows={3} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40 resize-none" />
+              </div>
+
+              {/* ✅ Lead Received Date — editable in edit mode */}
+              <div>
+                <label className="text-xs text-muted-foreground block mb-1">Lead Received Date</label>
+                <input
+                  type="date"
+                  value={editFields.lead_received_date}
+                  onChange={(e) => setEditFields({ ...editFields, lead_received_date: e.target.value })}
+                  className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
+                />
+                <p className="text-xs text-muted-foreground mt-1">This updates when the lead was received in the system.</p>
+              </div>
+
               <div className="flex gap-2">
-                <button onClick={handleSaveEdit} disabled={editSaving} className="flex-1 flex items-center justify-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-40 transition-colors"><Save className="h-4 w-4" />{editSaving ? "Saving..." : "Save Changes"}</button>
+                <button onClick={handleSaveEdit} disabled={editSaving}
+                  className="flex-1 flex items-center justify-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-40 transition-colors">
+                  <Save className="h-4 w-4" />{editSaving ? "Saving..." : "Save Changes"}
+                </button>
                 <button onClick={() => setEditMode(false)} className="rounded-md border border-border px-4 py-2 text-sm hover:bg-muted transition-colors">Cancel</button>
               </div>
             </div>
@@ -450,13 +568,11 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
           {/* ── STATUS CARDS (non-edit mode) ── */}
           {!editMode && (
             <div className="grid grid-cols-2 gap-3">
-              {/* Status */}
               <div className="rounded-lg bg-muted/50 p-3">
                 <p className="text-xs text-muted-foreground mb-1">Status</p>
                 <p className="font-semibold text-sm">{statusLabels[currentStatus] || currentStatus}</p>
               </div>
 
-              {/* Salesperson inline dropdown */}
               <div className="rounded-lg bg-muted/50 p-3">
                 <p className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
                   Salesperson {savingInlineSalesperson && <span className="text-blue-400 text-xs">saving...</span>}
@@ -468,7 +584,6 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
                 </select>
               </div>
 
-              {/* LSA Status inline dropdown */}
               <div className="rounded-lg bg-muted/50 p-3">
                 <p className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
                   LSA Status {savingLsaStatus && <span className="text-blue-400 text-xs">saving...</span>}
@@ -488,16 +603,49 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
                 </div>
               </div>
 
-              {/* ✅ Job Type — now an editable inline dropdown */}
+              {/* ✅ Inline Job Type — "Other" shows text input */}
               <div className="rounded-lg bg-muted/50 p-3">
                 <p className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
                   Job Type {savingInlineJobType && <span className="text-blue-400 text-xs">saving...</span>}
                 </p>
-                <select value={inlineJobType} onChange={(e) => handleInlineJobTypeChange(e.target.value)}
-                  className="w-full bg-transparent font-semibold text-sm focus:outline-none cursor-pointer">
+                <select
+                  value={inlineJobTypeDropdownVal}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    if (val !== "Other") {
+                      setInlineCustomJobType("");
+                      handleInlineJobTypeSave(val);
+                    } else {
+                      setInlineJobType("Other");
+                    }
+                  }}
+                  className="w-full bg-transparent font-semibold text-sm focus:outline-none cursor-pointer"
+                >
                   <option value="">— Select type —</option>
-                  {JOB_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                  {STANDARD_JOB_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                  <option value="Other">Other (type below)</option>
                 </select>
+                {/* ✅ Show text input + save button when "Other" selected inline */}
+                {inlineJobTypeDropdownVal === "Other" && (
+                  <div className="flex gap-1 mt-1.5">
+                    <input
+                      type="text"
+                      placeholder="e.g. Gutters, Insulation..."
+                      value={inlineCustomJobType}
+                      onChange={(e) => setInlineCustomJobType(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === "Enter") handleInlineJobTypeSave("Other"); }}
+                      className="flex-1 rounded-md border border-primary/40 bg-background px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-primary/40"
+                      autoFocus
+                    />
+                    <button
+                      onClick={() => handleInlineJobTypeSave("Other")}
+                      disabled={!inlineCustomJobType.trim()}
+                      className="text-xs px-2 py-1 rounded-md bg-primary text-primary-foreground disabled:opacity-40"
+                    >
+                      Save
+                    </button>
+                  </div>
+                )}
               </div>
 
               {source && source !== "No source" && (
@@ -516,16 +664,11 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
                 <Calendar className="h-3 w-3" /> Appointment
               </p>
               <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-xs text-muted-foreground block mb-1">Date &amp; Time</label>
-                  <input type="datetime-local" value={appointmentAt} onChange={(e) => setAppointmentAt(e.target.value)} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400/40" />
-                </div>
-                <div>
-                  <label className="text-xs text-muted-foreground block mb-1">Notes</label>
-                  <input type="text" placeholder="e.g. Meet at front door" value={appointmentNotes} onChange={(e) => setAppointmentNotes(e.target.value)} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400/40" />
-                </div>
+                <div><label className="text-xs text-muted-foreground block mb-1">Date &amp; Time</label><input type="datetime-local" value={appointmentAt} onChange={(e) => setAppointmentAt(e.target.value)} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400/40" /></div>
+                <div><label className="text-xs text-muted-foreground block mb-1">Notes</label><input type="text" placeholder="e.g. Meet at front door" value={appointmentNotes} onChange={(e) => setAppointmentNotes(e.target.value)} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400/40" /></div>
               </div>
-              <button onClick={handleSaveAppointment} disabled={savingAppointment || !appointmentAt} className="w-full flex items-center justify-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+              <button onClick={handleSaveAppointment} disabled={savingAppointment || !appointmentAt}
+                className="w-full flex items-center justify-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
                 <Save className="h-4 w-4" />{savingAppointment ? "Saving..." : savedAppointment ? "Saved ✓" : "Save Appointment"}
               </button>
             </div>
@@ -540,7 +683,8 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
                 <label className="text-xs text-muted-foreground mb-1 block">Estimated Amount <span className="text-foreground font-medium">(${currentEstimated.toLocaleString()})</span></label>
                 <input type="number" placeholder={String(currentEstimated)} value={estimatedAmount} onChange={(e) => setEstimatedAmount(e.target.value)} className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" />
               </div>
-              <button onClick={handleSaveEstimate} disabled={saving || estimatedAmount === ""} className="w-full flex items-center justify-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+              <button onClick={handleSaveEstimate} disabled={saving || estimatedAmount === ""}
+                className="w-full flex items-center justify-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
                 <Save className="h-4 w-4" />{saving ? "Saving..." : saved ? "Saved ✓" : "Save Estimate"}
               </button>
             </div>
@@ -560,7 +704,10 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
                 <div><label className="text-xs text-muted-foreground mb-1 block">Contract Value <span className="text-foreground font-medium">(${Number(l.initial_contract_value || 0).toLocaleString()})</span></label><input type="number" placeholder={String(Number(l.initial_contract_value || 0))} value={contractValue} onChange={(e) => setContractValue(e.target.value)} className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" /></div>
               </div>
               <div><label className="text-xs text-muted-foreground mb-1 block">Description</label><input type="text" placeholder={l.metadata?.initial_contract_description || "e.g. Full roof replacement, 28 squares..."} value={initialContractDescription} onChange={(e) => setInitialContractDescription(e.target.value)} className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" /></div>
-              <button onClick={handleSaveAmounts} disabled={saving || (estimatedAmount === "" && contractValue === "" && initialContractDescription === "")} className="w-full flex items-center justify-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"><Save className="h-4 w-4" />{saving ? "Saving..." : saved ? "Saved ✓" : "Save Contract"}</button>
+              <button onClick={handleSaveAmounts} disabled={saving || (estimatedAmount === "" && contractValue === "" && initialContractDescription === "")}
+                className="w-full flex items-center justify-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+                <Save className="h-4 w-4" />{saving ? "Saving..." : saved ? "Saved ✓" : "Save Contract"}
+              </button>
               <div className="space-y-2 pt-1">
                 <div className="flex items-center justify-between">
                   <p className="text-xs font-medium text-muted-foreground">Payments</p>
@@ -611,8 +758,8 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
             <>
               {changeOrders.map((co) => {
                 const coCollected = co.payments.reduce((sum, p) => sum + Number(p.amount), 0);
-                const coBalance = Number(co.amount) - coCollected;
-                const isExpanded = expandedChangeOrders.has(co.id);
+                const coBalance   = Number(co.amount) - coCollected;
+                const isExpanded  = expandedChangeOrders.has(co.id);
                 return (
                   <div key={co.id} className="rounded-lg border border-border p-4 space-y-3">
                     <div className="flex items-center justify-between">
@@ -682,7 +829,7 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
                 <div className="rounded-lg border border-primary/30 bg-primary/5 p-4 space-y-3">
                   <p className="text-xs font-semibold text-primary uppercase tracking-wide">New Change Order</p>
                   <div className="grid grid-cols-2 gap-2">
-                    <div><label className="text-xs text-muted-foreground block mb-1">Job Type</label><select value={newChangeOrder.job_type} onChange={(e) => setNewChangeOrder({ ...newChangeOrder, job_type: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"><option value="">— Select type —</option>{JOB_TYPES.map(t => <option key={t}>{t}</option>)}</select></div>
+                    <div><label className="text-xs text-muted-foreground block mb-1">Job Type</label><select value={newChangeOrder.job_type} onChange={(e) => setNewChangeOrder({ ...newChangeOrder, job_type: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"><option value="">— Select type —</option>{STANDARD_JOB_TYPES.map(t => <option key={t}>{t}</option>)}<option value="Other">Other</option></select></div>
                     <div><label className="text-xs text-muted-foreground block mb-1">Amount</label><input type="number" placeholder="0" value={newChangeOrder.amount} onChange={(e) => setNewChangeOrder({ ...newChangeOrder, amount: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" /></div>
                   </div>
                   <div><label className="text-xs text-muted-foreground block mb-1">Description</label><input type="text" placeholder="e.g. Add deck, replace gutters..." value={newChangeOrder.description} onChange={(e) => setNewChangeOrder({ ...newChangeOrder, description: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" /></div>
@@ -701,7 +848,8 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
             <div className="rounded-lg border border-red-200 bg-red-50/50 dark:bg-red-950/20 p-4 space-y-3">
               <p className="text-xs font-semibold text-red-600 uppercase tracking-wide">Reason Lost</p>
               <textarea rows={3} placeholder="e.g. Price too high, went with another contractor..." value={reasonLost} onChange={(e) => setReasonLost(e.target.value)} className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-400/40 resize-none" />
-              <button onClick={handleSaveReasonLost} disabled={savingReasonLost || !reasonLost} className="w-full flex items-center justify-center gap-2 rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+              <button onClick={handleSaveReasonLost} disabled={savingReasonLost || !reasonLost}
+                className="w-full flex items-center justify-center gap-2 rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
                 <Save className="h-4 w-4" />{savingReasonLost ? "Saving..." : savedReasonLost ? "Saved ✓" : "Save Reason"}
               </button>
             </div>
@@ -713,7 +861,6 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
               <div className="flex items-center gap-2.5 text-sm"><Phone className="h-4 w-4 text-muted-foreground" /><span>{phone}</span></div>
               <div className="flex items-center gap-2.5 text-sm"><Mail className="h-4 w-4 text-muted-foreground" /><span>{email}</span></div>
               <div className="flex items-center gap-2.5 text-sm"><MapPin className="h-4 w-4 text-muted-foreground" /><span>{address}</span></div>
-              {/* ✅ CHANGED: "Added" → "Lead received" */}
               {createdAt && (
                 <div className="flex items-center gap-2.5 text-sm">
                   <Calendar className="h-4 w-4 text-muted-foreground" />
@@ -736,7 +883,8 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
               <p className="text-xs text-muted-foreground mb-2">Move to stage</p>
               <div className="flex flex-wrap gap-2">
                 {["new", "contacted", "appointment_set", "estimate_sent", "closed_won", "cancelled_appointment", "lost", "not_qualified"].map((s) => (
-                  <button key={s} onClick={() => handleStageChange(s)} className={`text-xs px-3 py-1 rounded-full border transition-colors ${currentStatus === s ? "bg-primary text-primary-foreground border-primary" : "hover:bg-muted border-border"}`}>
+                  <button key={s} onClick={() => handleStageChange(s)}
+                    className={`text-xs px-3 py-1 rounded-full border transition-colors ${currentStatus === s ? "bg-primary text-primary-foreground border-primary" : "hover:bg-muted border-border"}`}>
                     {statusLabels[s]}
                   </button>
                 ))}
