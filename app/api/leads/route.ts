@@ -9,10 +9,45 @@ export async function POST(req: Request) {
 
   const body = await req.json();
 
+  // ─── Duplicate check (phone) ───────────────────────────────────────────────
+  // Skip if caller explicitly sets force: true (user clicked "Add Anyway")
+  if (body.phone && !body.force) {
+    // Normalize to digits only so (201) 555-0000 matches 2015550000
+    const digits = body.phone.replace(/\D/g, "");
+
+    if (digits.length >= 7) {
+      // Match against stored phone values — stored as formatted OR raw digits
+      // Use ilike with the last 10 digits to be safe across formats
+      const { data: existing } = await supabase
+        .from("leads")
+        .select("id, lead_name, status, created_at, phone, archived")
+        .or(`phone.ilike.%${digits}%,phone.ilike.%${body.phone}%`)
+        .neq("archived", true)
+        .limit(1)
+        .maybeSingle();
+
+      if (existing) {
+        return NextResponse.json(
+          {
+            duplicate: true,
+            existing: {
+              id:         existing.id,
+              name:       existing.lead_name || "Unnamed Lead",
+              status:     existing.status    || "unknown",
+              phone:      existing.phone     || body.phone,
+              created_at: existing.created_at,
+            },
+          },
+          { status: 409 }
+        );
+      }
+    }
+  }
+
+  // ─── Source lookup ─────────────────────────────────────────────────────────
   // ⚠️ NEVER insert first_name or last_name — they are GENERATED ALWAYS columns
   // Postgres auto-computes them from lead_name via split_part()
 
-  // If lead_source string is provided (e.g. "LSA"), look up the source_id
   let source_id = body.source_id || null;
   if (!source_id && body.lead_source) {
     const { data: src } = await supabase
@@ -24,6 +59,7 @@ export async function POST(req: Request) {
     source_id = src?.id || null;
   }
 
+  // ─── Insert ────────────────────────────────────────────────────────────────
   const { data, error } = await supabase.from("leads").insert([
     {
       // ✅ Required — first_name/last_name auto-generate from this
@@ -34,7 +70,6 @@ export async function POST(req: Request) {
       email:                  body.email || null,
 
       // ✅ Lead received date — passed from Add Lead modal date picker
-      // Without this line, Supabase ignores the selected date and stamps now()
       created_at:             body.created_at || new Date().toISOString(),
 
       // Address — correct column names from schema
