@@ -15,11 +15,6 @@ const JOB_TYPES = [
   "Windows","Painting","Masonry","Stucco","Chimney","Other",
 ];
 
-const PAYMENT_METHODS = [
-  "Cash","Check","Credit Card","Zelle",
-  "Sunlight Financial","Upgrade",
-];
-
 const SALESPEOPLE = ["Ron","Ray"];
 
 function formatPhone(value: string) {
@@ -41,35 +36,38 @@ interface AddLeadModalProps {
 export default function AddLeadModal({ open: externalOpen, onOpenChange }: AddLeadModalProps = {}) {
   const [internalOpen, setInternalOpen] = useState(false);
 
-  // Use external control if provided, otherwise internal
   const open = externalOpen !== undefined ? externalOpen : internalOpen;
   const setOpen = (val: boolean) => {
     if (onOpenChange) onOpenChange(val);
     else setInternalOpen(val);
   };
+
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
   const [zipLooking, setZipLooking] = useState(false);
 
-  const [form, setForm] = useState({
-    first_name: "",
-    last_name: "",
-    phone: "",
-    email: "",
-    client_address: "",   // ✅ matches schema
-    client_city: "",       // ✅ matches schema
-    client_state: "",      // ✅ matches schema
-    client_zip: "",        // ✅ matches schema
-    lead_source: "",
-    job_type: "",
-    salesperson: "",
-    estimated_amount: "",
-    payment_method: "",
-    notes: "",
-    date_received: todayStr(), // ✅ NEW: lead received date
-  });
+  // ✅ Removed: estimated_amount, payment_method
+  const emptyForm = {
+    date_received:   todayStr(),
+    first_name:      "",
+    last_name:       "",
+    phone:           "",
+    email:           "",
+    client_address:  "",
+    client_city:     "",
+    client_state:    "",
+    client_zip:      "",
+    lead_source:     "",
+    job_type:        "",
+    salesperson:     "",
+    notes:           "",
+  };
 
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
+  const [form, setForm] = useState(emptyForm);
+
+  const handleChange = (
+    e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>
+  ) => {
     const { name, value } = e.target;
     if (name === "phone") {
       setForm({ ...form, phone: formatPhone(value) });
@@ -89,8 +87,8 @@ export default function AddLeadModal({ open: externalOpen, onOpenChange }: AddLe
         if (place) {
           setForm(prev => ({
             ...prev,
-            client_city:  place["place name"]           || prev.client_city,
-            client_state: place["state abbreviation"]   || prev.client_state,
+            client_city:  place["place name"]          || prev.client_city,
+            client_state: place["state abbreviation"]  || prev.client_state,
           }));
         }
       }
@@ -110,29 +108,25 @@ export default function AddLeadModal({ open: externalOpen, onOpenChange }: AddLe
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          lead_name:     full_name || form.phone,
-          phone:         form.phone         || null,
-          email:         form.email         || null,
-          // ✅ correct schema column names
+          lead_name:      full_name || form.phone,
+          phone:          form.phone          || null,
+          email:          form.email          || null,
           client_address: form.client_address || null,
           client_city:    form.client_city    || null,
           client_state:   form.client_state   || null,
           client_zip:     form.client_zip     || null,
-          // source — API route resolves by name
-          lead_source:   form.lead_source    || null,
-          // metadata fields
-          meta_job_type:       form.job_type       || null,
-          meta_salesperson:    form.salesperson     || null,
-          meta_notes:          form.notes           || null,
-          meta_payment_method: form.payment_method  || null,
-          initial_contract_value: form.estimated_amount ? Number(form.estimated_amount) : 0,
-          // ✅ lead received date
-          created_at:    form.date_received
+          lead_source:    form.lead_source    || null,
+          meta_job_type:     form.job_type    || null,
+          meta_salesperson:  form.salesperson || null,
+          meta_notes:        form.notes       || null,
+          // ✅ Removed: meta_payment_method, initial_contract_value
+          // These are set later in the lead detail dialog
+          created_at: form.date_received
             ? new Date(form.date_received + "T00:00:00").toISOString()
             : new Date().toISOString(),
-          status:        "new_lead",
-          archived:      false,
-          bad_lead:      false,
+          status:   "new_lead",
+          archived: false,
+          bad_lead: false,
         }),
       });
       const data = await res.json();
@@ -141,13 +135,7 @@ export default function AddLeadModal({ open: externalOpen, onOpenChange }: AddLe
         setTimeout(() => {
           setSuccess(false);
           setOpen(false);
-          setForm({
-            first_name: "", last_name: "", phone: "", email: "",
-            client_address: "", client_city: "", client_state: "", client_zip: "",
-            lead_source: "", job_type: "", salesperson: "",
-            estimated_amount: "", payment_method: "", notes: "",
-            date_received: todayStr(),
-          });
+          setForm(emptyForm);
         }, 1500);
       } else {
         alert("Error: " + (data.error || "Unknown error"));
@@ -159,7 +147,6 @@ export default function AddLeadModal({ open: externalOpen, onOpenChange }: AddLe
     }
   };
 
-  // Standalone trigger button (only shown when not externally controlled)
   const TriggerButton = externalOpen === undefined ? (
     <Button
       size="sm"
@@ -180,12 +167,13 @@ export default function AddLeadModal({ open: externalOpen, onOpenChange }: AddLe
         <div className="fixed inset-0 flex items-center justify-center bg-black/50 z-[100] p-4">
           <div className="bg-background rounded-xl border border-border shadow-xl p-6 w-full max-w-md max-h-[90vh] overflow-y-auto space-y-3">
 
-            {/* Success State */}
             {success ? (
               <div className="flex flex-col items-center justify-center py-8 gap-3">
                 <CheckCircle className="h-12 w-12 text-emerald-500" />
                 <p className="text-lg font-semibold text-emerald-600">Lead Saved!</p>
-                <p className="text-sm text-muted-foreground">The lead has been added to your pipeline.</p>
+                <p className="text-sm text-muted-foreground">
+                  The lead has been added to your pipeline.
+                </p>
               </div>
             ) : (
               <>
@@ -195,7 +183,7 @@ export default function AddLeadModal({ open: externalOpen, onOpenChange }: AddLe
 
                 <div className="grid grid-cols-2 gap-3">
 
-                  {/* ✅ Date Received — first field, most important */}
+                  {/* Lead Received Date */}
                   <div className="col-span-2">
                     <label className="text-xs text-muted-foreground mb-1 block font-medium">
                       Lead Received Date
@@ -332,8 +320,8 @@ export default function AddLeadModal({ open: externalOpen, onOpenChange }: AddLe
                     </select>
                   </div>
 
-                  {/* Salesperson + Estimated Amount */}
-                  <div>
+                  {/* Salesperson — full width at creation */}
+                  <div className="col-span-2">
                     <label className="text-xs text-muted-foreground mb-1 block">Salesperson</label>
                     <select
                       name="salesperson"
@@ -343,31 +331,6 @@ export default function AddLeadModal({ open: externalOpen, onOpenChange }: AddLe
                     >
                       <option value="">Select</option>
                       {SALESPEOPLE.map(s => <option key={s} value={s}>{s}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="text-xs text-muted-foreground mb-1 block">Estimated Amount ($)</label>
-                    <input
-                      name="estimated_amount"
-                      type="number"
-                      placeholder="0"
-                      value={form.estimated_amount}
-                      onChange={handleChange}
-                      className="w-full border border-border rounded-md p-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/40"
-                    />
-                  </div>
-
-                  {/* Payment Method */}
-                  <div className="col-span-2">
-                    <label className="text-xs text-muted-foreground mb-1 block">Payment Method</label>
-                    <select
-                      name="payment_method"
-                      value={form.payment_method}
-                      onChange={handleChange}
-                      className="w-full border border-border rounded-md p-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/40"
-                    >
-                      <option value="">Select payment method</option>
-                      {PAYMENT_METHODS.map(p => <option key={p} value={p}>{p}</option>)}
                     </select>
                   </div>
 
