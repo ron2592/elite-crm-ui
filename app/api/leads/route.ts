@@ -27,28 +27,32 @@ export async function POST(req: Request) {
   const { data, error } = await supabase.from("leads").insert([
     {
       // ✅ Required — first_name/last_name auto-generate from this
-      lead_name:               body.lead_name || "LSA Lead",
+      lead_name:              body.lead_name || "LSA Lead",
 
       // Contact
-      phone:                   body.phone    || null,
-      email:                   body.email    || null,
+      phone:                  body.phone || null,
+      email:                  body.email || null,
+
+      // ✅ Lead received date — passed from Add Lead modal date picker
+      // Without this line, Supabase ignores the selected date and stamps now()
+      created_at:             body.created_at || new Date().toISOString(),
 
       // Address — correct column names from schema
-      client_address:          body.client_address  || body.address_line_1 || null,
-      client_city:             body.client_city     || body.city           || null,
-      client_state:            body.client_state    || body.state          || null,
-      client_zip:              body.client_zip      || body.postal_code    || body.zip || null,
+      client_address:         body.client_address  || body.address_line_1 || null,
+      client_city:            body.client_city     || body.city           || null,
+      client_state:           body.client_state    || body.state          || null,
+      client_zip:             body.client_zip      || body.postal_code    || body.zip || null,
 
       // Lead classification
-      source_id:               source_id,
-      status:                  body.status       || "new_lead",
-      contact_type:            body.contact_type || null,
-      lsa_status:              body.lsa_status   || null,
-      bad_lead:                body.bad_lead     || false,
-      archived:                false,
+      source_id:              source_id,
+      status:                 body.status       || "new_lead",
+      contact_type:           body.contact_type || null,
+      lsa_status:             body.lsa_status   || null,
+      bad_lead:               body.bad_lead     || false,
+      archived:               false,
 
       // Revenue
-      initial_contract_value:  body.initial_contract_value || 0,
+      initial_contract_value: body.initial_contract_value || 0,
 
       // Metadata (salesperson, job_type, notes all go here)
       metadata: {
