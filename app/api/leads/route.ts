@@ -1,6 +1,15 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
+// ✅ Always normalize phone to (XXX) XXX-XXXX format
+function normalizePhone(raw: string): string {
+  const digits = raw.replace(/\D/g, "").slice(0, 10);
+  if (digits.length === 10) {
+    return `(${digits.slice(0,3)}) ${digits.slice(3,6)}-${digits.slice(6)}`;
+  }
+  return raw; // return as-is if not 10 digits (e.g. international)
+}
+
 export async function POST(req: Request) {
   const supabase = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -9,45 +18,76 @@ export async function POST(req: Request) {
 
   const body = await req.json();
 
-  // ─── Duplicate check (phone) ───────────────────────────────────────────────
-  // Skip if caller explicitly sets force: true (user clicked "Add Anyway")
+  // ─── Duplicate check ────────────────────────────────────────────────────────
   if (body.phone && !body.force) {
-    // Normalize to digits only so (201) 555-0000 matches 2015550000
-    const digits = body.phone.replace(/\D/g, "");
+    // ✅ Normalize BOTH the input and what we search for
+    // This ensures "(857) 415-8990" matches "(857) 415-8990" exactly
+    const normalizedInput = normalizePhone(body.phone);
+    const rawInput        = body.phone;
 
-    if (digits.length >= 7) {
-      // Match against stored phone values — stored as formatted OR raw digits
-      // Use ilike with the last 10 digits to be safe across formats
-      const { data: existing } = await supabase
+    // Strategy: search for normalized format AND raw input
+    // Uses .eq() (exact match) which is reliable with special characters
+    let existingLead: any = null;
+
+    // Try exact match on normalized format first
+    const { data: match1 } = await supabase
+      .from("leads")
+      .select("id, lead_name, status, phone")
+      .eq("phone", normalizedInput)
+      .neq("archived", true)
+      .limit(1)
+      .maybeSingle();
+
+    existingLead = match1;
+
+    // If not found, try exact match on raw input (in case stored differently)
+    if (!existingLead && rawInput !== normalizedInput) {
+      const { data: match2 } = await supabase
         .from("leads")
-        .select("id, lead_name, status, created_at, phone, archived")
-        .or(`phone.ilike.%${digits}%,phone.ilike.%${body.phone}%`)
+        .select("id, lead_name, status, phone")
+        .eq("phone", rawInput)
         .neq("archived", true)
         .limit(1)
         .maybeSingle();
+      existingLead = match2;
+    }
 
-      if (existing) {
-        return NextResponse.json(
-          {
-            duplicate: true,
-            existing: {
-              id:         existing.id,
-              name:       existing.lead_name || "Unnamed Lead",
-              status:     existing.status    || "unknown",
-              phone:      existing.phone     || body.phone,
-              created_at: existing.created_at,
-            },
-          },
-          { status: 409 }
-        );
+    // If still not found, do a digit-normalized comparison on recent leads
+    // (catches leads stored in any format — last resort, limited to 200 rows)
+    if (!existingLead) {
+      const inputDigits = body.phone.replace(/\D/g, "");
+      if (inputDigits.length >= 7) {
+        const { data: candidates } = await supabase
+          .from("leads")
+          .select("id, lead_name, status, phone")
+          .neq("archived", true)
+          .order("created_at", { ascending: false })
+          .limit(200);
+
+        existingLead = (candidates || []).find((l: any) =>
+          l.phone?.replace(/\D/g, "") === inputDigits
+        ) || null;
       }
+    }
+
+    if (existingLead) {
+      return NextResponse.json(
+        {
+          duplicate: true,
+          existing: {
+            id:         existingLead.id,
+            name:       existingLead.lead_name || "Unnamed Lead",
+            status:     existingLead.status    || "unknown",
+            phone:      existingLead.phone     || body.phone,
+            created_at: existingLead.created_at,
+          },
+        },
+        { status: 409 }
+      );
     }
   }
 
-  // ─── Source lookup ─────────────────────────────────────────────────────────
-  // ⚠️ NEVER insert first_name or last_name — they are GENERATED ALWAYS columns
-  // Postgres auto-computes them from lead_name via split_part()
-
+  // ─── Source lookup ──────────────────────────────────────────────────────────
   let source_id = body.source_id || null;
   if (!source_id && body.lead_source) {
     const { data: src } = await supabase
@@ -59,20 +99,20 @@ export async function POST(req: Request) {
     source_id = src?.id || null;
   }
 
-  // ─── Insert ────────────────────────────────────────────────────────────────
+  // ─── Insert ─────────────────────────────────────────────────────────────────
   const { data, error } = await supabase.from("leads").insert([
     {
-      // ✅ Required — first_name/last_name auto-generate from this
+      // ✅ NEVER insert first_name/last_name — GENERATED ALWAYS columns
       lead_name:              body.lead_name || "LSA Lead",
 
-      // Contact
-      phone:                  body.phone || null,
+      // ✅ Normalize phone before storing so future dedup is reliable
+      phone:                  body.phone ? normalizePhone(body.phone) : null,
       email:                  body.email || null,
 
-      // ✅ Lead received date — passed from Add Lead modal date picker
+      // ✅ Lead received date
       created_at:             body.created_at || new Date().toISOString(),
 
-      // Address — correct column names from schema
+      // Address
       client_address:         body.client_address  || body.address_line_1 || null,
       client_city:            body.client_city     || body.city           || null,
       client_state:           body.client_state    || body.state          || null,
@@ -89,7 +129,7 @@ export async function POST(req: Request) {
       // Revenue
       initial_contract_value: body.initial_contract_value || 0,
 
-      // Metadata (salesperson, job_type, notes all go here)
+      // Metadata
       metadata: {
         salesperson: body.meta_salesperson || body.salesperson || null,
         job_type:    body.meta_job_type    || body.job_type    || null,

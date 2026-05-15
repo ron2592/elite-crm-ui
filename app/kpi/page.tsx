@@ -39,7 +39,10 @@ function fmt$(n: number) {
   if (n >= 1000) return '$' + (n / 1000).toFixed(1).replace(/\.0$/, '') + 'k'
   return '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
-function pct(a: number, b: number) { return b === 0 ? '—' : Math.round((a / b) * 100) + '%' }
+// ✅ FIXED: close rate uses appointments as denominator
+function closeRatePct(won: number, appts: number) {
+  return appts === 0 ? '—' : Math.round((won / appts) * 100) + '%'
+}
 function todayStr() { return new Date().toISOString().split('T')[0] }
 
 function ExpandMetric({ label, value, color = '', children }: {
@@ -115,8 +118,6 @@ export default function KPIPage() {
   const [spendForm, setSpendForm] = useState({ source_id: '', amount: '', period_start: todayStr(), period_end: todayStr() })
   const [savingSpend, setSavingSpend] = useState(false)
   const [deletingSpendId, setDeletingSpendId] = useState<string | null>(null)
-
-  // ✅ NEW: tracks which source rows are expanded in the spend panel
   const [expandedSpendSrc, setExpandedSpendSrc] = useState<Record<string, boolean>>({})
 
   const range = useMemo(() => {
@@ -137,7 +138,6 @@ export default function KPIPage() {
   async function fetchAll() {
     setLoading(true)
     const { start, end } = range
-
     const spendStart = start.split('T')[0]
     const spendEnd   = viewMode === 'monthly'
       ? new Date(year, month + 1, 1).toISOString().split('T')[0]
@@ -234,127 +234,80 @@ export default function KPIPage() {
   const spendBySrc = useMemo(() => {
     if (viewMode === 'weekly') {
       return spend.map(row => ({
-        id:           row.id,
-        name:         (row.lead_sources as any)?.name || row.source_name || 'Unknown',
-        amount:       Number(row.amount_spent),
-        source_id:    row.source_id,
-        period_start: row.period_start,
-        period_end:   row.period_end || row.period_start,
+        id: row.id, name: (row.lead_sources as any)?.name || row.source_name || 'Unknown',
+        amount: Number(row.amount_spent), source_id: row.source_id,
+        period_start: row.period_start, period_end: row.period_end || row.period_start,
       })).sort((a, b) => a.period_start.localeCompare(b.period_start))
     }
-    const map: Record<string, { id: string; name: string; amount: number; source_id: string | null; period_start: string; period_end: string }> = {}
+    const map: Record<string, any> = {}
     spend.forEach(row => {
       const key  = row.source_id || row.source_name || 'unknown'
       const name = (row.lead_sources as any)?.name || row.source_name || 'Unknown'
       if (!map[key]) map[key] = { id: row.id, name, amount: 0, source_id: row.source_id, period_start: row.period_start, period_end: row.period_end || row.period_start }
       map[key].amount += Number(row.amount_spent || 0)
-      if (row.period_start > map[key].period_start) {
-        map[key].id           = row.id
-        map[key].period_start = row.period_start
-        map[key].period_end   = row.period_end || row.period_start
-      }
     })
-    return Object.values(map).sort((a, b) => b.amount - a.amount)
+    return Object.values(map).sort((a: any, b: any) => b.amount - a.amount)
   }, [spend, viewMode])
 
   const srcList = Object.values(kpi.bySrc).sort((a, b) => b.total - a.total)
 
   const insightsData: InsightData = useMemo(() => ({
-    totalLeads:      kpi.total,
-    totalAppts:      kpi.inPerson,
-    totalPhoneQ:     kpi.phoneQ,
-    totalWon:        kpi.wonCount,
-    totalContracted: kpi.contracted + kpi.coVolume,
-    totalSpend:      kpi.totalSpend,
-    period:          periodLabel,
-    viewMode,
+    totalLeads: kpi.total, totalAppts: kpi.inPerson, totalPhoneQ: kpi.phoneQ,
+    totalWon: kpi.wonCount, totalContracted: kpi.contracted + kpi.coVolume,
+    totalSpend: kpi.totalSpend, period: periodLabel, viewMode,
     sources: srcList.map(src => {
-      const srcSpendRow = spendBySrc.find(s => {
-        const key = Object.keys(kpi.bySrc).find(k => kpi.bySrc[k] === src)
-        return s.source_id === key
-      })
+      const srcSpendRow = spendBySrc.find(s => { const key = Object.keys(kpi.bySrc).find(k => kpi.bySrc[k] === src); return s.source_id === key })
       return { name: src.name, leads: src.total, inPerson: src.inPerson, won: src.won, contracted: src.contracted, spend: srcSpendRow?.amount || 0 }
     }),
     trend: trend.map(t => ({ label: t.label, contracted: t.contracted, leads: t.leads })),
   }), [kpi, periodLabel, viewMode, srcList, spendBySrc, trend])
+
+  const spendGrouped = useMemo(() => {
+    const grouped: Record<string, any> = {}
+    const filteredSpend = spend.filter(row => !filterSrc || row.source_id === filterSrc)
+    let colorIndex = 0
+    filteredSpend.forEach(row => {
+      const key  = row.source_id || row.source_name || 'unknown'
+      const name = (row.lead_sources as any)?.name || row.source_name || 'Unknown'
+      if (!grouped[key]) {
+        grouped[key] = { source_id: row.source_id, name, color: SRC_COLORS[colorIndex++ % SRC_COLORS.length], total: 0, entries: [], lsaCharged: kpi.bySrc[row.source_id || '']?.lsaCharged ?? 0 }
+      }
+      grouped[key].total += Number(row.amount_spent || 0)
+      grouped[key].entries.push(row)
+    })
+    return Object.values(grouped).sort((a: any, b: any) => b.total - a.total)
+  }, [spend, filterSrc, kpi.bySrc])
+
+  const grandTotalSpend = spendGrouped.reduce((s: number, g: any) => s + g.total, 0)
 
   async function handleAddSpend() {
     if (!spendForm.amount || Number(spendForm.amount) <= 0) return
     setSavingSpend(true)
     const src = sources.find(s => s.id === spendForm.source_id)
     await supabase.from('marketing_spend').insert({
-      period_start: spendForm.period_start,
-      period_end:   spendForm.period_end,
-      source_id:    spendForm.source_id || null,
-      source_name:  src?.name || null,
+      period_start: spendForm.period_start, period_end: spendForm.period_end,
+      source_id: spendForm.source_id || null, source_name: src?.name || null,
       amount_spent: Number(spendForm.amount),
     })
     setSpendForm({ source_id: '', amount: '', period_start: todayStr(), period_end: todayStr() })
-    setShowSpendForm(false)
-    setSavingSpend(false)
-    fetchAll()
+    setShowSpendForm(false); setSavingSpend(false); fetchAll()
   }
 
   async function handleDeleteSpend(id: string) {
     setDeletingSpendId(id)
     await supabase.from('marketing_spend').delete().eq('id', id)
-    setDeletingSpendId(null)
-    fetchAll()
+    setDeletingSpendId(null); fetchAll()
   }
 
-  function prevPeriod() {
-    if (viewMode === 'monthly') {
-      if (month === 0) { setMonth(11); setYear(y => y - 1) } else setMonth(m => m - 1)
-    }
-  }
-  function nextPeriod() {
-    if (viewMode === 'monthly') {
-      if (month === 11) { setMonth(0); setYear(y => y + 1) } else setMonth(m => m + 1)
-    }
-  }
+  function prevPeriod() { if (viewMode === 'monthly') { if (month === 0) { setMonth(11); setYear(y => y - 1) } else setMonth(m => m - 1) } }
+  function nextPeriod() { if (viewMode === 'monthly') { if (month === 11) { setMonth(0); setYear(y => y + 1) } else setMonth(m => m + 1) } }
 
   const maxRev = Math.max(...srcList.map(s => s.contracted), 1)
-
-  // ✅ Build grouped spend data for the collapsed display
-  const spendGrouped = useMemo(() => {
-    const grouped: Record<string, {
-      source_id: string | null
-      name: string
-      color: string
-      total: number
-      entries: SpendRow[]
-      lsaCharged: number
-    }> = {}
-
-    const filteredSpend = spend.filter(row => !filterSrc || row.source_id === filterSrc)
-    let colorIndex = 0
-
-    filteredSpend.forEach(row => {
-      const key  = row.source_id || row.source_name || 'unknown'
-      const name = (row.lead_sources as any)?.name || row.source_name || 'Unknown'
-      if (!grouped[key]) {
-        grouped[key] = {
-          source_id:  row.source_id,
-          name,
-          color:      SRC_COLORS[colorIndex++ % SRC_COLORS.length],
-          total:      0,
-          entries:    [],
-          lsaCharged: kpi.bySrc[row.source_id || '']?.lsaCharged ?? 0,
-        }
-      }
-      grouped[key].total += Number(row.amount_spent || 0)
-      grouped[key].entries.push(row)
-    })
-
-    return Object.values(grouped).sort((a, b) => b.total - a.total)
-  }, [spend, filterSrc, kpi.bySrc])
-
-  const grandTotalSpend = spendGrouped.reduce((s, g) => s + g.total, 0)
 
   return (
     <div className="p-6 max-w-6xl mx-auto space-y-5">
 
-      {/* ── Header ── */}
+      {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-center gap-3">
           <button onClick={() => router.push('/dashboard')}
@@ -371,8 +324,6 @@ export default function KPIPage() {
             className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md border border-border hover:bg-muted text-muted-foreground">
             <Printer className="h-3.5 w-3.5" /> Export PDF
           </button>
-
-          {/* KPI View Dropdown */}
           <div className="relative">
             <button onClick={() => setKpiDropdownOpen(v => !v)}
               className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md border border-border hover:bg-muted text-muted-foreground font-medium">
@@ -396,8 +347,6 @@ export default function KPIPage() {
               </div>
             )}
           </div>
-
-          {/* Period navigation */}
           <div className="flex items-center gap-1 rounded-lg border border-border px-2 py-1">
             {viewMode === 'monthly' ? (
               <>
@@ -411,11 +360,11 @@ export default function KPIPage() {
                 <span className="text-xs text-muted-foreground">From</span>
                 <input type="date" value={customStart}
                   onChange={e => { setCustomStart(e.target.value); if (e.target.value > customEnd) setCustomEnd(e.target.value) }}
-                  className="text-xs rounded border border-border bg-background px-2 py-1 focus:outline-none focus:ring-1 focus:ring-primary/40" />
+                  className="text-xs rounded border border-border bg-background px-2 py-1 focus:outline-none" />
                 <span className="text-xs text-muted-foreground">To</span>
                 <input type="date" value={customEnd} min={customStart}
                   onChange={e => setCustomEnd(e.target.value)}
-                  className="text-xs rounded border border-border bg-background px-2 py-1 focus:outline-none focus:ring-1 focus:ring-primary/40" />
+                  className="text-xs rounded border border-border bg-background px-2 py-1 focus:outline-none" />
                 <button onClick={() => {
                     const now = new Date()
                     const mon = new Date(now); mon.setDate(now.getDate() - ((now.getDay() + 6) % 7))
@@ -455,14 +404,12 @@ export default function KPIPage() {
       ) : (
         <div className="space-y-5">
 
-          {/* ── 1. MARKETING SPEND ── */}
+          {/* 1. MARKETING SPEND */}
           <div className="rounded-xl border-2 border-primary/30 bg-primary/5 overflow-hidden">
-
-            {/* Header */}
             <div className="px-6 py-4 border-b border-primary/20 flex items-center justify-between">
               <div>
                 <p className="text-base font-bold text-primary">Marketing Spend</p>
-                <p className="text-xs text-muted-foreground mt-0.5">{periodLabel} · {filterSrc ? spendGrouped.find(g => g.source_id === filterSrc)?.name || 'Filtered source' : 'All sources'}</p>
+                <p className="text-xs text-muted-foreground mt-0.5">{periodLabel} · {filterSrc ? spendGrouped.find((g: any) => g.source_id === filterSrc)?.name || 'Filtered source' : 'All sources'}</p>
               </div>
               <div className="flex items-center gap-4">
                 <div className="text-right">
@@ -476,166 +423,98 @@ export default function KPIPage() {
               </div>
             </div>
 
-            {/* Log Spend Form */}
             {showSpendForm && (
               <div className="px-6 py-4 border-b border-primary/20 bg-primary/5">
                 <p className="text-xs font-semibold text-primary uppercase tracking-wide mb-3">Add Spend</p>
                 <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-                  <div>
-                    <label className="text-xs text-muted-foreground block mb-1">From</label>
-                    <input type="date" value={spendForm.period_start}
-                      onChange={e => setSpendForm({...spendForm, period_start: e.target.value})}
-                      className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" />
-                  </div>
-                  <div>
-                    <label className="text-xs text-muted-foreground block mb-1">To</label>
-                    <input type="date" value={spendForm.period_end} min={spendForm.period_start}
-                      onChange={e => setSpendForm({...spendForm, period_end: e.target.value})}
-                      className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" />
-                  </div>
-                  <div>
-                    <label className="text-xs text-muted-foreground block mb-1">Source</label>
+                  <div><label className="text-xs text-muted-foreground block mb-1">From</label>
+                    <input type="date" value={spendForm.period_start} onChange={e => setSpendForm({...spendForm, period_start: e.target.value})}
+                      className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none" /></div>
+                  <div><label className="text-xs text-muted-foreground block mb-1">To</label>
+                    <input type="date" value={spendForm.period_end} min={spendForm.period_start} onChange={e => setSpendForm({...spendForm, period_end: e.target.value})}
+                      className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none" /></div>
+                  <div><label className="text-xs text-muted-foreground block mb-1">Source</label>
                     <select value={spendForm.source_id} onChange={e => setSpendForm({...spendForm, source_id: e.target.value})}
-                      className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40">
+                      className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none">
                       <option value="">— Select —</option>
                       {sources.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="text-xs text-muted-foreground block mb-1">Amount ($)</label>
-                    <input type="number" placeholder="0.00" value={spendForm.amount}
-                      onChange={e => setSpendForm({...spendForm, amount: e.target.value})}
-                      className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" />
-                  </div>
+                    </select></div>
+                  <div><label className="text-xs text-muted-foreground block mb-1">Amount ($)</label>
+                    <input type="number" placeholder="0.00" value={spendForm.amount} onChange={e => setSpendForm({...spendForm, amount: e.target.value})}
+                      className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none" /></div>
                   <div className="flex items-end gap-2">
                     <button onClick={handleAddSpend} disabled={savingSpend || !spendForm.amount || !spendForm.period_start}
-                      className="flex-1 flex items-center justify-center gap-1.5 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-40 transition-colors">
+                      className="flex-1 flex items-center justify-center gap-1.5 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground disabled:opacity-40">
                       <Save className="h-3.5 w-3.5" /> {savingSpend ? 'Saving...' : 'Save'}
                     </button>
-                    <button onClick={() => setShowSpendForm(false)}
-                      className="rounded-md border border-border px-3 py-2 text-sm hover:bg-muted transition-colors">Cancel</button>
+                    <button onClick={() => setShowSpendForm(false)} className="rounded-md border border-border px-3 py-2 text-sm hover:bg-muted">Cancel</button>
                   </div>
                 </div>
-                <p className="text-xs text-muted-foreground mt-2">
-                  Tip: Log each week separately per source. e.g. LSA Clifton May 1–7 = $259.50
-                </p>
+                <p className="text-xs text-muted-foreground mt-2">Tip: Log each week separately per source.</p>
               </div>
             )}
 
-            {/* ── Collapsed-by-source spend display ── */}
+            {/* Collapsed spend panel */}
             <div className="px-6 py-4">
               {spendGrouped.length === 0 ? (
-                <p className="text-sm text-muted-foreground text-center py-2">
-                  No spend logged for {periodLabel}. Click &quot;Log Spend&quot; to add.
-                </p>
+                <p className="text-sm text-muted-foreground text-center py-2">No spend logged for {periodLabel}.</p>
               ) : (
                 <div className="rounded-lg border border-border/60 overflow-hidden divide-y divide-border/60 bg-background">
-
-                  {spendGrouped.map(group => {
-                    const isOpen  = !!expandedSpendSrc[group.source_id || group.name]
-                    const cpl     = group.lsaCharged > 0 ? group.total / group.lsaCharged : 0
-                    const notCharged = (kpi.bySrc[group.source_id || '']?.total ?? 0) - group.lsaCharged
-
+                  {(spendGrouped as any[]).map((group: any) => {
+                    const isOpen      = !!expandedSpendSrc[group.source_id || group.name]
+                    const cpl         = group.lsaCharged > 0 ? group.total / group.lsaCharged : 0
+                    const notCharged  = (kpi.bySrc[group.source_id || '']?.total ?? 0) - group.lsaCharged
                     return (
                       <div key={group.source_id || group.name}>
-
-                        {/* Source summary row — always visible */}
-                        <button
-                          onClick={() =>
-                            setExpandedSpendSrc(prev => ({
-                              ...prev,
-                              [group.source_id || group.name]: !prev[group.source_id || group.name],
-                            }))
-                          }
-                          className="w-full flex items-center gap-3 px-4 py-3.5 hover:bg-muted/30 transition-colors text-left"
-                        >
-                          {/* Chevron */}
+                        <button onClick={() => setExpandedSpendSrc(prev => ({ ...prev, [group.source_id || group.name]: !prev[group.source_id || group.name] }))}
+                          className="w-full flex items-center gap-3 px-4 py-3.5 hover:bg-muted/30 transition-colors text-left">
                           <span className="text-muted-foreground shrink-0">
-                            {isOpen
-                              ? <ChevronUp   className="h-4 w-4" />
-                              : <ChevronDown className="h-4 w-4" />}
+                            {isOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
                           </span>
-
-                          {/* Color dot + source name */}
                           <span className="h-2.5 w-2.5 rounded-full shrink-0" style={{ backgroundColor: group.color }} />
                           <span className="text-sm font-semibold flex-1 min-w-0 truncate">{group.name}</span>
-
-                          {/* LSA status pills */}
                           <div className="hidden sm:flex items-center gap-2 mr-4">
-                            {group.lsaCharged > 0 && (
-                              <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 font-medium dark:bg-emerald-900/30 dark:text-emerald-400">
-                                {group.lsaCharged} charged
-                              </span>
-                            )}
-                            {notCharged > 0 && (
-                              <span className="text-xs px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 font-medium">
-                                {notCharged} not charged
-                              </span>
-                            )}
+                            {group.lsaCharged > 0 && <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 font-medium">{group.lsaCharged} charged</span>}
+                            {notCharged > 0 && <span className="text-xs px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 font-medium">{notCharged} not charged</span>}
                           </div>
-
-                          {/* Cost per charged lead */}
                           <div className="text-right shrink-0 mr-5 hidden sm:block">
                             <p className="text-xs text-muted-foreground">Cost / charged lead</p>
                             <p className="text-sm font-semibold">{cpl > 0 ? fmt$(cpl) : '—'}</p>
                           </div>
-
-                          {/* Total spend */}
                           <div className="text-right shrink-0">
                             <p className="text-xs text-muted-foreground">Spent</p>
                             <p className="text-sm font-bold">{fmt$(group.total)}</p>
                           </div>
                         </button>
-
-                        {/* Weekly entries — shown when expanded */}
                         {isOpen && (
                           <div className="bg-muted/10 border-t border-border/40 divide-y divide-border/30">
-                            {group.entries
-                              .slice()
-                              .sort((a, b) => a.period_start.localeCompare(b.period_start))
-                              .map(entry => {
-                                const isDeleting = deletingSpendId === entry.id
-                                const dateLabel  =
-                                  !entry.period_end || entry.period_start === entry.period_end
-                                    ? entry.period_start
-                                    : `${entry.period_start} – ${entry.period_end}`
-                                return (
-                                  <div key={entry.id} className="flex items-center gap-3 px-4 py-2.5 pl-12 group/row">
-                                    <span className="text-xs text-muted-foreground w-48 shrink-0">{dateLabel}</span>
-                                    <span className="text-sm font-semibold flex-1">{fmt$(Number(entry.amount_spent))}</span>
-                                    <button
-                                      onClick={() => handleDeleteSpend(entry.id)}
-                                      disabled={isDeleting}
-                                      className="opacity-0 group-hover/row:opacity-100 text-muted-foreground hover:text-red-500 transition-all disabled:opacity-50"
-                                      title="Delete entry"
-                                    >
-                                      {isDeleting
-                                        ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                        : <Trash2  className="h-3.5 w-3.5" />}
-                                    </button>
-                                  </div>
-                                )
-                              })}
-
-                            {/* Source subtotal */}
+                            {group.entries.slice().sort((a: any, b: any) => a.period_start.localeCompare(b.period_start)).map((entry: any) => {
+                              const isDeleting = deletingSpendId === entry.id
+                              const dl = !entry.period_end || entry.period_start === entry.period_end ? entry.period_start : `${entry.period_start} – ${entry.period_end}`
+                              return (
+                                <div key={entry.id} className="flex items-center gap-3 px-4 py-2.5 pl-12 group/row">
+                                  <span className="text-xs text-muted-foreground w-48 shrink-0">{dl}</span>
+                                  <span className="text-sm font-semibold flex-1">{fmt$(Number(entry.amount_spent))}</span>
+                                  <button onClick={() => handleDeleteSpend(entry.id)} disabled={isDeleting}
+                                    className="opacity-0 group-hover/row:opacity-100 text-muted-foreground hover:text-red-500 transition-all disabled:opacity-50">
+                                    {isDeleting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                                  </button>
+                                </div>
+                              )
+                            })}
                             <div className="flex items-center gap-3 px-4 py-2 pl-12 bg-muted/20">
                               <span className="text-xs font-semibold text-muted-foreground w-48 shrink-0">Subtotal</span>
                               <span className="text-sm font-bold flex-1">{fmt$(group.total)}</span>
-                              <span className="text-xs text-muted-foreground">
-                                {group.entries.length} {group.entries.length === 1 ? 'entry' : 'entries'}
-                              </span>
+                              <span className="text-xs text-muted-foreground">{group.entries.length} {group.entries.length === 1 ? 'entry' : 'entries'}</span>
                             </div>
                           </div>
                         )}
                       </div>
                     )
                   })}
-
-                  {/* Grand total row — only when multiple sources */}
                   {spendGrouped.length > 1 && (
                     <div className="flex items-center gap-3 px-4 py-3 bg-muted/30">
-                      <span className="w-4 shrink-0" />
-                      <span className="w-2.5 shrink-0" />
+                      <span className="w-4 shrink-0" /><span className="w-2.5 shrink-0" />
                       <span className="text-xs font-semibold text-muted-foreground flex-1 uppercase tracking-wide">Grand Total</span>
                       <span className="text-sm font-bold">{fmt$(grandTotalSpend)}</span>
                     </div>
@@ -645,21 +524,19 @@ export default function KPIPage() {
             </div>
           </div>
 
-          {/* ── 2. KEY METRICS ── */}
+          {/* 2. KEY METRICS */}
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
             <div className="rounded-lg border border-border bg-card overflow-hidden">
               <div className="px-4 py-4">
                 <p className="text-xs text-muted-foreground font-semibold uppercase tracking-wide mb-2">Total Leads</p>
-                <p className="text-3xl font-bold text-foreground">{kpi.total}</p>
+                <p className="text-3xl font-bold">{kpi.total}</p>
                 <p className="text-xs text-muted-foreground mt-1">{periodLabel}</p>
               </div>
-              <div className="px-4 pb-3 border-t border-border bg-muted/10 pt-2">
-                <div className="space-y-1">
-                  <div className="flex justify-between text-xs"><span className="text-muted-foreground">Charged</span><span className="font-semibold">{kpi.lsaCharged}</span></div>
-                  <div className="flex justify-between text-xs"><span className="text-muted-foreground">Not charged</span><span className="font-semibold">{kpi.lsaNotCharged}</span></div>
-                  <div className="flex justify-between text-xs"><span className="text-muted-foreground">In review</span><span className="font-semibold">{kpi.lsaInReview}</span></div>
-                  <div className="flex justify-between text-xs"><span className="text-muted-foreground">Credited</span><span className="font-semibold">{kpi.lsaCredited}</span></div>
-                </div>
+              <div className="px-4 pb-3 border-t border-border bg-muted/10 pt-2 space-y-1">
+                <div className="flex justify-between text-xs"><span className="text-muted-foreground">Charged</span><span className="font-semibold">{kpi.lsaCharged}</span></div>
+                <div className="flex justify-between text-xs"><span className="text-muted-foreground">Not charged</span><span className="font-semibold">{kpi.lsaNotCharged}</span></div>
+                <div className="flex justify-between text-xs"><span className="text-muted-foreground">In review</span><span className="font-semibold">{kpi.lsaInReview}</span></div>
+                <div className="flex justify-between text-xs"><span className="text-muted-foreground">Credited</span><span className="font-semibold">{kpi.lsaCredited}</span></div>
               </div>
             </div>
             <div className="rounded-lg border border-border bg-card overflow-hidden">
@@ -679,12 +556,20 @@ export default function KPIPage() {
                 </div>
               </ExpandMetric>
             </div>
-            <MetricCard label="Appt Acquisition Cost" value={kpi.apptAcqCost > 0 ? fmt$(kpi.apptAcqCost) : '—'} sub={kpi.totalSpend > 0 ? 'spend ÷ in-person appts' : 'log spend to calculate'} />
-            <MetricCard label="Marketing Proj. Acq. Cost" value={kpi.projAcqCost > 0 ? fmt$(kpi.projAcqCost) : '—'} sub={kpi.totalSpend > 0 ? 'spend ÷ jobs closed' : 'log spend to calculate'} />
-            <MetricCard label="Overall Close Rate" value={pct(kpi.wonCount, kpi.total)} sub={`${kpi.wonCount} won / ${kpi.total} leads`} color={kpi.wonCount / Math.max(kpi.total, 1) >= 0.3 ? 'text-emerald-600' : 'text-foreground'} />
+            <MetricCard label="Appt Acquisition Cost"
+              value={kpi.apptAcqCost > 0 ? fmt$(kpi.apptAcqCost) : '—'}
+              sub={kpi.totalSpend > 0 ? 'spend ÷ in-person appts' : 'log spend to calculate'} />
+            <MetricCard label="Marketing Proj. Acq. Cost"
+              value={kpi.projAcqCost > 0 ? fmt$(kpi.projAcqCost) : '—'}
+              sub={kpi.totalSpend > 0 ? 'spend ÷ jobs closed' : 'log spend to calculate'} />
+            {/* ✅ FIXED: Close rate = won / appointments (not won / total leads) */}
+            <MetricCard label="Sales Closing Ratio"
+              value={closeRatePct(kpi.wonCount, kpi.totalAppts)}
+              sub={`${kpi.wonCount} won / ${kpi.totalAppts} appts`}
+              color={kpi.wonCount > 0 && kpi.totalAppts > 0 && kpi.wonCount / kpi.totalAppts >= 0.3 ? 'text-emerald-600' : 'text-foreground'} />
           </div>
 
-          {/* ── 3. SOURCE PERFORMANCE ── */}
+          {/* 3. SOURCE PERFORMANCE */}
           <Section title="Lead Source Performance" badge={`${srcList.length} sources`} defaultOpen>
             {srcList.length === 0 ? (
               <p className="text-sm text-muted-foreground text-center py-4">No leads for this period.</p>
@@ -704,10 +589,12 @@ export default function KPIPage() {
                         const srcSpend = spendBySrc
                           .filter(s => s.source_id === Object.keys(kpi.bySrc).find(k => kpi.bySrc[k] === src))
                           .reduce((sum, s) => sum + s.amount, 0)
-                        const apptCost = src.inPerson > 0 && srcSpend > 0 ? srcSpend / src.inPerson : 0
-                        const projCost = src.won > 0 && srcSpend > 0 ? srcSpend / src.won : 0
-                        const cr = src.total > 0 ? Math.round((src.won / src.total) * 100) : 0
-                        const crColor = cr >= 40 ? 'text-emerald-600 font-bold' : cr >= 20 ? 'text-yellow-600 font-bold' : 'text-red-500 font-bold'
+                        const apptCost  = src.inPerson > 0 && srcSpend > 0 ? srcSpend / src.inPerson : 0
+                        const projCost  = src.won > 0 && srcSpend > 0 ? srcSpend / src.won : 0
+                        // ✅ FIXED: Close % per source = won / (in-person + phone quotes)
+                        const srcAppts  = src.inPerson + src.phoneQ
+                        const cr        = srcAppts > 0 ? Math.round((src.won / srcAppts) * 100) : 0
+                        const crColor   = cr >= 40 ? 'text-emerald-600 font-bold' : cr >= 20 ? 'text-yellow-600 font-bold' : 'text-red-500 font-bold'
                         return (
                           <tr key={src.name} className="border-b border-border/50 hover:bg-muted/20">
                             <td className="py-3 pr-3"><div className="flex items-center gap-2"><div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: SRC_COLORS[i % SRC_COLORS.length] }} /><span className="font-semibold">{src.name}</span></div></td>
@@ -715,8 +602,9 @@ export default function KPIPage() {
                             <td className="py-3 pr-3 text-muted-foreground">{src.lsaCharged}</td>
                             <td className="py-3 pr-3 font-semibold">{src.inPerson}</td>
                             <td className="py-3 pr-3 text-muted-foreground">{src.phoneQ}</td>
-                            <td className="py-3 pr-3"><span className="px-2 py-0.5 rounded-full text-xs bg-emerald-100 text-emerald-700 font-bold dark:bg-emerald-900/30 dark:text-emerald-400">{src.won}</span></td>
-                            <td className={`py-3 pr-3 ${crColor}`}>{src.total > 0 ? cr + '%' : '—'}</td>
+                            <td className="py-3 pr-3"><span className="px-2 py-0.5 rounded-full text-xs bg-emerald-100 text-emerald-700 font-bold">{src.won}</span></td>
+                            {/* ✅ FIXED: Show close rate as won/appts */}
+                            <td className={`py-3 pr-3 ${crColor}`}>{srcAppts > 0 ? cr + '%' : '—'}</td>
                             <td className="py-3 pr-3 font-bold text-emerald-600">{src.contracted > 0 ? fmt$(src.contracted) : '—'}</td>
                             <td className="py-3 pr-3 text-muted-foreground">{srcSpend > 0 ? fmt$(srcSpend) : '—'}</td>
                             <td className="py-3 pr-3 text-muted-foreground">{apptCost > 0 ? fmt$(apptCost) : '—'}</td>
@@ -731,7 +619,8 @@ export default function KPIPage() {
                         <td className="py-2.5 pr-3">{kpi.inPerson}</td>
                         <td className="py-2.5 pr-3">{kpi.phoneQ}</td>
                         <td className="py-2.5 pr-3">{kpi.wonCount}</td>
-                        <td className="py-2.5 pr-3">{pct(kpi.wonCount, kpi.total)}</td>
+                        {/* ✅ FIXED: Total close rate = won / total appts */}
+                        <td className="py-2.5 pr-3">{closeRatePct(kpi.wonCount, kpi.totalAppts)}</td>
                         <td className="py-2.5 pr-3 text-emerald-600">{fmt$(kpi.contracted)}</td>
                         <td className="py-2.5 pr-3">{fmt$(kpi.totalSpend)}</td>
                         <td className="py-2.5 pr-3">{kpi.apptAcqCost > 0 ? fmt$(kpi.apptAcqCost) : '—'}</td>
@@ -760,10 +649,10 @@ export default function KPIPage() {
             )}
           </Section>
 
-          {/* ── 4. KPI INSIGHTS ── */}
+          {/* 4. KPI INSIGHTS */}
           <KpiInsights label="KPI Performance Analysis" data={insightsData} />
 
-          {/* ── 5. REVENUE TREND ── */}
+          {/* 5. REVENUE TREND */}
           {viewMode === 'monthly' && (
             <Section title="Revenue Trend — Last 6 Months" defaultOpen={false}>
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
@@ -797,7 +686,7 @@ export default function KPIPage() {
             </Section>
           )}
 
-          {/* ── 6. LEADS THIS PERIOD ── */}
+          {/* 6. LEADS THIS PERIOD */}
           <Section title="Leads This Period" badge={`${filtered.length} leads`} defaultOpen={false}>
             {filtered.length === 0 ? (
               <p className="text-sm text-muted-foreground text-center py-4">No leads for this period.</p>
@@ -841,7 +730,6 @@ export default function KPIPage() {
               </div>
             )}
           </Section>
-
         </div>
       )}
     </div>
