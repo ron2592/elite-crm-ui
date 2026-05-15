@@ -5,10 +5,10 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import {
   Upload, ChevronLeft, AlertCircle, CheckCircle,
-  Loader2, X, FileText, Download,
+  Loader2, X, FileText, Download, AlertTriangle,
 } from "lucide-react";
 
-// ── Standard template columns ─────────────────────────────────────────────────
+// ── Template columns ───────────────────────────────────────────────────────────
 const TEMPLATE_COLUMNS = [
   { col: "first_name",     example: "John",             note: "First name" },
   { col: "last_name",      example: "Smith",            note: "Last name" },
@@ -27,86 +27,71 @@ const TEMPLATE_COLUMNS = [
   { col: "notes",          example: "Needs full roof",  note: "Any notes" },
 ];
 
-// ── CRM Fields for mapper dropdown ───────────────────────────────────────────
+// ── CRM Fields ─────────────────────────────────────────────────────────────────
 const DB_FIELDS = [
-  { key: "phone",                  label: "Phone"                              },
-  { key: "first_name",             label: "First Name"                         },
-  { key: "last_name",              label: "Last Name"                          },
-  { key: "full_name",              label: "Full Name (auto-split)"             },
-  { key: "email",                  label: "Email"                              },
-  { key: "client_address",         label: "Street Address"                     },
-  { key: "client_city",            label: "City"                               },
-  { key: "client_state",           label: "State"                              },
-  { key: "client_zip",             label: "ZIP Code"                           },
-  { key: "location",               label: "Location (auto-parse: city, ST zip)"},
-  { key: "jn_address",             label: "Address Block (JN multi-line)"      },
+  { key: "phone",                  label: "Phone" },
+  { key: "first_name",             label: "First Name" },
+  { key: "last_name",              label: "Last Name" },
+  { key: "full_name",              label: "Full Name (auto-split)" },
+  { key: "email",                  label: "Email" },
+  { key: "client_address",         label: "Street Address" },
+  { key: "client_city",            label: "City" },
+  { key: "client_state",           label: "State" },
+  { key: "client_zip",             label: "ZIP Code" },
+  { key: "location",               label: "Location (auto-parse: city, ST zip)" },
+  { key: "jn_address",             label: "Address Block (JN multi-line)" },
   { key: "lsa_status",             label: "LSA Status (charged/submitted/etc)" },
-  { key: "contact_type",           label: "Contact Type (in_person/phone_quote)"},
-  { key: "visited",                label: "Visited? (true → in_person)"        },
-  { key: "estimate_sent",          label: "Estimate Sent? (true/false)"        },
-  { key: "job_closed",             label: "Job Closed? (true → closed_won)"    },
-  { key: "bad_lead",               label: "Bad Lead? (true/false)"             },
-  { key: "initial_contract_value", label: "Contract Value ($)"                 },
-  { key: "created_at",             label: "Date Received"                      },
-  { key: "meta_salesperson",       label: "Salesperson"                        },
-  { key: "meta_job_type",          label: "Job Type"                           },
-  { key: "meta_notes",             label: "Notes"                              },
+  { key: "contact_type",           label: "Contact Type (in_person/phone_quote)" },
+  { key: "visited",                label: "Visited? (true → in_person)" },
+  { key: "estimate_sent",          label: "Estimate Sent? (true/false)" },
+  { key: "job_closed",             label: "Job Closed? (true → closed_won)" },
+  { key: "bad_lead",               label: "Bad Lead? (true/false)" },
+  { key: "initial_contract_value", label: "Contract Value ($)" },
+  { key: "created_at",             label: "Date Received" },
+  { key: "meta_salesperson",       label: "Salesperson" },
+  { key: "meta_job_type",          label: "Job Type" },
+  { key: "meta_notes",             label: "Notes" },
 ];
 
-// ── Auto-detect mapping ───────────────────────────────────────────────────────
+// ── Auto-detect mapping ────────────────────────────────────────────────────────
 function autoMap(headers: string[]): Record<string, string> {
   const map: Record<string, string> = {};
   const n = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
 
-  const alwaysSkip = [
-    "projectrevenue", "changeorders", "recordtype", "salesrep",
-    "contacted",
-  ];
+  const alwaysSkip = ["projectrevenue","changeorders","recordtype","salesrep","contacted"];
 
   const exact: Record<string, string> = {
-    "phone":          "phone",
-    "first_name":     "first_name",
-    "last_name":      "last_name",
-    "email":          "email",
-    "address":        "client_address",
-    "city":           "client_city",
-    "state":          "client_state",
-    "zip":            "client_zip",
-    "job_type":       "meta_job_type",
-    "salesperson":    "meta_salesperson",
-    "contract_value": "initial_contract_value",
-    "date_received":  "created_at",
-    "lsa_status":     "lsa_status",
-    "contact_type":   "contact_type",
-    "notes":          "meta_notes",
+    phone: "phone", first_name: "first_name", last_name: "last_name",
+    email: "email", address: "client_address", city: "client_city",
+    state: "client_state", zip: "client_zip", job_type: "meta_job_type",
+    salesperson: "meta_salesperson", contract_value: "initial_contract_value",
+    date_received: "created_at", lsa_status: "lsa_status", contact_type: "contact_type",
+    notes: "meta_notes",
   };
 
   const fuzzy: Record<string, string[]> = {
-    // LSA inbox export columns (Google LSA download)
-    phone:                  ["contactnum", "contacthash", "customernum", "customersnum",
-                             "mainphone", "phonenumber", "mobile", "cell", "tel", "unnamed0",
-                             "customer"],  // ← LSA inbox "Customer" column = phone number
-    full_name:              ["display", "name", "fullname", "clientname", "customername"],
-    first_name:             ["firstname", "fname"],
-    last_name:              ["lastname", "lname"],
-    email:                  ["emailaddress", "mail"],
+    phone:                  ["contactnum","contacthash","customernum","mainphone","phonenumber","mobile","cell","tel","unnamed0","customer"],
+    full_name:              ["display","name","fullname","clientname","customername"],
+    first_name:             ["firstname","fname"],
+    last_name:              ["lastname","lname"],
+    email:                  ["emailaddress","mail"],
     jn_address:             ["addressinfo"],
     location:               ["location"],
-    client_city:            ["city", "town"],
-    client_address:         ["street", "streetaddress"],
+    client_city:            ["city","town"],
+    client_address:         ["street","streetaddress"],
     client_state:           ["province"],
-    client_zip:             ["zipcode", "postalcode", "postal"],
-    lsa_status:             ["leadstatus", "lsastatus", "leadstatusvalue", "chargestatus"],
-    contact_type:           ["leadtype", "contacttype"],
+    client_zip:             ["zipcode","postalcode","postal"],
+    lsa_status:             ["leadstatus","lsastatus","leadstatusvalue","chargestatus"],
+    contact_type:           ["leadtype","contacttype"],
     visited:                ["visited"],
     estimate_sent:          ["estimatesent"],
     job_closed:             ["jobclosed"],
     bad_lead:               ["badlead"],
-    initial_contract_value: ["initialvolume", "contractvalue"],
-    created_at:             ["leadreceived", "datereceived", "createdat", "received"],
-    meta_salesperson:       ["technicians", "assignedto", "rep", "agent"],
-    meta_job_type:          ["jobtype", "service", "worktype"],
-    meta_notes:             ["note", "comments", "description"],
+    initial_contract_value: ["initialvolume","contractvalue"],
+    created_at:             ["leadreceived","datereceived","createdat","received"],
+    meta_salesperson:       ["technicians","assignedto","rep","agent"],
+    meta_job_type:          ["jobtype","service","worktype"],
+    meta_notes:             ["note","comments","description"],
   };
 
   headers.forEach(h => {
@@ -114,32 +99,15 @@ function autoMap(headers: string[]): Record<string, string> {
     if (alwaysSkip.includes(normalized)) return;
     if (exact[normalized]) { map[h] = exact[normalized]; return; }
     for (const [field, aliases] of Object.entries(fuzzy)) {
-      if (normalized === n(field) || aliases.some(a => normalized.includes(a))) {
-        map[h] = field;
-        return;
-      }
+      if (normalized === n(field) || aliases.some(a => normalized.includes(a))) { map[h] = field; return; }
     }
-    if (normalized === "contact") { map[h] = "phone"; return; }
+    if (normalized === "contact") { map[h] = "phone"; }
   });
-
   return map;
 }
 
-// ── Download template ─────────────────────────────────────────────────────────
-function downloadTemplate() {
-  const header  = TEMPLATE_COLUMNS.map(c => c.col).join(",");
-  const example = TEMPLATE_COLUMNS.map(c => `"${c.example}"`).join(",");
-  const notes   = TEMPLATE_COLUMNS.map(c => `"← ${c.note}"`).join(",");
-  const blob = new Blob([[header, example, notes].join("\n")], { type: "text/csv" });
-  const url  = URL.createObjectURL(blob);
-  const a    = document.createElement("a"); a.href = url; a.download = "lead_import_template.csv"; a.click();
-  URL.revokeObjectURL(url);
-}
-
-// ── Value helpers ─────────────────────────────────────────────────────────────
-function parseBool(val: string) {
-  return ["true", "yes", "1"].includes((val || "").trim().toLowerCase());
-}
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function parseBool(val: string) { return ["true","yes","1"].includes((val||"").trim().toLowerCase()); }
 
 function parseJNAddress(val: string) {
   if (!val?.trim()) return {};
@@ -164,24 +132,24 @@ function parseLocation(loc: string) {
   if (parts.length >= 2) {
     const addr = parts[0].trim(), rest = parts.slice(1).join(",").trim();
     const match = rest.match(/([A-Z]{2})\s*(\d{5})?$/);
-    if (match) return { client_address: addr, client_city: rest.replace(match[0], "").trim(), client_state: match[1], client_zip: match[2] || null };
+    if (match) return { client_address: addr, client_city: rest.replace(match[0],"").trim(), client_state: match[1], client_zip: match[2] || null };
     return { client_address: addr, client_city: rest };
   }
   return { client_city: loc.trim() };
 }
 
 function mapLsaStatus(val: string) {
-  const v = (val || "").trim().toLowerCase();
-  if (v === "charged")                              return { lsa_status: "charged",     bad_lead: false };
-  if (v === "submitted")                            return { lsa_status: "charged",     bad_lead: true  };
-  if (v === "not charged" || v === "not_charged")   return { lsa_status: "not_charged", bad_lead: false };
-  if (v === "credited")                             return { lsa_status: "credited",    bad_lead: false };
-  if (v === "in review"  || v === "in_review")      return { lsa_status: "in_review",   bad_lead: true  };
-  return { lsa_status: v || null, bad_lead: false }; // pass through unknown values
+  const v = (val||"").trim().toLowerCase();
+  if (v === "charged")                            return { lsa_status: "charged",     bad_lead: false };
+  if (v === "submitted")                          return { lsa_status: "charged",     bad_lead: true  };
+  if (v === "not charged" || v === "not_charged") return { lsa_status: "not_charged", bad_lead: false };
+  if (v === "credited")                           return { lsa_status: "credited",    bad_lead: false };
+  if (v === "in review"  || v === "in_review")    return { lsa_status: "in_review",   bad_lead: true  };
+  return { lsa_status: v || null, bad_lead: false };
 }
 
 function parseRevenue(val: string) {
-  const n = parseFloat((val || "").replace(/[$,]/g, "").trim());
+  const n = parseFloat((val||"").replace(/[$,]/g,"").trim());
   return isNaN(n) ? 0 : n;
 }
 
@@ -191,7 +159,12 @@ function parseDate(val: string) {
   return null;
 }
 
-// ── CSV parser — handles quoted multi-line fields ─────────────────────────────
+// ✅ Normalize a name for dedup comparison
+function normalizeName(s: string) {
+  return s.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+// ── CSV parser ─────────────────────────────────────────────────────────────────
 function parseCSV(text: string): { headers: string[]; rows: Record<string, string>[] } {
   const result: string[][] = [];
   let row: string[] = [], field = "", inQuotes = false;
@@ -218,16 +191,12 @@ function parseCSV(text: string): { headers: string[]; rows: Record<string, strin
 }
 
 // ── Build lead from row ───────────────────────────────────────────────────────
-// ⚠️ IMPORTANT: first_name and last_name are GENERATED ALWAYS columns in Supabase.
-// They auto-compute from lead_name via split_part(). Never insert them directly.
 function buildLead(row: Record<string, string>, mapping: Record<string, string>, sourceId: string | null) {
   const lead: any = {
     archived: false, status: "new_lead", source_id: sourceId,
     metadata: { imported_from: "csv", import_date: new Date().toISOString() },
   };
   let hasIdentifier = false, lsaVal = "";
-
-  // Temp vars for name — we build lead_name from these, never set first/last on lead directly
   let _firstName = "", _lastName = "";
 
   for (const [csvCol, crmField] of Object.entries(mapping)) {
@@ -235,19 +204,10 @@ function buildLead(row: Record<string, string>, mapping: Record<string, string>,
     const val = String(row[csvCol] || "").trim();
     if (!val) continue;
     switch (crmField) {
-      case "phone":
-        lead.phone = val; hasIdentifier = true; break;
-
-      // ✅ FIX: Store in temp vars, NOT on lead object
-      case "first_name":
-        _firstName = val; hasIdentifier = true; break;
-      case "last_name":
-        _lastName = val; break;
-
-      // ✅ FIX: Set lead_name directly instead of spreading parseName()
-      case "full_name":
-        lead.lead_name = val; hasIdentifier = true; break;
-
+      case "phone":                  lead.phone = val; hasIdentifier = true; break;
+      case "first_name":             _firstName = val; hasIdentifier = true; break;
+      case "last_name":              _lastName  = val; break;
+      case "full_name":              lead.lead_name = val; hasIdentifier = true; break;
       case "email":                  lead.email = val; break;
       case "jn_address":             Object.assign(lead, parseJNAddress(val)); break;
       case "location":               Object.assign(lead, parseLocation(val)); break;
@@ -257,14 +217,10 @@ function buildLead(row: Record<string, string>, mapping: Record<string, string>,
       case "client_zip":             lead.client_zip = val; break;
       case "lsa_status":             lsaVal = val; break;
       case "contact_type": {
-        // Normalize any incoming value to valid DB values
         const ct = val.toLowerCase().trim();
-        if (["phone call", "phone", "call", "phone_call"].includes(ct))
-          lead.contact_type = "phone_quote";
-        else if (["message", "request", "in person", "in-person", "visited", "in_person"].includes(ct))
-          lead.contact_type = "in_person";
-        else
-          lead.contact_type = val; // already correct (phone_quote / in_person)
+        if (["phone call","phone","call","phone_call"].includes(ct)) lead.contact_type = "phone_quote";
+        else if (["message","request","in person","in-person","visited","in_person"].includes(ct)) lead.contact_type = "in_person";
+        else lead.contact_type = val;
         break;
       }
       case "visited":                if (parseBool(val)) lead.contact_type = "in_person"; break;
@@ -285,41 +241,64 @@ function buildLead(row: Record<string, string>, mapping: Record<string, string>,
     if (bad_lead) lead.bad_lead = true;
   }
 
-  // ✅ FIX: Build lead_name from temp vars if full_name mapping didn't already set it
   if (!lead.lead_name) {
-    lead.lead_name = [_firstName, _lastName].filter(Boolean).join(" ").trim()
-      || lead.phone
-      || "Imported Lead";
+    lead.lead_name = [_firstName, _lastName].filter(Boolean).join(" ").trim() || lead.phone || "Imported Lead";
   }
 
-  // ✅ SAFETY NET: Explicitly delete generated columns before Supabase insert
-  // Supabase will throw "cannot insert a non-DEFAULT value into column" if these exist
   delete lead.first_name;
   delete lead.last_name;
 
-  return { lead, hasIdentifier };
+  return { lead, hasIdentifier, resolvedName: lead.lead_name };
 }
 
-// ── Main Component ────────────────────────────────────────────────────────────
+// ── Download template ─────────────────────────────────────────────────────────
+function downloadTemplate() {
+  const header  = TEMPLATE_COLUMNS.map(c => c.col).join(",");
+  const example = TEMPLATE_COLUMNS.map(c => `"${c.example}"`).join(",");
+  const notes   = TEMPLATE_COLUMNS.map(c => `"← ${c.note}"`).join(",");
+  const blob = new Blob([[header, example, notes].join("\n")], { type: "text/csv" });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement("a"); a.href = url; a.download = "lead_import_template.csv"; a.click();
+  URL.revokeObjectURL(url);
+}
+
+// ✅ Download skip report as CSV
+function downloadSkipReport(skipped: { row: Record<string, string>; reason: string }[], csvHeaders: string[]) {
+  const headers = ["Skip Reason", ...csvHeaders];
+  const lines   = skipped.map(s => [
+    `"${s.reason}"`,
+    ...csvHeaders.map(h => `"${String(s.row[h] || "").replace(/"/g, '""')}"`),
+  ].join(","));
+  const csv  = [headers.join(","), ...lines].join("\n");
+  const blob = new Blob([csv], { type: "text/csv" });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement("a"); a.href = url; a.download = `import_skipped_${new Date().toISOString().split("T")[0]}.csv`; a.click();
+  URL.revokeObjectURL(url);
+}
+
+// ── Main Component ─────────────────────────────────────────────────────────────
 export default function ImportLeadsPage() {
   const router  = useRouter();
   const fileRef = useRef<HTMLInputElement>(null);
 
-  const [step, setStep]             = useState<"upload" | "map" | "preview" | "importing" | "done">("upload");
-  const [csvHeaders, setCsvHeaders] = useState<string[]>([]);
-  const [csvRows, setCsvRows]       = useState<Record<string, string>[]>([]);
-  const [mapping, setMapping]       = useState<Record<string, string>>({});
-  const [errors, setErrors]         = useState<string[]>([]);
-  const [results, setResults]       = useState({ success: 0, skipped: 0, dbErrors: 0, dbErrorMsg: "" });
-  const [fileName, setFileName]     = useState("");
-  const [dragging, setDragging]     = useState(false);
-  const [sources, setSources]               = useState<{ id: string; name: string }[]>([]);
+  const [step,          setStep]          = useState<"upload"|"map"|"preview"|"importing"|"done">("upload");
+  const [csvHeaders,    setCsvHeaders]    = useState<string[]>([]);
+  const [csvRows,       setCsvRows]       = useState<Record<string, string>[]>([]);
+  const [mapping,       setMapping]       = useState<Record<string, string>>({});
+  const [errors,        setErrors]        = useState<string[]>([]);
+  const [results,       setResults]       = useState({
+    success: 0, skippedDuplicate: 0, skippedNoId: 0, dbErrors: 0, dbErrorMsg: "",
+  });
+  // ✅ Track skipped rows for download
+  const [skippedRows,   setSkippedRows]   = useState<{ row: Record<string, string>; reason: string }[]>([]);
+  const [fileName,      setFileName]      = useState("");
+  const [dragging,      setDragging]      = useState(false);
+  const [sources,       setSources]       = useState<{ id: string; name: string }[]>([]);
   const [selectedSource, setSelectedSource] = useState("");
-  const [newSourceName, setNewSourceName]   = useState("");
+  const [newSourceName,  setNewSourceName]  = useState("");
 
   useEffect(() => {
-    supabase.from("lead_sources").select("id,name").order("name")
-      .then(({ data }) => setSources(data || []));
+    supabase.from("lead_sources").select("id,name").order("name").then(({ data }) => setSources(data || []));
   }, []);
 
   function handleFile(file: File) {
@@ -344,8 +323,10 @@ export default function ImportLeadsPage() {
 
   async function handleImport() {
     setStep("importing");
-    let success = 0, skipped = 0, dbErrors = 0, dbErrorMsg = "";
+    let success = 0, skippedDuplicate = 0, skippedNoId = 0, dbErrors = 0, dbErrorMsg = "";
+    const allSkipped: { row: Record<string, string>; reason: string }[] = [];
 
+    // ── 1. Resolve source ──
     let sourceId: string | null = null;
     if (selectedSource === "__new__" && newSourceName.trim()) {
       const { data } = await supabase.from("lead_sources").insert({ name: newSourceName.trim() }).select().single();
@@ -354,41 +335,87 @@ export default function ImportLeadsPage() {
       sourceId = selectedSource;
     }
 
-    const leadsToInsert: any[] = [];
-    csvRows.forEach(row => {
-      const { lead, hasIdentifier } = buildLead(row, mapping, sourceId);
-      if (!hasIdentifier) { skipped++; return; }
-      leadsToInsert.push(lead);
+    // ── 2. Build all leads from CSV ──
+    const built: { lead: any; row: Record<string, string>; name: string }[] = [];
+    csvRows.forEach((row, i) => {
+      const { lead, hasIdentifier, resolvedName } = buildLead(row, mapping, sourceId);
+      if (!hasIdentifier) {
+        skippedNoId++;
+        allSkipped.push({ row, reason: "No phone or name found" });
+        return;
+      }
+      built.push({ lead, row, name: resolvedName });
     });
 
-    // ── Deduplication: check existing phones before inserting ─────────────
-    const incomingPhones = leadsToInsert.map(l => l.phone).filter(Boolean);
-    let existingPhones = new Set<string>();
+    // ── 3. Dedup: phone against DB ──
+    const incomingPhones = built.map(b => b.lead.phone).filter(Boolean);
+    const existingPhoneSet = new Set<string>();
     if (incomingPhones.length > 0) {
-      const { data: existing } = await supabase
-        .from("leads")
-        .select("phone")
-        .in("phone", incomingPhones);
-      existingPhones = new Set((existing || []).map((r: any) => r.phone));
+      // ✅ Query in batches of 200 to avoid URL limit
+      for (let i = 0; i < incomingPhones.length; i += 200) {
+        const batch = incomingPhones.slice(i, i + 200);
+        const { data } = await supabase.from("leads").select("phone").in("phone", batch).neq("archived", true);
+        (data || []).forEach((r: any) => { if (r.phone) existingPhoneSet.add(r.phone); });
+      }
     }
-    const dedupedLeads = leadsToInsert.filter(l => {
-      if (l.phone && existingPhones.has(l.phone)) { skipped++; return false; }
-      return true;
+
+    // ── 4. Dedup: name against DB ──
+    // ✅ Fetch all existing normalized names to catch name-only duplicates
+    const existingNameSet = new Set<string>();
+    {
+      const { data } = await supabase.from("leads").select("lead_name").neq("archived", true);
+      (data || []).forEach((r: any) => { if (r.lead_name) existingNameSet.add(normalizeName(r.lead_name)); });
+    }
+
+    // ── 5. Intra-batch dedup ──
+    // ✅ Track phones and names seen within this CSV to catch same-file duplicates
+    const batchPhones = new Set<string>();
+    const batchNames  = new Set<string>();
+
+    const toInsert: any[] = [];
+    built.forEach(({ lead, row, name }) => {
+      const phone     = lead.phone || "";
+      const normPhone = phone.replace(/\D/g, "");
+      const normN     = normalizeName(name);
+
+      // Check phone duplicate (DB + intra-batch)
+      if (phone) {
+        if (existingPhoneSet.has(phone) || batchPhones.has(normPhone)) {
+          skippedDuplicate++;
+          allSkipped.push({ row, reason: `Duplicate phone: ${phone}` });
+          return;
+        }
+        batchPhones.add(normPhone);
+      }
+
+      // Check name duplicate (DB + intra-batch) — only when no phone
+      if (!phone && normN && normN !== "imported lead") {
+        if (existingNameSet.has(normN) || batchNames.has(normN)) {
+          skippedDuplicate++;
+          allSkipped.push({ row, reason: `Duplicate name: ${name}` });
+          return;
+        }
+        batchNames.add(normN);
+      }
+
+      toInsert.push(lead);
     });
 
-    for (let i = 0; i < dedupedLeads.length; i += 50) {
-      const batch = dedupedLeads.slice(i, i + 50);
+    // ── 6. Insert in batches of 50 ──
+    for (let i = 0; i < toInsert.length; i += 50) {
+      const batch = toInsert.slice(i, i + 50);
       const { error } = await supabase.from("leads").insert(batch);
       if (error) {
         dbErrors += batch.length;
         dbErrorMsg = error.message;
-        console.error("Supabase insert error:", error.message, error);
+        console.error("Import batch error:", error.message);
       } else {
         success += batch.length;
       }
     }
 
-    setResults({ success, skipped, dbErrors, dbErrorMsg });
+    setSkippedRows(allSkipped);
+    setResults({ success, skippedDuplicate, skippedNoId, dbErrors, dbErrorMsg });
     setStep("done");
   }
 
@@ -413,8 +440,8 @@ export default function ImportLeadsPage() {
 
       {/* Steps */}
       <div className="flex items-center gap-2 text-xs">
-        {["Upload", "Map Columns", "Preview", "Import"].map((s, i) => {
-          const idx = ["upload","map","preview","importing","done"].indexOf(step);
+        {["Upload","Map Columns","Preview","Import"].map((s, i) => {
+          const idx    = ["upload","map","preview","importing","done"].indexOf(step);
           const active = i === Math.min(idx, 3), done = i < idx;
           return (
             <div key={s} className="flex items-center gap-2">
@@ -452,10 +479,20 @@ export default function ImportLeadsPage() {
                   <Download className="h-4 w-4" /> Download Template CSV
                 </button>
               </div>
-              <div className="hidden sm:block text-xs text-emerald-700 dark:text-emerald-400 space-y-0.5 shrink-0">
-                {TEMPLATE_COLUMNS.map(c => <p key={c.col} className="font-mono">{c.col}</p>)}
-              </div>
             </div>
+          </div>
+
+          {/* ✅ Dedup explanation */}
+          <div className="rounded-lg border border-blue-200 bg-blue-50/50 dark:bg-blue-950/20 p-4 space-y-2">
+            <p className="text-sm font-semibold text-blue-800 dark:text-blue-300 flex items-center gap-2">
+              <AlertTriangle className="h-4 w-4" /> Duplicate Detection
+            </p>
+            <ul className="text-xs text-blue-700 dark:text-blue-400 space-y-1 list-disc ml-5">
+              <li>Phone number match against existing leads → skipped</li>
+              <li>Name match (when no phone) against existing leads → skipped</li>
+              <li>Same phone or name appearing twice in the CSV → only first row kept</li>
+              <li>All skipped rows downloadable as a report after import</li>
+            </ul>
           </div>
 
           <div className="flex items-center gap-3">
@@ -550,8 +587,9 @@ export default function ImportLeadsPage() {
                     <option value="">— Skip —</option>
                     {DB_FIELDS.map(f => <option key={f.key} value={f.key}>{f.label}</option>)}
                   </select>
-                  {mapping[col] ? <span className="text-xs text-emerald-600 font-medium w-5 shrink-0">✓</span>
-                                : <span className="text-xs text-muted-foreground w-5 shrink-0">—</span>}
+                  {mapping[col]
+                    ? <span className="text-xs text-emerald-600 font-medium w-5 shrink-0">✓</span>
+                    : <span className="text-xs text-muted-foreground w-5 shrink-0">—</span>}
                   <span className="text-xs text-muted-foreground w-32 truncate shrink-0 hidden sm:block">
                     {String(csvRows[0]?.[col] || "").split("\n")[0].slice(0, 28) || "—"}
                   </span>
@@ -576,7 +614,7 @@ export default function ImportLeadsPage() {
         <div className="space-y-4">
           <div className="rounded-lg border border-blue-200 bg-blue-50/50 dark:bg-blue-950/20 p-3 flex items-center gap-2 text-sm text-blue-700 dark:text-blue-300">
             <AlertCircle className="h-4 w-4 shrink-0" />
-            Showing first 5 of {csvRows.length} rows. Review then import.
+            Showing first 5 of {csvRows.length} rows. Duplicates will be skipped automatically.
           </div>
           <div className="rounded-lg border border-border overflow-x-auto">
             <table className="w-full text-xs">
@@ -616,30 +654,65 @@ export default function ImportLeadsPage() {
         <div className="flex flex-col items-center justify-center py-20 gap-4">
           <Loader2 className="h-8 w-8 animate-spin text-primary" />
           <p className="font-medium">Importing leads...</p>
-          <p className="text-xs text-muted-foreground">Do not close this page</p>
+          <p className="text-xs text-muted-foreground">Checking for duplicates and inserting in batches. Do not close this page.</p>
         </div>
       )}
 
       {/* ── STEP 5: Done ── */}
       {step === "done" && (
-        <div className="flex flex-col items-center justify-center py-12 gap-4 text-center">
-          <CheckCircle className="h-12 w-12 text-emerald-500" />
-          <div className="space-y-1">
-            <p className="text-xl font-bold">
-              {results.success > 0 ? "Import Complete" : "Import Finished"}
-            </p>
-            <p className="text-sm text-muted-foreground">
-              <span className="text-emerald-600 font-semibold">{results.success} leads imported</span>
-              {results.skipped > 0 && <span className="text-amber-500 ml-2">· {results.skipped} skipped (no phone or name)</span>}
-              {results.dbErrors > 0 && <span className="text-red-500 ml-2">· {results.dbErrors} failed to save</span>}
-            </p>
-            {results.dbErrors > 0 && results.dbErrorMsg && (
-              <div className="mt-3 rounded-lg border border-red-200 bg-red-50 dark:bg-red-950/20 p-3 text-left max-w-lg mx-auto">
-                <p className="text-xs font-semibold text-red-700 mb-1">Database error:</p>
-                <p className="text-xs text-red-600 font-mono break-all">{results.dbErrorMsg}</p>
-              </div>
-            )}
+        <div className="space-y-4">
+          <div className="flex flex-col items-center py-8 gap-2 text-center">
+            <CheckCircle className="h-12 w-12 text-emerald-500" />
+            <p className="text-xl font-bold">{results.success > 0 ? "Import Complete" : "Import Finished"}</p>
           </div>
+
+          {/* ✅ Detailed result breakdown */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="rounded-lg border border-emerald-200 bg-emerald-50 dark:bg-emerald-950/20 p-4 text-center">
+              <p className="text-2xl font-bold text-emerald-600">{results.success}</p>
+              <p className="text-xs text-emerald-700 font-medium mt-1">✅ Imported</p>
+            </div>
+            <div className={`rounded-lg border p-4 text-center ${results.skippedDuplicate > 0 ? "border-amber-200 bg-amber-50 dark:bg-amber-950/20" : "border-border bg-muted/20"}`}>
+              <p className={`text-2xl font-bold ${results.skippedDuplicate > 0 ? "text-amber-600" : "text-muted-foreground"}`}>{results.skippedDuplicate}</p>
+              <p className="text-xs font-medium mt-1 text-muted-foreground">⚠ Duplicate (phone/name)</p>
+            </div>
+            <div className={`rounded-lg border p-4 text-center ${results.skippedNoId > 0 ? "border-slate-200 bg-slate-50 dark:bg-slate-950/20" : "border-border bg-muted/20"}`}>
+              <p className={`text-2xl font-bold ${results.skippedNoId > 0 ? "text-slate-600" : "text-muted-foreground"}`}>{results.skippedNoId}</p>
+              <p className="text-xs font-medium mt-1 text-muted-foreground">⚠ Skipped (no identifier)</p>
+            </div>
+            <div className={`rounded-lg border p-4 text-center ${results.dbErrors > 0 ? "border-red-200 bg-red-50 dark:bg-red-950/20" : "border-border bg-muted/20"}`}>
+              <p className={`text-2xl font-bold ${results.dbErrors > 0 ? "text-red-600" : "text-muted-foreground"}`}>{results.dbErrors}</p>
+              <p className="text-xs font-medium mt-1 text-muted-foreground">❌ DB Error</p>
+            </div>
+          </div>
+
+          {/* ✅ Skip report download */}
+          {skippedRows.length > 0 && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50/50 dark:bg-amber-950/20 p-4 flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold text-amber-800 dark:text-amber-300">
+                  {skippedRows.length} rows were skipped
+                </p>
+                <p className="text-xs text-amber-700 dark:text-amber-400 mt-0.5">
+                  Download the skip report to see which rows were skipped and why. Fix and re-upload.
+                </p>
+              </div>
+              <button
+                onClick={() => downloadSkipReport(skippedRows, csvHeaders)}
+                className="flex items-center gap-1.5 text-xs px-3 py-2 rounded-md bg-amber-600 text-white hover:bg-amber-700 transition-colors font-medium whitespace-nowrap shrink-0"
+              >
+                <Download className="h-3.5 w-3.5" /> Download Skip Report
+              </button>
+            </div>
+          )}
+
+          {results.dbErrors > 0 && results.dbErrorMsg && (
+            <div className="rounded-lg border border-red-200 bg-red-50 dark:bg-red-950/20 p-3">
+              <p className="text-xs font-semibold text-red-700 mb-1">Database error:</p>
+              <p className="text-xs text-red-600 font-mono break-all">{results.dbErrorMsg}</p>
+            </div>
+          )}
+
           <div className="flex gap-3 flex-wrap justify-center">
             <button onClick={() => router.push("/leads")}
               className="px-4 py-2 text-sm rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors font-medium">
@@ -649,14 +722,13 @@ export default function ImportLeadsPage() {
               className="px-4 py-2 text-sm rounded-md bg-emerald-600 text-white hover:bg-emerald-700 transition-colors font-medium">
               View KPI
             </button>
-            <button onClick={() => { setStep("upload"); setCsvRows([]); setCsvHeaders([]); setMapping({}); setFileName(""); }}
+            <button onClick={() => { setStep("upload"); setCsvRows([]); setCsvHeaders([]); setMapping({}); setFileName(""); setSkippedRows([]); }}
               className="px-4 py-2 text-sm rounded-md border border-border hover:bg-muted transition-colors">
-              Import Another
+              Import Another Batch
             </button>
           </div>
         </div>
       )}
-
     </div>
   );
 }

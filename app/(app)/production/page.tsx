@@ -68,7 +68,7 @@ export default function ProductionPage() {
     const { data: leads, error } = await supabase
       .from("leads")
       .select("id, lead_name, initial_contract_value, closed_amount, estimated_amount, production_stage, production_stage_updated_at, production_notes, address_line_1, city, state, metadata")
-      .eq("status", "closed_won")
+      .in("status", ["closed_won", "completed"])
       .order("created_at", { ascending: false });
 
     if (error) { console.error("Error fetching jobs:", error.message); return; }
