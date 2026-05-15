@@ -3,26 +3,25 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 
-// Stages that appear on the calendar
 const CALENDAR_STAGES = ["Scheduled to Start", "Job In Progress", "Rough Inspection", "Final Inspection"];
 
 const stageColors: Record<string, string> = {
-  "Pending - Check": "bg-slate-100 text-slate-600",
-  "Pending - Financing": "bg-slate-100 text-slate-600",
-  "Pending - Deposit": "bg-slate-100 text-slate-600",
-  "Deposit Collected": "bg-blue-100 text-blue-700",
-  "Materials Ordered": "bg-indigo-100 text-indigo-700",
-  "Permit Submitted": "bg-violet-100 text-violet-700",
-  "Permit Approved": "bg-purple-100 text-purple-700",
-  "Scheduled to Start": "bg-amber-100 text-amber-700",
-  "Job In Progress": "bg-orange-100 text-orange-700",
-  "Rough Inspection": "bg-cyan-100 text-cyan-700",
-  "Final Inspection": "bg-teal-100 text-teal-700",
-  "Inspection Approved": "bg-emerald-100 text-emerald-700",
-  "Completed": "bg-green-100 text-green-700",
-  "Completed with Balance": "bg-lime-100 text-lime-700",
-  "Cancelled Before Start": "bg-red-100 text-red-700",
-  "Cancelled Mid-Job": "bg-rose-100 text-rose-700",
+  "Pending - Check":          "bg-slate-100 text-slate-600",
+  "Pending - Financing":      "bg-slate-100 text-slate-600",
+  "Pending - Deposit":        "bg-slate-100 text-slate-600",
+  "Deposit Collected":        "bg-blue-100 text-blue-700",
+  "Materials Ordered":        "bg-indigo-100 text-indigo-700",
+  "Permit Submitted":         "bg-violet-100 text-violet-700",
+  "Permit Approved":          "bg-purple-100 text-purple-700",
+  "Scheduled to Start":       "bg-amber-100 text-amber-700",
+  "Job In Progress":          "bg-orange-100 text-orange-700",
+  "Rough Inspection":         "bg-cyan-100 text-cyan-700",
+  "Final Inspection":         "bg-teal-100 text-teal-700",
+  "Inspection Approved":      "bg-emerald-100 text-emerald-700",
+  "Completed":                "bg-green-100 text-green-700",
+  "Completed with Balance":   "bg-lime-100 text-lime-700",
+  "Cancelled Before Start":   "bg-red-100 text-red-700",
+  "Cancelled Mid-Job":        "bg-rose-100 text-rose-700",
 };
 
 interface JobRow {
@@ -40,40 +39,48 @@ interface JobRow {
   production_stage_updated_at: string | null;
   production_notes: string | null;
   orderNumber?: number;
+  // ✅ source info for filtering
+  sourceId: string | null;
+  sourceName: string | null;
 }
 
-// Convert ISO to local date string YYYY-MM-DD (no UTC drift)
 function toLocalDateValue(iso: string | null): string {
   if (!iso) return "";
-  const d = new Date(iso);
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const d   = new Date(iso);
+  const y   = d.getFullYear();
+  const m   = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
 }
 
 export default function ProductionPage() {
-  const [jobs, setJobs] = useState<JobRow[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [updating, setUpdating] = useState<string | null>(null);
-  const [filter, setFilter] = useState("all");
+  const [jobs,         setJobs]         = useState<JobRow[]>([]);
+  const [loading,      setLoading]      = useState(true);
+  const [updating,     setUpdating]     = useState<string | null>(null);
   const [editingNotes, setEditingNotes] = useState<string | null>(null);
-  const [noteDraft, setNoteDraft] = useState("");
-  // Date editing state
-  const [editingDate, setEditingDate] = useState<string | null>(null);
-  const [dateDraft, setDateDraft] = useState("");
-  const [savingDate, setSavingDate] = useState(false);
+  const [noteDraft,    setNoteDraft]    = useState("");
+  const [editingDate,  setEditingDate]  = useState<string | null>(null);
+  const [dateDraft,    setDateDraft]    = useState("");
+  const [savingDate,   setSavingDate]   = useState(false);
+
+  // ✅ Default filter is "active" — not "all"
+  const [filter,         setFilter]         = useState("active");
+  // ✅ Lead source filter
+  const [filterSourceId, setFilterSourceId] = useState("");
+  const [sources,        setSources]        = useState<{ id: string; name: string }[]>([]);
 
   async function fetchJobs() {
+    // ✅ Include both "closed_won" AND "completed" pipeline statuses
     const { data: leads, error } = await supabase
       .from("leads")
-      .select("id, lead_name, initial_contract_value, closed_amount, estimated_amount, production_stage, production_stage_updated_at, production_notes, address_line_1, city, state, metadata")
+      .select("id, lead_name, initial_contract_value, closed_amount, estimated_amount, production_stage, production_stage_updated_at, production_notes, address_line_1, city, state, metadata, source_id, lead_sources(id, name)")
       .in("status", ["closed_won", "completed"])
       .order("created_at", { ascending: false });
 
     if (error) { console.error("Error fetching jobs:", error.message); return; }
 
     const leadIds = (leads || []).map((j: any) => j.id);
+
     let paymentsMap: Record<string, number> = {};
     if (leadIds.length > 0) {
       const { data: payments } = await supabase.from("payments").select("lead_id, amount").in("lead_id", leadIds);
@@ -97,41 +104,60 @@ export default function ProductionPage() {
     (leads || []).forEach((l: any) => { leadNameMap[l.id] = l; });
 
     const leadRows: JobRow[] = (leads || []).map((job: any) => ({
-      id: job.id, type: "lead", leadId: job.id,
-      clientName: job.lead_name || "Unnamed",
-      address: job.address_line_1 ? `${job.address_line_1}${job.city ? ", " + job.city : ""}` : job.city || "No address",
-      jobType: job.metadata?.job_type || null,
-      description: job.metadata?.initial_contract_description || null,
-      salesperson: job.metadata?.salesperson || null,
-      contract: Number(job.initial_contract_value) || Number(job.estimated_amount) || 0,
-      totalCollected: paymentsMap[job.id] || Number(job.closed_amount) || 0,
-      production_stage: job.production_stage || null,
+      id:                          job.id,
+      type:                        "lead",
+      leadId:                      job.id,
+      clientName:                  job.lead_name || "Unnamed",
+      address:                     job.address_line_1
+                                     ? `${job.address_line_1}${job.city ? ", " + job.city : ""}`
+                                     : job.city || "No address",
+      jobType:                     job.metadata?.job_type || null,
+      description:                 job.metadata?.initial_contract_description || null,
+      salesperson:                 job.metadata?.salesperson || null,
+      contract:                    Number(job.initial_contract_value) || Number(job.estimated_amount) || 0,
+      totalCollected:              paymentsMap[job.id] || Number(job.closed_amount) || 0,
+      production_stage:            job.production_stage || null,
       production_stage_updated_at: job.production_stage_updated_at || null,
-      production_notes: job.production_notes || null,
+      production_notes:            job.production_notes || null,
+      sourceId:                    job.source_id || null,
+      sourceName:                  (job.lead_sources as any)?.name || null,
     }));
 
     const coRows: JobRow[] = changeOrders.map((co: any) => {
       const parentLead = leadNameMap[co.lead_id];
       return {
-        id: co.id, type: "change_order", leadId: co.lead_id,
-        clientName: parentLead?.lead_name || "Unnamed",
-        address: parentLead?.address_line_1 ? `${parentLead.address_line_1}${parentLead.city ? ", " + parentLead.city : ""}` : parentLead?.city || "No address",
-        jobType: co.job_type || null,
-        description: co.description || null,
-        salesperson: parentLead?.metadata?.salesperson || null,
-        contract: Number(co.amount) || 0,
-        totalCollected: coPaymentsMap[co.id] || 0,
-        production_stage: co.production_stage || null,
+        id:                          co.id,
+        type:                        "change_order",
+        leadId:                      co.lead_id,
+        clientName:                  parentLead?.lead_name || "Unnamed",
+        address:                     parentLead?.address_line_1
+                                       ? `${parentLead.address_line_1}${parentLead.city ? ", " + parentLead.city : ""}`
+                                       : parentLead?.city || "No address",
+        jobType:                     co.job_type || null,
+        description:                 co.description || null,
+        salesperson:                 parentLead?.metadata?.salesperson || null,
+        contract:                    Number(co.amount) || 0,
+        totalCollected:              coPaymentsMap[co.id] || 0,
+        production_stage:            co.production_stage || null,
         production_stage_updated_at: co.production_stage_updated_at || null,
-        production_notes: co.production_notes || null,
-        orderNumber: co.order_number,
+        production_notes:            co.production_notes || null,
+        orderNumber:                 co.order_number,
+        sourceId:                    parentLead?.source_id || null,
+        sourceName:                  parentLead?.lead_sources?.name || null,
       };
     });
 
     setJobs([...leadRows, ...coRows]);
   }
 
-  useEffect(() => { fetchJobs().finally(() => setLoading(false)); }, []);
+  async function fetchSources() {
+    const { data } = await supabase.from("lead_sources").select("id, name").order("name");
+    setSources(data || []);
+  }
+
+  useEffect(() => {
+    Promise.all([fetchJobs(), fetchSources()]).finally(() => setLoading(false));
+  }, []);
 
   const handleStageUpdate = async (row: JobRow, newStage: string) => {
     const key = `${row.type}-${row.id}`;
@@ -156,11 +182,9 @@ export default function ProductionPage() {
     await fetchJobs();
   };
 
-  // Save edited stage date
   const handleSaveDate = async (row: JobRow) => {
     if (!dateDraft) return;
     setSavingDate(true);
-    // Build ISO from local date — set to noon to avoid timezone issues
     const isoDate = new Date(`${dateDraft}T12:00:00`).toISOString();
     if (row.type === "lead") {
       await supabase.from("leads").update({ production_stage_updated_at: isoDate }).eq("id", row.id);
@@ -172,27 +196,43 @@ export default function ProductionPage() {
     await fetchJobs();
   };
 
-  const isPending = (stage: string | null) => stage?.startsWith("Pending") || false;
+  const isPending    = (stage: string | null) => stage?.startsWith("Pending") || false;
+  const isActive     = (stage: string | null) =>
+    !!stage && !isPending(stage) &&
+    !["Completed","Completed with Balance","Cancelled Before Start","Cancelled Mid-Job"].includes(stage);
 
-  const filteredJobs = filter === "all" ? jobs
-    : filter === "pending" ? jobs.filter(j => isPending(j.production_stage))
-    : filter === "active" ? jobs.filter(j => j.production_stage && !isPending(j.production_stage) && !["Completed", "Completed with Balance", "Cancelled Before Start", "Cancelled Mid-Job"].includes(j.production_stage))
-    : filter === "completed" ? jobs.filter(j => j.production_stage?.startsWith("Completed"))
-    : filter === "cancelled" ? jobs.filter(j => j.production_stage?.startsWith("Cancelled"))
-    : filter === "balance" ? jobs.filter(j => (j.contract - j.totalCollected) > 0)
+  // ── Apply stage + source filters ──────────────────────────────────────────────
+  const stageFiltered = filter === "all"       ? jobs
+    : filter === "pending"                     ? jobs.filter(j => isPending(j.production_stage))
+    : filter === "active"                      ? jobs.filter(j => isActive(j.production_stage))
+    : filter === "completed"                   ? jobs.filter(j => j.production_stage?.startsWith("Completed"))
+    : filter === "cancelled"                   ? jobs.filter(j => j.production_stage?.startsWith("Cancelled"))
+    : filter === "no_stage"                    ? jobs.filter(j => !j.production_stage)
+    : filter === "balance"                     ? jobs.filter(j => (j.contract - j.totalCollected) > 0)
     : jobs;
 
-  const totalContract = jobs.reduce((sum, j) => sum + j.contract, 0);
-  const totalCollected = jobs.reduce((sum, j) => sum + j.totalCollected, 0);
-  const totalBalance = totalContract - totalCollected;
-  const pendingCount = jobs.filter(j => isPending(j.production_stage)).length;
+  // ✅ Apply source filter on top of stage filter
+  const filteredJobs = filterSourceId
+    ? stageFiltered.filter(j => j.sourceId === filterSourceId)
+    : stageFiltered;
+
+  // ── Summary counts (unaffected by source filter so badges stay accurate) ──────
+  const pendingCount   = jobs.filter(j => isPending(j.production_stage)).length;
+  const activeCount    = jobs.filter(j => isActive(j.production_stage)).length;
+  const noStageCount   = jobs.filter(j => !j.production_stage).length;
+
+  const totalContract  = filteredJobs.reduce((s, j) => s + j.contract, 0);
+  const totalCollected = filteredJobs.reduce((s, j) => s + j.totalCollected, 0);
+  const totalBalance   = totalContract - totalCollected;
 
   return (
     <div className="space-y-6 max-w-full">
+
+      {/* ── Summary KPI cards ── */}
       <div className="grid grid-cols-3 gap-4">
         <div className="rounded-xl border bg-card p-4">
           <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">Total Jobs</p>
-          <p className="text-2xl font-bold mt-1">{jobs.length}</p>
+          <p className="text-2xl font-bold mt-1">{filteredJobs.length}</p>
           {pendingCount > 0 && <p className="text-xs text-slate-500 mt-1">{pendingCount} pending</p>}
         </div>
         <div className="rounded-xl border bg-card p-4">
@@ -201,36 +241,64 @@ export default function ProductionPage() {
         </div>
         <div className="rounded-xl border bg-card p-4">
           <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">Total Balance Due</p>
-          <p className={`text-2xl font-bold mt-1 ${totalBalance > 0 ? "text-red-500" : "text-emerald-600"}`}>${totalBalance.toLocaleString()}</p>
+          <p className={`text-2xl font-bold mt-1 ${totalBalance > 0 ? "text-red-500" : "text-emerald-600"}`}>
+            ${totalBalance.toLocaleString()}
+          </p>
         </div>
       </div>
 
+      {/* ── Filters row ── */}
       <div className="flex items-center gap-2 flex-wrap">
+
+        {/* Stage filters */}
         {[
-          { key: "all", label: "All Jobs" },
-          { key: "pending", label: "Pending" },
-          { key: "active", label: "Active" },
-          { key: "completed", label: "Completed" },
-          { key: "cancelled", label: "Cancelled" },
-          { key: "balance", label: "Has Balance" },
-        ].map((f) => (
+          { key: "active",    label: "Active",    badge: activeCount  },
+          { key: "pending",   label: "Pending",   badge: pendingCount },
+          { key: "no_stage",  label: "No Stage",  badge: noStageCount },
+          { key: "completed", label: "Completed", badge: null         },
+          { key: "cancelled", label: "Cancelled", badge: null         },
+          { key: "balance",   label: "Has Balance",badge: null        },
+          { key: "all",       label: "All Jobs",  badge: null         },
+        ].map(f => (
           <button key={f.key} onClick={() => setFilter(f.key)}
-            className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${filter === f.key ? "bg-primary text-primary-foreground" : "bg-secondary text-secondary-foreground hover:bg-secondary/80"}`}>
+            className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
+              filter === f.key ? "bg-primary text-primary-foreground" : "bg-secondary text-secondary-foreground hover:bg-secondary/80"
+            }`}>
             {f.label}
-            {f.key === "pending" && pendingCount > 0 && (
-              <span className="ml-1.5 bg-slate-600 text-white rounded-full px-1.5 py-0.5 text-xs">{pendingCount}</span>
+            {f.badge != null && f.badge > 0 && (
+              <span className="ml-1.5 bg-slate-600 text-white rounded-full px-1.5 py-0.5 text-xs">{f.badge}</span>
             )}
           </button>
         ))}
+
+        {/* ✅ Lead source dropdown filter */}
+        <select
+          value={filterSourceId}
+          onChange={e => setFilterSourceId(e.target.value)}
+          className="ml-2 text-xs rounded-md border border-border bg-background px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-primary/40 text-muted-foreground"
+        >
+          <option value="">All Sources</option>
+          {sources.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+        </select>
+
+        {filterSourceId && (
+          <button onClick={() => setFilterSourceId("")}
+            className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1">
+            × Clear source
+          </button>
+        )}
+
         <span className="ml-auto text-xs text-muted-foreground">{filteredJobs.length} jobs</span>
       </div>
 
+      {/* ── Jobs table ── */}
       <div className="rounded-xl border overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b bg-muted/50">
                 <th className="text-left px-4 py-3 font-medium text-muted-foreground whitespace-nowrap">Job / Client</th>
+                <th className="text-left px-4 py-3 font-medium text-muted-foreground whitespace-nowrap">Source</th>
                 <th className="text-left px-4 py-3 font-medium text-muted-foreground whitespace-nowrap">Salesperson</th>
                 <th className="text-right px-4 py-3 font-medium text-muted-foreground whitespace-nowrap">Contract</th>
                 <th className="text-right px-4 py-3 font-medium text-muted-foreground whitespace-nowrap">Collected</th>
@@ -242,155 +310,164 @@ export default function ProductionPage() {
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={8} className="px-4 py-8 text-center text-muted-foreground">Loading jobs...</td></tr>
+                <tr><td colSpan={9} className="px-4 py-8 text-center text-muted-foreground">Loading jobs...</td></tr>
               ) : filteredJobs.length === 0 ? (
-                <tr><td colSpan={8} className="px-4 py-8 text-center text-muted-foreground">No jobs found.</td></tr>
-              ) : (
-                filteredJobs.map((job) => {
-                  const balance = job.contract - job.totalCollected;
-                  const rowKey = `${job.type}-${job.id}`;
-                  const isUpdating = updating === rowKey;
-                  const isEditingNote = editingNotes === rowKey;
-                  const isEditingThisDate = editingDate === rowKey;
-                  const isCalendarStage = CALENDAR_STAGES.includes(job.production_stage || "");
-                  const rowBg = isPending(job.production_stage)
-                    ? "bg-slate-50/50 dark:bg-slate-900/20"
-                    : job.type === "change_order"
-                    ? "bg-blue-50/30 dark:bg-blue-950/10"
-                    : "";
+                <tr><td colSpan={9} className="px-4 py-8 text-center text-muted-foreground">
+                  {filter === "active" ? "No active jobs. Jobs appear here when they have a production stage set." : "No jobs found."}
+                </td></tr>
+              ) : filteredJobs.map(job => {
+                const balance           = job.contract - job.totalCollected;
+                const rowKey            = `${job.type}-${job.id}`;
+                const isUpdating        = updating === rowKey;
+                const isEditingNote     = editingNotes === rowKey;
+                const isEditingThisDate = editingDate === rowKey;
+                const isCalendarStage   = CALENDAR_STAGES.includes(job.production_stage || "");
+                const rowBg             = isPending(job.production_stage)
+                  ? "bg-slate-50/50 dark:bg-slate-900/20"
+                  : job.type === "change_order"
+                  ? "bg-blue-50/30 dark:bg-blue-950/10"
+                  : "";
 
-                  return (
-                    <tr key={rowKey} className={`border-b hover:bg-muted/30 transition-colors ${rowBg}`}>
-                      <td className="px-4 py-3">
-                        <div className="flex items-center gap-2">
-                          {job.type === "change_order" && (
-                            <span className="text-xs px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 font-medium shrink-0">CO#{job.orderNumber}</span>
-                          )}
-                          <div>
-                            <p className="font-medium">{job.clientName}</p>
-                            <p className="text-xs text-muted-foreground">{job.address}</p>
-                            <div className="flex items-center gap-1.5 mt-0.5">
-                              {job.jobType && <span className="text-xs text-primary">{job.jobType}</span>}
-                              {job.description && <span className="text-xs text-muted-foreground">· {job.description}</span>}
-                            </div>
+                return (
+                  <tr key={rowKey} className={`border-b hover:bg-muted/30 transition-colors ${rowBg}`}>
+
+                    {/* Job / Client */}
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-2">
+                        {job.type === "change_order" && (
+                          <span className="text-xs px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 font-medium shrink-0">CO#{job.orderNumber}</span>
+                        )}
+                        <div>
+                          <p className="font-medium">{job.clientName}</p>
+                          <p className="text-xs text-muted-foreground">{job.address}</p>
+                          <div className="flex items-center gap-1.5 mt-0.5">
+                            {job.jobType    && <span className="text-xs text-primary">{job.jobType}</span>}
+                            {job.description && <span className="text-xs text-muted-foreground">· {job.description}</span>}
                           </div>
                         </div>
-                      </td>
-                      <td className="px-4 py-3 text-muted-foreground whitespace-nowrap">{job.salesperson || "—"}</td>
-                      <td className="px-4 py-3 text-right font-medium whitespace-nowrap">${job.contract.toLocaleString()}</td>
-                      <td className="px-4 py-3 text-right font-medium text-emerald-600 whitespace-nowrap">${job.totalCollected.toLocaleString()}</td>
-                      <td className="px-4 py-3 text-right whitespace-nowrap">
-                        <span className={`font-bold ${balance > 0 ? "text-red-500" : "text-emerald-600"}`}>${balance.toLocaleString()}</span>
-                      </td>
-                      <td className="px-4 py-3">
-                        <select
-                          value={job.production_stage || ""}
-                          onChange={(e) => handleStageUpdate(job, e.target.value)}
-                          disabled={isUpdating}
-                          className="text-xs rounded-md border border-border bg-background px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-primary/40 disabled:opacity-50 min-w-[190px]"
-                        >
-                          <option value="">— Set Stage —</option>
-                          <optgroup label="Pending">
-                            <option value="Pending - Check">Pending - Check</option>
-                            <option value="Pending - Financing">Pending - Financing</option>
-                            <option value="Pending - Deposit">Pending - Deposit</option>
-                          </optgroup>
-                          <optgroup label="Active">
-                            <option value="Deposit Collected">Deposit Collected</option>
-                            <option value="Materials Ordered">Materials Ordered</option>
-                            <option value="Permit Submitted">Permit Submitted</option>
-                            <option value="Permit Approved">Permit Approved</option>
-                            <option value="Scheduled to Start">Scheduled to Start</option>
-                            <option value="Job In Progress">Job In Progress</option>
-                            <option value="Rough Inspection">Rough Inspection</option>
-                            <option value="Final Inspection">Final Inspection</option>
-                            <option value="Inspection Approved">Inspection Approved</option>
-                          </optgroup>
-                          <optgroup label="Closed">
-                            <option value="Completed">Completed</option>
-                            <option value="Completed with Balance">Completed with Balance</option>
-                            <option value="Cancelled Before Start">Cancelled Before Start</option>
-                            <option value="Cancelled Mid-Job">Cancelled Mid-Job</option>
-                          </optgroup>
-                        </select>
-                        {job.production_stage && (
-                          <div className="mt-1 flex items-center gap-1">
-                            <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${stageColors[job.production_stage] || "bg-gray-100 text-gray-700"}`}>
-                              {job.production_stage}
-                            </span>
-                            {isCalendarStage && (
-                              <span className="text-xs px-1.5 py-0.5 rounded bg-blue-100 text-blue-600 font-medium">📅 cal</span>
-                            )}
-                          </div>
-                        )}
-                      </td>
+                      </div>
+                    </td>
 
-                      {/* STAGE DATE — editable date picker */}
-                      <td className="px-4 py-3 min-w-[160px]">
-                        {isEditingThisDate ? (
-                          <div className="space-y-1">
-                            <input
-                              type="date"
-                              value={dateDraft}
-                              onChange={(e) => setDateDraft(e.target.value)}
-                              autoFocus
-                              className="w-full rounded-md border border-border bg-background px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-primary/40"
-                            />
-                            <div className="flex gap-1">
-                              <button onClick={() => handleSaveDate(job)} disabled={savingDate || !dateDraft} className="text-xs px-2 py-0.5 rounded bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-40">{savingDate ? "..." : "Save"}</button>
-                              <button onClick={() => setEditingDate(null)} className="text-xs px-2 py-0.5 rounded border border-border hover:bg-muted">Cancel</button>
-                            </div>
-                          </div>
-                        ) : (
-                          <div
-                            onClick={() => { setEditingDate(rowKey); setDateDraft(toLocalDateValue(job.production_stage_updated_at)); }}
-                            className="cursor-pointer group"
-                            title="Click to edit date"
-                          >
-                            {job.production_stage_updated_at ? (
-                              <p className="text-xs text-foreground group-hover:text-primary transition-colors">
-                                {new Date(job.production_stage_updated_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
-                              </p>
-                            ) : (
-                              <p className="text-xs text-muted-foreground/50 group-hover:text-primary transition-colors">+ Set date</p>
-                            )}
-                            {isCalendarStage && job.production_stage_updated_at && (
-                              <p className="text-xs text-blue-500 mt-0.5">on calendar</p>
-                            )}
-                          </div>
-                        )}
-                      </td>
+                    {/* ✅ Source column */}
+                    <td className="px-4 py-3 whitespace-nowrap">
+                      {job.sourceName
+                        ? <span className="text-xs px-2 py-0.5 rounded-full bg-muted font-medium">{job.sourceName}</span>
+                        : <span className="text-xs text-muted-foreground/40">—</span>}
+                    </td>
 
-                      <td className="px-4 py-3 min-w-[180px]">
-                        {isEditingNote ? (
-                          <div className="space-y-1">
-                            <textarea
-                              value={noteDraft}
-                              onChange={(e) => setNoteDraft(e.target.value)}
-                              rows={2}
-                              autoFocus
-                              className="w-full rounded-md border border-border bg-background px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-primary/40 resize-none"
-                              placeholder="Add a note..."
-                            />
-                            <div className="flex gap-1">
-                              <button onClick={() => handleSaveNote(job)} className="text-xs px-2 py-0.5 rounded bg-primary text-primary-foreground hover:bg-primary/90">Save</button>
-                              <button onClick={() => setEditingNotes(null)} className="text-xs px-2 py-0.5 rounded border border-border hover:bg-muted">Cancel</button>
-                            </div>
+                    <td className="px-4 py-3 text-muted-foreground whitespace-nowrap">{job.salesperson || "—"}</td>
+                    <td className="px-4 py-3 text-right font-medium whitespace-nowrap">${job.contract.toLocaleString()}</td>
+                    <td className="px-4 py-3 text-right font-medium text-emerald-600 whitespace-nowrap">${job.totalCollected.toLocaleString()}</td>
+                    <td className="px-4 py-3 text-right whitespace-nowrap">
+                      <span className={`font-bold ${balance > 0 ? "text-red-500" : "text-emerald-600"}`}>
+                        ${balance.toLocaleString()}
+                      </span>
+                    </td>
+
+                    {/* Production Stage */}
+                    <td className="px-4 py-3">
+                      <select
+                        value={job.production_stage || ""}
+                        onChange={e => handleStageUpdate(job, e.target.value)}
+                        disabled={isUpdating}
+                        className="text-xs rounded-md border border-border bg-background px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-primary/40 disabled:opacity-50 min-w-[190px]"
+                      >
+                        <option value="">— Set Stage —</option>
+                        <optgroup label="Pending">
+                          <option value="Pending - Check">Pending - Check</option>
+                          <option value="Pending - Financing">Pending - Financing</option>
+                          <option value="Pending - Deposit">Pending - Deposit</option>
+                        </optgroup>
+                        <optgroup label="Active">
+                          <option value="Deposit Collected">Deposit Collected</option>
+                          <option value="Materials Ordered">Materials Ordered</option>
+                          <option value="Permit Submitted">Permit Submitted</option>
+                          <option value="Permit Approved">Permit Approved</option>
+                          <option value="Scheduled to Start">Scheduled to Start</option>
+                          <option value="Job In Progress">Job In Progress</option>
+                          <option value="Rough Inspection">Rough Inspection</option>
+                          <option value="Final Inspection">Final Inspection</option>
+                          <option value="Inspection Approved">Inspection Approved</option>
+                        </optgroup>
+                        <optgroup label="Closed">
+                          <option value="Completed">Completed</option>
+                          <option value="Completed with Balance">Completed with Balance</option>
+                          <option value="Cancelled Before Start">Cancelled Before Start</option>
+                          <option value="Cancelled Mid-Job">Cancelled Mid-Job</option>
+                        </optgroup>
+                      </select>
+                      {job.production_stage && (
+                        <div className="mt-1 flex items-center gap-1">
+                          <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${stageColors[job.production_stage] || "bg-gray-100 text-gray-700"}`}>
+                            {job.production_stage}
+                          </span>
+                          {isCalendarStage && (
+                            <span className="text-xs px-1.5 py-0.5 rounded bg-blue-100 text-blue-600 font-medium">📅 cal</span>
+                          )}
+                        </div>
+                      )}
+                    </td>
+
+                    {/* Stage Date */}
+                    <td className="px-4 py-3 min-w-[160px]">
+                      {isEditingThisDate ? (
+                        <div className="space-y-1">
+                          <input type="date" value={dateDraft}
+                            onChange={e => setDateDraft(e.target.value)} autoFocus
+                            className="w-full rounded-md border border-border bg-background px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-primary/40" />
+                          <div className="flex gap-1">
+                            <button onClick={() => handleSaveDate(job)} disabled={savingDate || !dateDraft}
+                              className="text-xs px-2 py-0.5 rounded bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-40">
+                              {savingDate ? "..." : "Save"}
+                            </button>
+                            <button onClick={() => setEditingDate(null)}
+                              className="text-xs px-2 py-0.5 rounded border border-border hover:bg-muted">Cancel</button>
                           </div>
-                        ) : (
-                          <div onClick={() => { setEditingNotes(rowKey); setNoteDraft(job.production_notes || ""); }} className="cursor-pointer group">
-                            {job.production_notes ? (
-                              <p className="text-xs text-foreground group-hover:text-primary transition-colors">{job.production_notes}</p>
-                            ) : (
-                              <p className="text-xs text-muted-foreground/50 group-hover:text-primary transition-colors">+ Add note</p>
-                            )}
+                        </div>
+                      ) : (
+                        <div
+                          onClick={() => { setEditingDate(rowKey); setDateDraft(toLocalDateValue(job.production_stage_updated_at)); }}
+                          className="cursor-pointer group" title="Click to edit date">
+                          {job.production_stage_updated_at ? (
+                            <p className="text-xs text-foreground group-hover:text-primary transition-colors">
+                              {new Date(job.production_stage_updated_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                            </p>
+                          ) : (
+                            <p className="text-xs text-muted-foreground/50 group-hover:text-primary transition-colors">+ Set date</p>
+                          )}
+                          {isCalendarStage && job.production_stage_updated_at && (
+                            <p className="text-xs text-blue-500 mt-0.5">on calendar</p>
+                          )}
+                        </div>
+                      )}
+                    </td>
+
+                    {/* Notes */}
+                    <td className="px-4 py-3 min-w-[180px]">
+                      {isEditingNote ? (
+                        <div className="space-y-1">
+                          <textarea value={noteDraft} onChange={e => setNoteDraft(e.target.value)}
+                            rows={2} autoFocus placeholder="Add a note..."
+                            className="w-full rounded-md border border-border bg-background px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-primary/40 resize-none" />
+                          <div className="flex gap-1">
+                            <button onClick={() => handleSaveNote(job)}
+                              className="text-xs px-2 py-0.5 rounded bg-primary text-primary-foreground hover:bg-primary/90">Save</button>
+                            <button onClick={() => setEditingNotes(null)}
+                              className="text-xs px-2 py-0.5 rounded border border-border hover:bg-muted">Cancel</button>
                           </div>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })
-              )}
+                        </div>
+                      ) : (
+                        <div onClick={() => { setEditingNotes(rowKey); setNoteDraft(job.production_notes || ""); }}
+                          className="cursor-pointer group">
+                          {job.production_notes
+                            ? <p className="text-xs text-foreground group-hover:text-primary transition-colors">{job.production_notes}</p>
+                            : <p className="text-xs text-muted-foreground/50 group-hover:text-primary transition-colors">+ Add note</p>}
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
