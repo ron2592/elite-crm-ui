@@ -1,445 +1,421 @@
 "use client";
 
-import { useState } from "react";
-import { Plus, CheckCircle, AlertTriangle } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { useState, useEffect } from "react";
+import { supabase } from "@/lib/supabaseClient";
+import { X, Loader2 } from "lucide-react";
 
-const LEAD_SOURCES = [
-  "LSA Clifton","LSA Teaneck","LSA Hawthorne",
-  "Pro Referral","Referrals","Google/Website",
-  "Social Media (Meta)","Repeat Client",
+// ── Constants ─────────────────────────────────────────────────────────────────
+const JOB_TYPES = [
+  "Roof Replacement","Roof Repair","Deck","Siding","Gutters",
+  "Windows","Doors","Painting","Masonry","Patio","Walkway",
+  "Stairs","Addition","Other",
 ];
+const SALESPERSONS = ["Ron","Ray","Other (Phone)"];
 
-const STANDARD_JOB_TYPES = [
-  "Roof Replacement","Roof Repair","Deck","Siding",
-  "Windows","Painting","Masonry","Stucco","Chimney",
-];
+function formatPhone(v: string) {
+  const d = v.replace(/\D/g,"").slice(0,10);
+  if (d.length <= 3) return d;
+  if (d.length <= 6) return `(${d.slice(0,3)}) ${d.slice(3)}`;
+  return `(${d.slice(0,3)}) ${d.slice(3,6)}-${d.slice(6)}`;
+}
+function normalizePhone(raw: string): string {
+  const digits = raw.replace(/\D/g,"").slice(0,10);
+  if (digits.length === 10) return `(${digits.slice(0,3)}) ${digits.slice(3,6)}-${digits.slice(6)}`;
+  return raw;
+}
+function todayStr() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+}
 
-const SALESPEOPLE = ["Ron","Ray"];
-
-const PIPELINE_STAGES = [
-  { value: "new_lead",        label: "New Lead" },
-  { value: "contacted",       label: "Qualified" },
-  { value: "appointment_set", label: "Appointment Set" },
-  { value: "estimate_sent",   label: "Estimate Sent" },
-  { value: "closed_won",      label: "Closed Won" },
-];
-
-const STATUS_LABELS: Record<string, string> = {
-  new_lead:         "New Lead",
-  new:              "New Lead",
-  contacted:        "Qualified",
-  appointment_set:  "Appointment Set",
-  estimate_sent:    "Estimate Sent",
-  closed_won:       "Closed Won",
-  won:              "Closed Won",
-  lost:             "Lost",
-  not_qualified:    "Not Qualified",
-  cancelled_appointment: "Cancelled Appt",
+const BLANK_FORM = {
+  lead_received:  todayStr(),
+  first_name:     "",
+  last_name:      "",
+  phone:          "",
+  email:          "",
+  address:        "",
+  zip:            "",
+  city:           "",
+  state:          "",
+  source_id:      "",
+  job_type:       "",
+  salesperson:    "",
+  notes:          "",
+  // Pipeline
+  status:         "new",
+  // Contract (only for closed_won / completed)
+  contact_type:   "",
+  contract_value: "",
+  description:    "",
 };
 
-function formatPhone(value: string) {
-  const digits = value.replace(/\D/g, "").slice(0, 10);
-  if (digits.length <= 3) return digits;
-  if (digits.length <= 6) return `(${digits.slice(0,3)}) ${digits.slice(3)}`;
-  return `(${digits.slice(0,3)}) ${digits.slice(3,6)}-${digits.slice(6)}`;
-}
-
-function todayStr() {
-  return new Date().toISOString().split("T")[0];
-}
-
-interface DuplicateInfo {
-  id: string;
-  name: string;
-  status: string;
-  phone: string;
-  created_at: string;
-}
-
 interface AddLeadModalProps {
-  open?: boolean;
-  onOpenChange?: (open: boolean) => void;
+  open:          boolean;
+  onOpenChange:  (open: boolean) => void;
+  onLeadCreated?: () => void;
 }
 
-export default function AddLeadModal({ open: externalOpen, onOpenChange }: AddLeadModalProps = {}) {
-  const [internalOpen, setInternalOpen] = useState(false);
+export default function AddLeadModal({ open, onOpenChange, onLeadCreated }: AddLeadModalProps) {
+  const [form,          setForm]          = useState({ ...BLANK_FORM });
+  const [sources,       setSources]       = useState<{id:string;name:string}[]>([]);
+  const [saving,        setSaving]        = useState(false);
+  const [dupWarning,    setDupWarning]    = useState<{name:string;status:string}|null>(null);
+  const [zipLoading,    setZipLoading]    = useState(false);
+  const [otherJobType,  setOtherJobType]  = useState("");
+  const [showOtherJob,  setShowOtherJob]  = useState(false);
 
-  const open    = externalOpen !== undefined ? externalOpen : internalOpen;
-  const setOpen = (val: boolean) => {
-    if (onOpenChange) onOpenChange(val);
-    else setInternalOpen(val);
-  };
+  // ✅ Shows contract fields when stage is Closed Won or Completed
+  const isWonStage = ["closed_won","completed"].includes(form.status);
 
-  const [loading,    setLoading]    = useState(false);
-  const [success,    setSuccess]    = useState(false);
-  const [zipLooking, setZipLooking] = useState(false);
+  useEffect(() => {
+    supabase.from("lead_sources").select("id,name").order("name").then(({ data }) => setSources(data || []));
+  }, []);
 
-  // ✅ Duplicate warning state
-  const [duplicate,    setDuplicate]    = useState<DuplicateInfo | null>(null);
-  const [forceSaving,  setForceSaving]  = useState(false);
-
-  const emptyForm = {
-    date_received:   todayStr(),
-    first_name:      "",
-    last_name:       "",
-    phone:           "",
-    email:           "",
-    client_address:  "",
-    client_city:     "",
-    client_state:    "",
-    client_zip:      "",
-    lead_source:     "",
-    job_type:        "",
-    custom_job_type: "",
-    salesperson:     "",
-    status:          "new_lead",
-    notes:           "",
-  };
-
-  const [form, setForm] = useState(emptyForm);
-
-  const handleChange = (
-    e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>
-  ) => {
-    const { name, value } = e.target;
-    // Clear duplicate warning when phone is edited
-    if (name === "phone") {
-      setDuplicate(null);
-      setForm({ ...form, phone: formatPhone(value) });
-    } else if (name === "job_type") {
-      setForm({ ...form, job_type: value, custom_job_type: value !== "Other" ? "" : form.custom_job_type });
-    } else {
-      setForm({ ...form, [name]: value });
+  useEffect(() => {
+    if (!open) {
+      setForm({ ...BLANK_FORM, lead_received: todayStr() });
+      setDupWarning(null);
+      setShowOtherJob(false);
+      setOtherJobType("");
     }
-  };
+  }, [open]);
 
-  const handleZipLookup = async (zip: string) => {
+  // ── Zip autofill ─────────────────────────────────────────────────────────────
+  async function handleZipBlur(zip: string) {
     if (zip.length !== 5) return;
-    setZipLooking(true);
+    setZipLoading(true);
     try {
-      const res = await fetch(`https://api.zippopotam.us/us/${zip}`);
+      const res  = await fetch(`https://api.zippopotam.us/us/${zip}`);
       if (res.ok) {
-        const data = await res.json();
+        const data  = await res.json();
         const place = data.places?.[0];
-        if (place) {
-          setForm(prev => ({
-            ...prev,
-            client_city:  place["place name"]          || prev.client_city,
-            client_state: place["state abbreviation"]  || prev.client_state,
-          }));
-        }
+        if (place) setForm(f => ({ ...f, city: place["place name"] || "", state: place["state abbreviation"] || "" }));
       }
-    } catch (_) {}
-    setZipLooking(false);
-  };
+    } catch {}
+    setZipLoading(false);
+  }
 
-  // ─── Core submit — force=false for first attempt, force=true for "Add Anyway"
-  const submitLead = async (force = false) => {
-    const full_name    = `${form.first_name.trim()} ${form.last_name.trim()}`.trim();
-    const finalJobType = form.job_type === "Other"
-      ? form.custom_job_type.trim()
-      : form.job_type;
+  // ── Dedup + Save ──────────────────────────────────────────────────────────────
+  async function handleSave(force = false) {
+    if (!form.phone && !form.first_name) return;
+    setSaving(true);
+    setDupWarning(null);
 
-    const res = await fetch("/api/leads", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        lead_name:      full_name || form.phone,
-        phone:          form.phone          || null,
-        email:          form.email          || null,
-        client_address: form.client_address || null,
-        client_city:    form.client_city    || null,
-        client_state:   form.client_state   || null,
-        client_zip:     form.client_zip     || null,
-        lead_source:    form.lead_source    || null,
-        meta_job_type:     finalJobType     || null,
-        meta_salesperson:  form.salesperson || null,
-        meta_notes:        form.notes       || null,
-        status:   form.status || "new_lead",
-        created_at: form.date_received
-          ? new Date(form.date_received + "T00:00:00").toISOString()
-          : new Date().toISOString(),
-        archived: false,
-        bad_lead: false,
-        // ✅ force=true skips the dedup check in the API route
-        force,
-      }),
-    });
+    if (form.phone && !force) {
+      const normalized = normalizePhone(form.phone);
+      const digits     = form.phone.replace(/\D/g,"");
 
-    return res;
-  };
+      // 1. Exact match on normalized format
+      const { data: m1 } = await supabase.from("leads")
+        .select("id,lead_name,status").eq("phone", normalized).neq("archived", true).limit(1).maybeSingle();
+      // 2. Exact match on raw input (different format)
+      const { data: m2 } = !m1 ? await supabase.from("leads")
+        .select("id,lead_name,status").eq("phone", form.phone).neq("archived", true).limit(1).maybeSingle()
+        : { data: null };
+      // 3. Digit-normalized fallback on recent 200 leads
+      let existing = m1 || m2;
+      if (!existing && digits.length >= 7) {
+        const { data: cands } = await supabase.from("leads")
+          .select("id,lead_name,status,phone").neq("archived",true).order("created_at",{ascending:false}).limit(200);
+        existing = (cands || []).find((l: any) => l.phone?.replace(/\D/g,"") === digits) || null;
+      }
 
-  const handleSubmit = async () => {
-    if (!form.first_name.trim() && !form.phone.trim()) {
-      alert("First name or phone is required.");
-      return;
-    }
-    setLoading(true);
-    setDuplicate(null);
-    try {
-      const res  = await submitLead(false);
-      const data = await res.json();
-
-      if (res.status === 409 && data.duplicate) {
-        // ✅ Duplicate found — show warning, don't close modal
-        setDuplicate(data.existing);
+      if (existing) {
+        setDupWarning({ name: existing.lead_name || "Unnamed", status: existing.status });
+        setSaving(false);
         return;
       }
-
-      if (res.ok) {
-        setSuccess(true);
-        setTimeout(() => {
-          setSuccess(false);
-          setOpen(false);
-          setForm(emptyForm);
-          setDuplicate(null);
-        }, 1500);
-      } else {
-        alert("Error: " + (data.error || "Unknown error"));
-      }
-    } catch (err) {
-      alert("Something went wrong.");
-    } finally {
-      setLoading(false);
     }
-  };
 
-  // ✅ User confirmed they want to add anyway despite duplicate
-  const handleAddAnyway = async () => {
-    setForceSaving(true);
-    setDuplicate(null);
-    try {
-      const res  = await submitLead(true);
-      const data = await res.json();
-      if (res.ok) {
-        setSuccess(true);
-        setTimeout(() => {
-          setSuccess(false);
-          setOpen(false);
-          setForm(emptyForm);
-        }, 1500);
-      } else {
-        alert("Error: " + (data.error || "Unknown error"));
-      }
-    } catch (err) {
-      alert("Something went wrong.");
-    } finally {
-      setForceSaving(false);
+    const fullName  = `${form.first_name} ${form.last_name}`.trim();
+    const jobType   = showOtherJob ? otherJobType : form.job_type;
+    const createdAt = form.lead_received
+      ? new Date(form.lead_received + "T12:00:00").toISOString()
+      : new Date().toISOString();
+
+    const { error } = await supabase.from("leads").insert({
+      lead_name:              fullName || form.phone || "New Lead",
+      // ⚠️ NEVER insert first_name/last_name — GENERATED ALWAYS columns
+      phone:                  form.phone ? normalizePhone(form.phone) : null,
+      email:                  form.email   || null,
+      created_at:             createdAt,
+      client_address:         form.address || null,
+      client_city:            form.city    || null,
+      client_state:           form.state   || null,
+      client_zip:             form.zip     || null,
+      source_id:              form.source_id || null,
+      status:                 form.status,
+      contact_type:           isWonStage ? (form.contact_type || null) : null,
+      initial_contract_value: isWonStage && form.contract_value ? Number(form.contract_value) : 0,
+      archived:               false,
+      bad_lead:               false,
+      metadata: {
+        salesperson:                    form.salesperson || null,
+        job_type:                       jobType         || null,
+        notes:                          form.notes      || null,
+        initial_contract_description:   isWonStage ? (form.description || null) : null,
+      },
+    });
+
+    setSaving(false);
+    if (!error) {
+      onOpenChange(false);
+      onLeadCreated?.();
+    } else {
+      alert("Error saving lead: " + error.message);
     }
-  };
+  }
 
-  const handleClose = () => {
-    setOpen(false);
-    setDuplicate(null);
-    setForm(emptyForm);
-  };
-
-  const TriggerButton = externalOpen === undefined ? (
-    <Button size="sm" variant="ghost"
-      className="w-full justify-start gap-2 px-3 py-2.5 h-auto rounded-none text-sm font-normal"
-      onClick={() => setOpen(true)}>
-      <Plus className="h-3.5 w-3.5 text-muted-foreground" />
-      Add Lead
-    </Button>
-  ) : null;
+  if (!open) return null;
 
   return (
-    <>
-      {TriggerButton}
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+      <div className="bg-background w-full max-w-lg rounded-xl shadow-2xl border border-border overflow-y-auto max-h-[90vh]">
 
-      {open && (
-        <div className="fixed inset-0 flex items-center justify-center bg-black/50 z-[100] p-4">
-          <div className="bg-background rounded-xl border border-border shadow-xl p-6 w-full max-w-md max-h-[90vh] overflow-y-auto space-y-3">
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-border">
+          <h2 className="text-lg font-bold">Add New Lead</h2>
+          <button onClick={() => onOpenChange(false)} className="rounded-lg p-1.5 hover:bg-muted transition-colors">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
 
-            {success ? (
-              <div className="flex flex-col items-center justify-center py-8 gap-3">
-                <CheckCircle className="h-12 w-12 text-emerald-500" />
-                <p className="text-lg font-semibold text-emerald-600">Lead Saved!</p>
-                <p className="text-sm text-muted-foreground">The lead has been added to your pipeline.</p>
+        <div className="px-6 py-5 space-y-4">
+
+          {/* ── Duplicate warning ── */}
+          {dupWarning && (
+            <div className="rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/30 p-3">
+              <p className="text-xs font-semibold text-amber-700 mb-1">⚠ Duplicate Found</p>
+              <p className="text-xs text-amber-800 mb-2">
+                <span className="font-bold">{dupWarning.name}</span> already exists — stage: <span className="font-bold">{dupWarning.status}</span>
+              </p>
+              <div className="flex gap-2">
+                <button onClick={() => handleSave(true)}
+                  className="text-xs px-3 py-1.5 rounded-md bg-amber-600 text-white hover:bg-amber-700 font-medium">
+                  Add Anyway
+                </button>
+                <button onClick={() => setDupWarning(null)}
+                  className="text-xs px-3 py-1.5 rounded-md border border-border hover:bg-muted">
+                  Cancel
+                </button>
               </div>
-            ) : (
-              <>
-                <div className="flex items-center justify-between mb-1">
-                  <h2 className="text-lg font-semibold">Add New Lead</h2>
-                </div>
+            </div>
+          )}
 
-                {/* ✅ Duplicate warning banner */}
-                {duplicate && (
-                  <div className="rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/30 p-4 space-y-3">
-                    <div className="flex items-start gap-2">
-                      <AlertTriangle className="h-4 w-4 text-amber-600 mt-0.5 shrink-0" />
-                      <div className="flex-1">
-                        <p className="text-sm font-semibold text-amber-800 dark:text-amber-300">
-                          Possible duplicate detected
-                        </p>
-                        <p className="text-xs text-amber-700 dark:text-amber-400 mt-1">
-                          A lead with phone <span className="font-semibold">{duplicate.phone}</span> already exists:
-                        </p>
-                        <div className="mt-2 rounded-md bg-amber-100 dark:bg-amber-900/40 px-3 py-2 space-y-0.5">
-                          <p className="text-sm font-bold text-foreground">{duplicate.name}</p>
-                          <p className="text-xs text-muted-foreground">
-                            Stage: <span className="font-medium">{STATUS_LABELS[duplicate.status] || duplicate.status}</span>
-                            {" · "}
-                            Added: <span className="font-medium">
-                              {new Date(duplicate.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
-                            </span>
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-                    <div className="flex gap-2">
-                      <button
-                        onClick={handleAddAnyway}
-                        disabled={forceSaving}
-                        className="flex-1 rounded-md bg-amber-600 text-white px-3 py-2 text-xs font-medium hover:bg-amber-700 disabled:opacity-50 transition-colors"
-                      >
-                        {forceSaving ? "Adding..." : "Add Anyway"}
-                      </button>
-                      <button
-                        onClick={() => setDuplicate(null)}
-                        className="flex-1 rounded-md border border-border px-3 py-2 text-xs font-medium hover:bg-muted transition-colors"
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  </div>
-                )}
+          {/* ── Lead Received Date ── */}
+          <div>
+            <label className="text-xs font-medium text-muted-foreground block mb-1">Lead Received Date</label>
+            <input type="date" value={form.lead_received}
+              onChange={e => setForm(f => ({ ...f, lead_received: e.target.value }))}
+              className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" />
+          </div>
 
-                <div className="grid grid-cols-2 gap-3">
+          {/* ── Name ── */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs font-medium text-muted-foreground block mb-1">First Name</label>
+              <input value={form.first_name} onChange={e => setForm(f => ({ ...f, first_name: e.target.value }))} placeholder="John"
+                className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground block mb-1">Last Name</label>
+              <input value={form.last_name} onChange={e => setForm(f => ({ ...f, last_name: e.target.value }))} placeholder="Smith"
+                className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" />
+            </div>
+          </div>
 
-                  {/* Lead Received Date */}
-                  <div className="col-span-2">
-                    <label className="text-xs text-muted-foreground mb-1 block font-medium">Lead Received Date</label>
-                    <input type="date" name="date_received" value={form.date_received} onChange={handleChange}
-                      className="w-full border border-border rounded-md p-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/40" />
-                  </div>
+          {/* ── Phone + Email ── */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs font-medium text-muted-foreground block mb-1">Phone *</label>
+              <input value={form.phone}
+                onChange={e => { setDupWarning(null); setForm(f => ({ ...f, phone: formatPhone(e.target.value) })); }}
+                placeholder="(201) 555-0000"
+                className={`w-full rounded-md border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40 ${dupWarning ? "border-amber-400" : "border-border"}`} />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground block mb-1">Email</label>
+              <input type="email" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
+                placeholder="email@example.com"
+                className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" />
+            </div>
+          </div>
 
-                  {/* First + Last Name */}
-                  <div>
-                    <label className="text-xs text-muted-foreground mb-1 block">First Name</label>
-                    <input name="first_name" placeholder="First name" value={form.first_name} onChange={handleChange}
-                      className="w-full border border-border rounded-md p-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/40" />
-                  </div>
-                  <div>
-                    <label className="text-xs text-muted-foreground mb-1 block">Last Name</label>
-                    <input name="last_name" placeholder="Last name" value={form.last_name} onChange={handleChange}
-                      className="w-full border border-border rounded-md p-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/40" />
-                  </div>
+          {/* ── Address ── */}
+          <div>
+            <label className="text-xs font-medium text-muted-foreground block mb-1">Address</label>
+            <input value={form.address} onChange={e => setForm(f => ({ ...f, address: e.target.value }))}
+              placeholder="Street address"
+              className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" />
+          </div>
 
-                  {/* Phone + Email */}
-                  <div>
-                    <label className="text-xs text-muted-foreground mb-1 block">Phone *</label>
-                    <input name="phone" placeholder="(201) 555-0000" value={form.phone} onChange={handleChange}
-                      className={`w-full border rounded-md p-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/40 ${duplicate ? "border-amber-400" : "border-border"}`} />
-                  </div>
-                  <div>
-                    <label className="text-xs text-muted-foreground mb-1 block">Email</label>
-                    <input name="email" placeholder="email@example.com" value={form.email} onChange={handleChange}
-                      className="w-full border border-border rounded-md p-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/40" />
-                  </div>
+          {/* ── Zip / City / State ── */}
+          <div className="grid grid-cols-3 gap-3">
+            <div>
+              <label className="text-xs font-medium text-muted-foreground block mb-1">Zip</label>
+              <input value={form.zip} maxLength={5} placeholder="07011"
+                onChange={e => setForm(f => ({ ...f, zip: e.target.value }))}
+                onBlur={e => handleZipBlur(e.target.value)}
+                className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground block mb-1">City</label>
+              <input value={form.city} onChange={e => setForm(f => ({ ...f, city: e.target.value }))}
+                placeholder={zipLoading ? "Loading…" : "Auto-filled"}
+                className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground block mb-1">State</label>
+              <input value={form.state} onChange={e => setForm(f => ({ ...f, state: e.target.value }))} placeholder="NJ"
+                className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" />
+            </div>
+          </div>
 
-                  {/* Address */}
-                  <div className="col-span-2">
-                    <label className="text-xs text-muted-foreground mb-1 block">Address</label>
-                    <input name="client_address" placeholder="Street address" value={form.client_address} onChange={handleChange}
-                      className="w-full border border-border rounded-md p-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/40" />
-                  </div>
+          {/* ── Source + Salesperson ── */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs font-medium text-muted-foreground block mb-1">Lead Source</label>
+              <select value={form.source_id} onChange={e => setForm(f => ({ ...f, source_id: e.target.value }))}
+                className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40">
+                <option value="">Select source</option>
+                {sources.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground block mb-1">Salesperson</label>
+              <select value={form.salesperson} onChange={e => setForm(f => ({ ...f, salesperson: e.target.value }))}
+                className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40">
+                <option value="">Not assigned</option>
+                {SALESPERSONS.map(s => <option key={s}>{s}</option>)}
+              </select>
+            </div>
+          </div>
 
-                  {/* Zip + City */}
-                  <div>
-                    <label className="text-xs text-muted-foreground mb-1 block">
-                      Zip {zipLooking && <span className="text-blue-500">Looking up...</span>}
-                    </label>
-                    <input name="client_zip" placeholder="07011" maxLength={5} value={form.client_zip}
-                      onChange={e => {
-                        const val = e.target.value.replace(/\D/g, "").slice(0, 5);
-                        setForm({ ...form, client_zip: val });
-                        if (val.length === 5) handleZipLookup(val);
-                      }}
-                      className="w-full border border-border rounded-md p-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/40" />
-                  </div>
-                  <div>
-                    <label className="text-xs text-muted-foreground mb-1 block">City</label>
-                    <input name="client_city" placeholder="Auto-filled" value={form.client_city} onChange={handleChange}
-                      className="w-full border border-border rounded-md p-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/40" />
-                  </div>
-
-                  <div className="col-span-2">
-                    <label className="text-xs text-muted-foreground mb-1 block">State</label>
-                    <input name="client_state" placeholder="Auto-filled" value={form.client_state} onChange={handleChange}
-                      className="w-full border border-border rounded-md p-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/40" />
-                  </div>
-
-                  {/* Lead Source + Job Type */}
-                  <div>
-                    <label className="text-xs text-muted-foreground mb-1 block">Lead Source</label>
-                    <select name="lead_source" value={form.lead_source} onChange={handleChange}
-                      className="w-full border border-border rounded-md p-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/40">
-                      <option value="">Select source</option>
-                      {LEAD_SOURCES.map(s => <option key={s} value={s}>{s}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="text-xs text-muted-foreground mb-1 block">Job Type</label>
-                    <select name="job_type" value={form.job_type} onChange={handleChange}
-                      className="w-full border border-border rounded-md p-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/40">
-                      <option value="">Select job type</option>
-                      {STANDARD_JOB_TYPES.map(j => <option key={j} value={j}>{j}</option>)}
-                      <option value="Other">Other (type below)</option>
-                    </select>
-                    {form.job_type === "Other" && (
-                      <input name="custom_job_type" placeholder="e.g. Gutters, Insulation..."
-                        value={form.custom_job_type} onChange={handleChange} autoFocus
-                        className="mt-1.5 w-full border border-primary/40 rounded-md p-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/40" />
-                    )}
-                  </div>
-
-                  {/* Pipeline Stage */}
-                  <div className="col-span-2">
-                    <label className="text-xs text-muted-foreground mb-1 block">Pipeline Stage</label>
-                    <select name="status" value={form.status} onChange={handleChange}
-                      className="w-full border border-border rounded-md p-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/40">
-                      {PIPELINE_STAGES.map(s => (
-                        <option key={s.value} value={s.value}>{s.label}</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  {/* Salesperson */}
-                  <div className="col-span-2">
-                    <label className="text-xs text-muted-foreground mb-1 block">Salesperson</label>
-                    <select name="salesperson" value={form.salesperson} onChange={handleChange}
-                      className="w-full border border-border rounded-md p-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/40">
-                      <option value="">Select</option>
-                      {SALESPEOPLE.map(s => <option key={s} value={s}>{s}</option>)}
-                    </select>
-                  </div>
-
-                  {/* Notes */}
-                  <div className="col-span-2">
-                    <label className="text-xs text-muted-foreground mb-1 block">Notes</label>
-                    <textarea name="notes" placeholder="Job description or notes..." value={form.notes} onChange={handleChange}
-                      rows={3}
-                      className="w-full border border-border rounded-md p-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/40 resize-none" />
-                  </div>
-                </div>
-
-                <div className="flex justify-end gap-2 pt-2">
-                  <button onClick={handleClose}
-                    className="px-4 py-2 text-sm rounded-md border border-border hover:bg-muted transition-colors">
-                    Cancel
-                  </button>
-                  <button onClick={handleSubmit} disabled={loading || forceSaving}
-                    className="bg-primary text-primary-foreground px-4 py-2 rounded-md text-sm font-medium disabled:opacity-50 hover:bg-primary/90 transition-colors">
-                    {loading ? "Checking..." : "Save Lead"}
-                  </button>
-                </div>
-              </>
+          {/* ── Job Type ── */}
+          <div>
+            <label className="text-xs font-medium text-muted-foreground block mb-1">Job Type</label>
+            <select
+              value={showOtherJob ? "Other" : form.job_type}
+              onChange={e => {
+                if (e.target.value === "Other") { setShowOtherJob(true); setForm(f => ({ ...f, job_type: "Other" })); }
+                else { setShowOtherJob(false); setOtherJobType(""); setForm(f => ({ ...f, job_type: e.target.value })); }
+              }}
+              className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40">
+              <option value="">Select job type</option>
+              {JOB_TYPES.map(t => <option key={t}>{t}</option>)}
+            </select>
+            {showOtherJob && (
+              <input value={otherJobType} onChange={e => setOtherJobType(e.target.value)}
+                placeholder="Specify job type…" autoFocus
+                className="mt-2 w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" />
             )}
           </div>
+
+          {/* ── Pipeline Stage — ALL 10 STAGES ── */}
+          <div>
+            <label className="text-xs font-medium text-muted-foreground block mb-1">Pipeline Stage</label>
+            <select value={form.status}
+              onChange={e => setForm(f => ({ ...f, status: e.target.value, contact_type: "", contract_value: "", description: "" }))}
+              className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40">
+              <optgroup label="── Sales Pipeline ──">
+                <option value="new">New Lead</option>
+                <option value="contacted">Qualified</option>
+                <option value="appointment_set">Appointment Set</option>
+                <option value="estimate_sent">Estimate Sent</option>
+                <option value="closed_won">Closed Won</option>
+              </optgroup>
+              <optgroup label="── Completed ──">
+                <option value="completed">Completed</option>
+              </optgroup>
+              <optgroup label="── Dead Leads ──">
+                <option value="cancelled_appointment">Cancelled Appt</option>
+                <option value="no_opportunity">No Opportunity</option>
+                <option value="lost">Lost</option>
+                <option value="not_qualified">Not Qualified</option>
+              </optgroup>
+            </select>
+            {form.status === "completed" && (
+              <p className="text-xs text-muted-foreground mt-1">This lead will also appear in the Production tracker.</p>
+            )}
+          </div>
+
+          {/* ── Contract fields — only for Closed Won / Completed ── */}
+          {isWonStage && (
+            <div className="rounded-lg border-2 border-primary/25 bg-primary/5 p-4 space-y-3">
+              <p className="text-xs font-bold text-primary uppercase tracking-wide">$ Initial Contract</p>
+
+              {/* Contact Type */}
+              <div>
+                <label className="text-xs font-medium text-muted-foreground block mb-1.5">Contact Type</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button type="button"
+                    onClick={() => setForm(f => ({ ...f, contact_type: "in_person" }))}
+                    className={`py-2 rounded-md text-sm font-medium border transition-colors ${
+                      form.contact_type === "in_person"
+                        ? "bg-primary text-primary-foreground border-primary"
+                        : "border-border hover:bg-muted"
+                    }`}>
+                    🏠 In-Person Visit
+                  </button>
+                  <button type="button"
+                    onClick={() => setForm(f => ({ ...f, contact_type: "phone_quote" }))}
+                    className={`py-2 rounded-md text-sm font-medium border transition-colors ${
+                      form.contact_type === "phone_quote"
+                        ? "bg-primary text-primary-foreground border-primary"
+                        : "border-border hover:bg-muted"
+                    }`}>
+                    📞 Phone Quote
+                  </button>
+                </div>
+              </div>
+
+              {/* Contract Value + Description */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground block mb-1">Contract Value ($)</label>
+                  <input type="number" min="0" value={form.contract_value}
+                    onChange={e => setForm(f => ({ ...f, contract_value: e.target.value }))}
+                    placeholder="0.00"
+                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" />
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground block mb-1">Description</label>
+                  <input value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
+                    placeholder="e.g. Full roof replacement"
+                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" />
+                </div>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Open the lead after saving to add payments and change orders.
+              </p>
+            </div>
+          )}
+
+          {/* ── Notes ── */}
+          <div>
+            <label className="text-xs font-medium text-muted-foreground block mb-1">Notes</label>
+            <textarea value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
+              rows={2} placeholder="Any additional notes…"
+              className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40 resize-none" />
+          </div>
+
+          {/* ── Action buttons ── */}
+          <div className="flex gap-3 pt-1">
+            <button onClick={() => onOpenChange(false)}
+              className="flex-1 py-2.5 rounded-md border border-border hover:bg-muted text-sm font-medium transition-colors">
+              Cancel
+            </button>
+            <button onClick={() => handleSave(false)}
+              disabled={saving || (!form.phone && !form.first_name)}
+              className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 text-sm font-medium disabled:opacity-40 transition-colors">
+              {saving && <Loader2 className="h-4 w-4 animate-spin" />}
+              {saving ? "Saving…" : "Save Lead"}
+            </button>
+          </div>
+          <p className="text-xs text-center text-muted-foreground">* Phone or name required · Duplicate check on save</p>
         </div>
-      )}
-    </>
+      </div>
+    </div>
   );
 }
