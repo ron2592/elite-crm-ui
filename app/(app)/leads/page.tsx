@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import { Lead, LeadStatus } from "@/types";
@@ -11,11 +11,9 @@ import { ChevronLeft, ChevronRight, Upload, Plus, Save, X, Loader2, Info } from 
 const MONTH_NAMES = ["January","February","March","April","May","June",
   "July","August","September","October","November","December"];
 
-// ── Stages passed to KanbanColumn (only types it already knows) ───────────────
+// ── Stages passed to KanbanColumn (known types only) ─────────────────────────
 const SALES_STAGES: LeadStatus[] = ["new","contacted","appointment_set","estimate_sent","closed_won"];
-// ⚠️ These are NEW stages — do NOT pass to KanbanColumn (it doesn't know them)
-// They use SimpleStageColumn instead
-const DEAD_STAGES: LeadStatus[] = ["cancelled_appointment","lost","not_qualified"];
+const DEAD_STAGES:  LeadStatus[] = ["cancelled_appointment","lost","not_qualified"];
 
 // ── Stage descriptions ────────────────────────────────────────────────────────
 const STAGE_DESCRIPTIONS: Record<string, string> = {
@@ -62,22 +60,45 @@ function formatPhone(value: string) {
   return `(${digits.slice(0,3)}) ${digits.slice(3,6)}-${digits.slice(6)}`;
 }
 
-// ── SimpleStageColumn — renders new stage types without KanbanColumn ──────────
-// This avoids the crash caused by KanbanColumn not recognizing "completed" / "no_opportunity"
+// ── SimpleStageColumn — renders new/custom stages with full DnD support ───────
+// Used for "completed" and "no_opportunity" which aren't in KanbanColumn's LeadStatus type
 function SimpleStageColumn({
-  stageLabel, dotColor, leads, onLeadClick, changeOrderTotals,
+  stageLabel, stageValue, dotColor, leads, onLeadClick, changeOrderTotals, onDropLead,
 }: {
-  stageLabel: string;
-  dotColor: string;
-  leads: Lead[];
-  onLeadClick: (lead: Lead) => void;
+  stageLabel:        string;
+  stageValue:        string;          // ✅ the actual status value saved to DB
+  dotColor:          string;
+  leads:             Lead[];
+  onLeadClick:       (lead: Lead) => void;
   changeOrderTotals: Record<string, number>;
+  onDropLead:        (leadId: string, newStatus: string) => void;  // ✅ DnD callback
 }) {
+  const [isDragOver, setIsDragOver] = useState(false);
+
   const totalValue = leads.reduce((sum, l: any) =>
     sum + Number(l.estimated_amount || l.initial_contract_value || 0) + (changeOrderTotals[l.id] || 0), 0);
 
+  // ── Column drop handlers ──────────────────────────────────────────────────
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    setIsDragOver(true);
+  };
+  const handleDragLeave = () => setIsDragOver(false);
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragOver(false);
+    const leadId = e.dataTransfer.getData("leadId");
+    if (leadId) onDropLead(leadId, stageValue);
+  };
+
   return (
-    <div className="w-72 shrink-0 flex flex-col">
+    <div
+      className={`w-72 shrink-0 flex flex-col transition-colors rounded-xl ${isDragOver ? "bg-primary/5 ring-2 ring-primary/30" : ""}`}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
       {/* Header */}
       <div className="flex items-center justify-between mb-2 px-1">
         <div className="flex items-center gap-2">
@@ -89,42 +110,54 @@ function SimpleStageColumn({
       {totalValue > 0 && (
         <p className="text-xs text-muted-foreground mb-2 px-1">Total: ${totalValue.toLocaleString()}</p>
       )}
-      {/* Cards */}
-      <div className="space-y-2 overflow-y-auto max-h-[600px]">
-        {leads.length === 0 ? (
-          <div className="rounded-xl border border-dashed border-border p-4 text-center text-xs text-muted-foreground min-h-[80px] flex items-center justify-center">
-            No leads
-          </div>
-        ) : leads.map(lead => {
-          const l = lead as any;
-          const name = l.lead_name || `${l.first_name || ""} ${l.last_name || ""}`.trim() || "Unnamed";
-          const initials = name.split(" ").map((n: string) => n[0]).join("").toUpperCase().slice(0, 2);
-          const src = l.lead_sources?.name || "";
-          const date = l.created_at
-            ? new Date(l.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })
-            : "";
-          const val = Number(l.initial_contract_value || l.estimated_amount || 0) + (changeOrderTotals[l.id] || 0);
-          return (
-            <div key={l.id} onClick={() => onLeadClick(lead)}
-              className="rounded-xl border border-border bg-card p-3 cursor-pointer hover:shadow-md hover:border-primary/30 transition-all">
-              <div className="flex items-start gap-2.5">
-                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-bold text-primary">
-                  {initials}
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="font-medium text-sm truncate leading-tight">{name}</p>
-                  {l.phone && <p className="text-xs text-muted-foreground">{l.phone}</p>}
-                  {src && <p className="text-xs text-muted-foreground mt-0.5">{src}</p>}
-                  <div className="flex items-center justify-between mt-1">
-                    {val > 0 && <span className="text-xs text-emerald-600 font-semibold">${val.toLocaleString()}</span>}
-                    {date && <span className="text-xs text-muted-foreground">{date}</span>}
+
+      {/* Drop zone when empty */}
+      {leads.length === 0 ? (
+        <div className={`rounded-xl border-2 border-dashed p-4 text-center text-xs text-muted-foreground min-h-[80px] flex items-center justify-center transition-colors ${isDragOver ? "border-primary/50 bg-primary/5 text-primary" : "border-border"}`}>
+          {isDragOver ? `Move to ${stageLabel}` : "No leads"}
+        </div>
+      ) : (
+        <div className="space-y-2 overflow-y-auto max-h-[600px]">
+          {leads.map(lead => {
+            const l = lead as any;
+            const name = l.lead_name || `${l.first_name || ""} ${l.last_name || ""}`.trim() || "Unnamed";
+            const initials = name.split(" ").map((n: string) => n[0]).join("").toUpperCase().slice(0, 2);
+            const src = l.lead_sources?.name || "";
+            const date = l.created_at
+              ? new Date(l.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })
+              : "";
+            const val = Number(l.initial_contract_value || l.estimated_amount || 0) + (changeOrderTotals[l.id] || 0);
+
+            return (
+              <div
+                key={l.id}
+                draggable                                                  // ✅ make card draggable
+                onDragStart={(e) => {
+                  e.dataTransfer.setData("leadId", l.id);                  // ✅ store leadId for drop
+                  e.dataTransfer.effectAllowed = "move";
+                }}
+                onClick={() => onLeadClick(lead)}
+                className="rounded-xl border border-border bg-card p-3 cursor-grab active:cursor-grabbing hover:shadow-md hover:border-primary/30 transition-all"
+              >
+                <div className="flex items-start gap-2.5">
+                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-bold text-primary">
+                    {initials}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="font-medium text-sm truncate leading-tight">{name}</p>
+                    {l.phone && <p className="text-xs text-muted-foreground">{l.phone}</p>}
+                    {src   && <p className="text-xs text-muted-foreground mt-0.5">{src}</p>}
+                    <div className="flex items-center justify-between mt-1">
+                      {val > 0 && <span className="text-xs text-emerald-600 font-semibold">${val.toLocaleString()}</span>}
+                      {date  && <span className="text-xs text-muted-foreground">{date}</span>}
+                    </div>
                   </div>
                 </div>
               </div>
-            </div>
-          );
-        })}
-      </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
@@ -207,7 +240,7 @@ export default function LeadsPage() {
     setDupWarning(null);
 
     if (newLeadForm.phone && !force) {
-      const digits = newLeadForm.phone.replace(/\D/g, "");
+      const digits     = newLeadForm.phone.replace(/\D/g, "");
       const normalized = digits.length === 10
         ? `(${digits.slice(0,3)}) ${digits.slice(3,6)}-${digits.slice(6)}`
         : newLeadForm.phone;
@@ -263,13 +296,14 @@ export default function LeadsPage() {
     return true;
   });
 
-  const handleLeadClick   = (lead: Lead) => { setSelectedLead(lead); setDialogOpen(true); };
+  const handleLeadClick = (lead: Lead) => { setSelectedLead(lead); setDialogOpen(true); };
+
+  // ✅ handleStageChange works for ALL stages (string, not just LeadStatus)
   const handleStageChange = async (leadId: string, newStatus: string) => {
     setAllLeads(prev => prev.map(l => (l as any).id === leadId ? { ...l, status: newStatus } : l));
     await supabase.from("leads").update({ status: newStatus }).eq("id", leadId);
   };
 
-  // ── Leads by stage (string keys — safe for new stages) ────────────────────
   const ALL_STAGE_KEYS = [...SALES_STAGES, "completed", ...DEAD_STAGES, "no_opportunity"];
   const leadsByStage: Record<string, Lead[]> = {};
   ALL_STAGE_KEYS.forEach(s => { leadsByStage[s] = leads.filter(l => l.status === s); });
@@ -354,7 +388,7 @@ export default function LeadsPage() {
         </div>
       </div>
 
-      {/* ── New Lead Quick-Add Form ── */}
+      {/* ── New Lead Quick-Add ── */}
       {showNewLead && (
         <div className="mb-4 rounded-xl border-2 border-primary/30 bg-primary/5 p-4 space-y-3">
           <div className="flex items-center justify-between mb-1">
@@ -431,7 +465,7 @@ export default function LeadsPage() {
         </div>
       )}
 
-      {/* ── Sales Pipeline (uses KanbanColumn — known types only) ── */}
+      {/* ── Sales Pipeline (KanbanColumn — known LeadStatus types) ── */}
       <div className="mb-2">
         <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Sales Pipeline</p>
         <div className="overflow-x-auto pb-4">
@@ -448,7 +482,7 @@ export default function LeadsPage() {
         </div>
       </div>
 
-      {/* ✅ Completed Jobs — uses SimpleStageColumn (no LeadStatus constraint) */}
+      {/* ✅ Completed Jobs — SimpleStageColumn with DnD */}
       <div className="mb-2">
         <div className="flex items-center gap-2 mb-3">
           <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Completed Jobs</p>
@@ -459,10 +493,12 @@ export default function LeadsPage() {
           <div className="flex gap-4 min-w-max">
             <SimpleStageColumn
               stageLabel="Completed"
+              stageValue="completed"
               dotColor="bg-green-500"
               leads={leadsByStage["completed"] || []}
               onLeadClick={handleLeadClick}
               changeOrderTotals={changeOrderTotals}
+              onDropLead={handleStageChange}
             />
           </div>
         </div>
@@ -471,7 +507,6 @@ export default function LeadsPage() {
       {/* ── Dead Leads ── */}
       <div>
         <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Dead Leads</p>
-        {/* Stage descriptions legend */}
         <div className="flex flex-wrap gap-x-6 gap-y-1 mb-3">
           {(["cancelled_appointment","no_opportunity","lost","not_qualified"] as const).map(stage => {
             const desc = STAGE_DESCRIPTIONS[stage];
@@ -502,13 +537,15 @@ export default function LeadsPage() {
                 changeOrderTotals={changeOrderTotals}
               />
             ))}
-            {/* ✅ No Opportunity → SimpleStageColumn (new stage) */}
+            {/* ✅ No Opportunity → SimpleStageColumn with DnD */}
             <SimpleStageColumn
               stageLabel="No Opportunity"
+              stageValue="no_opportunity"
               dotColor="bg-slate-400"
               leads={leadsByStage["no_opportunity"] || []}
               onLeadClick={handleLeadClick}
               changeOrderTotals={changeOrderTotals}
+              onDropLead={handleStageChange}
             />
           </div>
         </div>
