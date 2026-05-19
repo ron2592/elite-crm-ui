@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
+import { Lead } from "@/types";
+import LeadDetailDialog from "@/components/leads/LeadDetailDialog";
 
 const CALENDAR_STAGES = ["Scheduled to Start", "Job In Progress", "Rough Inspection", "Final Inspection"];
 
@@ -39,9 +41,10 @@ interface JobRow {
   production_stage_updated_at: string | null;
   production_notes: string | null;
   orderNumber?: number;
-  // ✅ source info for filtering
   sourceId: string | null;
   sourceName: string | null;
+  // ✅ Keep raw lead data for dialog
+  rawLead?: any;
 }
 
 function toLocalDateValue(iso: string | null): string {
@@ -62,18 +65,18 @@ export default function ProductionPage() {
   const [editingDate,  setEditingDate]  = useState<string | null>(null);
   const [dateDraft,    setDateDraft]    = useState("");
   const [savingDate,   setSavingDate]   = useState(false);
-
-  // ✅ Default filter is "active" — not "all"
-  const [filter,         setFilter]         = useState("active");
-  // ✅ Lead source filter
+  const [filter,       setFilter]       = useState("active");
   const [filterSourceId, setFilterSourceId] = useState("");
-  const [sources,        setSources]        = useState<{ id: string; name: string }[]>([]);
+  const [sources,      setSources]      = useState<{ id: string; name: string }[]>([]);
+
+  // ✅ Lead detail dialog state
+  const [selectedLead,   setSelectedLead]   = useState<Lead | null>(null);
+  const [dialogOpen,     setDialogOpen]     = useState(false);
 
   async function fetchJobs() {
-    // ✅ Include both "closed_won" AND "completed" pipeline statuses
     const { data: leads, error } = await supabase
       .from("leads")
-      .select("id, lead_name, initial_contract_value, closed_amount, estimated_amount, production_stage, production_stage_updated_at, production_notes, address_line_1, city, state, metadata, source_id, lead_sources(id, name)")
+      .select("id, lead_name, initial_contract_value, closed_amount, estimated_amount, production_stage, production_stage_updated_at, production_notes, address_line_1, city, state, metadata, source_id, lead_sources(id, name), status, phone, email, client_address, client_city, client_state, client_zip, lsa_status, contact_type, created_at, archived")
       .in("status", ["closed_won", "completed"])
       .order("created_at", { ascending: false });
 
@@ -121,6 +124,7 @@ export default function ProductionPage() {
       production_notes:            job.production_notes || null,
       sourceId:                    job.source_id || null,
       sourceName:                  (job.lead_sources as any)?.name || null,
+      rawLead:                     job,  // ✅ full lead object for dialog
     }));
 
     const coRows: JobRow[] = changeOrders.map((co: any) => {
@@ -144,10 +148,24 @@ export default function ProductionPage() {
         orderNumber:                 co.order_number,
         sourceId:                    parentLead?.source_id || null,
         sourceName:                  parentLead?.lead_sources?.name || null,
+        rawLead:                     parentLead,  // ✅ parent lead for COs
       };
     });
 
     setJobs([...leadRows, ...coRows]);
+  }
+
+  async function fetchSingleLead(leadId: string) {
+    const { data } = await supabase
+      .from("leads")
+      .select("*, lead_sources(name, id)")
+      .eq("id", leadId)
+      .single();
+    if (data) {
+      setSelectedLead(data as Lead);
+      // Refresh jobs to reflect any changes
+      fetchJobs();
+    }
   }
 
   async function fetchSources() {
@@ -196,30 +214,42 @@ export default function ProductionPage() {
     await fetchJobs();
   };
 
+  // ✅ Open lead detail dialog for editing
+  const handleEditClient = async (row: JobRow) => {
+    // Fetch fresh lead data with all fields
+    const { data } = await supabase
+      .from("leads")
+      .select("*, lead_sources(name, id)")
+      .eq("id", row.leadId)
+      .single();
+    if (data) {
+      setSelectedLead(data as Lead);
+      setDialogOpen(true);
+    }
+  };
+
   const isPending    = (stage: string | null) => stage?.startsWith("Pending") || false;
   const isActive     = (stage: string | null) =>
     !!stage && !isPending(stage) &&
     !["Completed","Completed with Balance","Cancelled Before Start","Cancelled Mid-Job"].includes(stage);
 
-  // ── Apply stage + source filters ──────────────────────────────────────────────
-  const stageFiltered = filter === "all"       ? jobs
-    : filter === "pending"                     ? jobs.filter(j => isPending(j.production_stage))
-    : filter === "active"                      ? jobs.filter(j => isActive(j.production_stage))
-    : filter === "completed"                   ? jobs.filter(j => j.production_stage?.startsWith("Completed"))
-    : filter === "cancelled"                   ? jobs.filter(j => j.production_stage?.startsWith("Cancelled"))
-    : filter === "no_stage"                    ? jobs.filter(j => !j.production_stage)
-    : filter === "balance"                     ? jobs.filter(j => (j.contract - j.totalCollected) > 0)
+  const stageFiltered =
+    filter === "all"       ? jobs
+    : filter === "pending" ? jobs.filter(j => isPending(j.production_stage))
+    : filter === "active"  ? jobs.filter(j => isActive(j.production_stage))
+    : filter === "completed" ? jobs.filter(j => j.production_stage?.startsWith("Completed"))
+    : filter === "cancelled" ? jobs.filter(j => j.production_stage?.startsWith("Cancelled"))
+    : filter === "no_stage"  ? jobs.filter(j => !j.production_stage)
+    : filter === "balance"   ? jobs.filter(j => (j.contract - j.totalCollected) > 0)
     : jobs;
 
-  // ✅ Apply source filter on top of stage filter
   const filteredJobs = filterSourceId
     ? stageFiltered.filter(j => j.sourceId === filterSourceId)
     : stageFiltered;
 
-  // ── Summary counts (unaffected by source filter so badges stay accurate) ──────
-  const pendingCount   = jobs.filter(j => isPending(j.production_stage)).length;
-  const activeCount    = jobs.filter(j => isActive(j.production_stage)).length;
-  const noStageCount   = jobs.filter(j => !j.production_stage).length;
+  const pendingCount  = jobs.filter(j => isPending(j.production_stage)).length;
+  const activeCount   = jobs.filter(j => isActive(j.production_stage)).length;
+  const noStageCount  = jobs.filter(j => !j.production_stage).length;
 
   const totalContract  = filteredJobs.reduce((s, j) => s + j.contract, 0);
   const totalCollected = filteredJobs.reduce((s, j) => s + j.totalCollected, 0);
@@ -228,7 +258,7 @@ export default function ProductionPage() {
   return (
     <div className="space-y-6 max-w-full">
 
-      {/* ── Summary KPI cards ── */}
+      {/* KPI Cards */}
       <div className="grid grid-cols-3 gap-4">
         <div className="rounded-xl border bg-card p-4">
           <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">Total Jobs</p>
@@ -247,18 +277,16 @@ export default function ProductionPage() {
         </div>
       </div>
 
-      {/* ── Filters row ── */}
+      {/* Filters */}
       <div className="flex items-center gap-2 flex-wrap">
-
-        {/* Stage filters */}
         {[
-          { key: "active",    label: "Active",    badge: activeCount  },
-          { key: "pending",   label: "Pending",   badge: pendingCount },
-          { key: "no_stage",  label: "No Stage",  badge: noStageCount },
-          { key: "completed", label: "Completed", badge: null         },
-          { key: "cancelled", label: "Cancelled", badge: null         },
-          { key: "balance",   label: "Has Balance",badge: null        },
-          { key: "all",       label: "All Jobs",  badge: null         },
+          { key: "active",    label: "Active",     badge: activeCount  },
+          { key: "pending",   label: "Pending",    badge: pendingCount },
+          { key: "no_stage",  label: "No Stage",   badge: noStageCount },
+          { key: "completed", label: "Completed",  badge: null         },
+          { key: "cancelled", label: "Cancelled",  badge: null         },
+          { key: "balance",   label: "Has Balance",badge: null         },
+          { key: "all",       label: "All Jobs",   badge: null         },
         ].map(f => (
           <button key={f.key} onClick={() => setFilter(f.key)}
             className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
@@ -271,19 +299,16 @@ export default function ProductionPage() {
           </button>
         ))}
 
-        {/* ✅ Lead source dropdown filter */}
         <select
           value={filterSourceId}
           onChange={e => setFilterSourceId(e.target.value)}
-          className="ml-2 text-xs rounded-md border border-border bg-background px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-primary/40 text-muted-foreground"
-        >
+          className="ml-2 text-xs rounded-md border border-border bg-background px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-primary/40 text-muted-foreground">
           <option value="">All Sources</option>
           {sources.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
         </select>
 
         {filterSourceId && (
-          <button onClick={() => setFilterSourceId("")}
-            className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1">
+          <button onClick={() => setFilterSourceId("")} className="text-xs text-muted-foreground hover:text-foreground">
             × Clear source
           </button>
         )}
@@ -291,7 +316,7 @@ export default function ProductionPage() {
         <span className="ml-auto text-xs text-muted-foreground">{filteredJobs.length} jobs</span>
       </div>
 
-      {/* ── Jobs table ── */}
+      {/* Table */}
       <div className="rounded-xl border overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -306,14 +331,15 @@ export default function ProductionPage() {
                 <th className="text-left px-4 py-3 font-medium text-muted-foreground whitespace-nowrap">Production Stage</th>
                 <th className="text-left px-4 py-3 font-medium text-muted-foreground whitespace-nowrap">Stage Date</th>
                 <th className="text-left px-4 py-3 font-medium text-muted-foreground whitespace-nowrap">Notes</th>
+                <th className="px-4 py-3 w-10" />
               </tr>
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={9} className="px-4 py-8 text-center text-muted-foreground">Loading jobs...</td></tr>
+                <tr><td colSpan={10} className="px-4 py-8 text-center text-muted-foreground">Loading jobs...</td></tr>
               ) : filteredJobs.length === 0 ? (
-                <tr><td colSpan={9} className="px-4 py-8 text-center text-muted-foreground">
-                  {filter === "active" ? "No active jobs. Jobs appear here when they have a production stage set." : "No jobs found."}
+                <tr><td colSpan={10} className="px-4 py-8 text-center text-muted-foreground">
+                  {filter === "active" ? "No active jobs. Set a production stage to see jobs here." : "No jobs found."}
                 </td></tr>
               ) : filteredJobs.map(job => {
                 const balance           = job.contract - job.totalCollected;
@@ -331,14 +357,20 @@ export default function ProductionPage() {
                 return (
                   <tr key={rowKey} className={`border-b hover:bg-muted/30 transition-colors ${rowBg}`}>
 
-                    {/* Job / Client */}
+                    {/* Job / Client — ✅ name is now clickable to open dialog */}
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2">
                         {job.type === "change_order" && (
                           <span className="text-xs px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 font-medium shrink-0">CO#{job.orderNumber}</span>
                         )}
                         <div>
-                          <p className="font-medium">{job.clientName}</p>
+                          <button
+                            onClick={() => handleEditClient(job)}
+                            className="font-medium text-left hover:text-primary hover:underline transition-colors"
+                            title="Click to edit client info"
+                          >
+                            {job.clientName}
+                          </button>
                           <p className="text-xs text-muted-foreground">{job.address}</p>
                           <div className="flex items-center gap-1.5 mt-0.5">
                             {job.jobType    && <span className="text-xs text-primary">{job.jobType}</span>}
@@ -348,7 +380,7 @@ export default function ProductionPage() {
                       </div>
                     </td>
 
-                    {/* ✅ Source column */}
+                    {/* Source */}
                     <td className="px-4 py-3 whitespace-nowrap">
                       {job.sourceName
                         ? <span className="text-xs px-2 py-0.5 rounded-full bg-muted font-medium">{job.sourceName}</span>
@@ -370,8 +402,7 @@ export default function ProductionPage() {
                         value={job.production_stage || ""}
                         onChange={e => handleStageUpdate(job, e.target.value)}
                         disabled={isUpdating}
-                        className="text-xs rounded-md border border-border bg-background px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-primary/40 disabled:opacity-50 min-w-[190px]"
-                      >
+                        className="text-xs rounded-md border border-border bg-background px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-primary/40 disabled:opacity-50 min-w-[190px]">
                         <option value="">— Set Stage —</option>
                         <optgroup label="Pending">
                           <option value="Pending - Check">Pending - Check</option>
@@ -465,6 +496,16 @@ export default function ProductionPage() {
                         </div>
                       )}
                     </td>
+
+                    {/* ✅ Edit button */}
+                    <td className="px-4 py-3">
+                      <button
+                        onClick={() => handleEditClient(job)}
+                        className="text-xs px-2 py-1 rounded border border-border hover:bg-muted transition-colors text-muted-foreground whitespace-nowrap"
+                        title="Edit client info, payments, contract">
+                        Edit
+                      </button>
+                    </td>
                   </tr>
                 );
               })}
@@ -472,6 +513,22 @@ export default function ProductionPage() {
           </table>
         </div>
       </div>
+
+      {/* ✅ LeadDetailDialog — full edit, payments, change orders */}
+      <LeadDetailDialog
+        lead={selectedLead}
+        open={dialogOpen}
+        onOpenChange={(open) => {
+          setDialogOpen(open);
+          if (!open) fetchJobs(); // refresh table after editing
+        }}
+        onStageChange={async (leadId, newStatus) => {
+          await supabase.from("leads").update({ status: newStatus }).eq("id", leadId);
+          fetchJobs();
+        }}
+        onLeadUpdated={(leadId) => fetchSingleLead(leadId)}
+        onLeadDeleted={() => { setDialogOpen(false); fetchJobs(); }}
+      />
     </div>
   );
 }
