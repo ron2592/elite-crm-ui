@@ -12,7 +12,9 @@ const statusLabels: Record<string, string> = {
   new: "New Lead", open: "New Lead", contacted: "Qualified",
   appointment_set: "Appointment Set", estimate_sent: "Estimate Sent",
   closed_won: "Closed Won", won: "Closed Won", closed_lost: "Cancelled Appt",
-  cancelled_appointment: "Cancelled Appt", lost: "Lost", not_qualified: "Not Qualified",
+  cancelled_appointment: "Cancelled Appt",
+  completed:             "Completed",
+  no_opportunity:        "No Opportunity", lost: "Lost", not_qualified: "Not Qualified",
 };
 
 const LSA_STATUS_CONFIG: Record<string, { label: string; classes: string }> = {
@@ -27,7 +29,6 @@ const PAYMENT_TYPES   = ["Deposit", "Progress Payment", "Final", "Installment"];
 const PAYMENT_METHODS = ["Cash", "Check", "Zelle", "Credit Card", "Sunlight Financial", "Upgrade"];
 const SALESPERSONS    = ["Ron", "Ray", "Other (Phone)"];
 
-// ✅ Standard job types — "Other" triggers a free-text input
 const STANDARD_JOB_TYPES = [
   "Roof Replacement", "Roof Repair", "Deck", "Siding",
   "Windows", "Painting", "Masonry", "Stucco", "Chimney",
@@ -74,7 +75,7 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
     address_line_1: "", city: "", state: "", zip: "",
     source_id: "", job_type: "", custom_job_type: "",
     salesperson: "", notes: "",
-    lead_received_date: "", // ✅ NEW: editable lead received date
+    lead_received_date: "",
   });
   const [editSaving,                   setEditSaving]                   = useState(false);
   const [archiving,                    setArchiving]                    = useState(false);
@@ -108,7 +109,6 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
 
   const leadId = (lead as any)?.id;
 
-  // ✅ Whether inline job type is custom (not in standard list)
   const inlineJobTypeDropdownVal = STANDARD_JOB_TYPES.includes(inlineJobType) ? inlineJobType : inlineJobType ? "Other" : "";
 
   useEffect(() => {
@@ -118,7 +118,6 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
       setCurrentStatus(raw.status || "new");
       setInlineSalesperson(raw.metadata?.salesperson || "");
       setInlineJobType(jobType);
-      // If stored value is non-standard, pre-fill the custom text box
       setInlineCustomJobType(STANDARD_JOB_TYPES.includes(jobType) ? "" : jobType);
       setLsaStatus(raw.lsa_status || "not_charged");
       setContactType(raw.contact_type || "");
@@ -158,7 +157,6 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
         custom_job_type:    isCustom ? jobType   : "",
         salesperson:        l.metadata?.salesperson || "",
         notes:              l.metadata?.notes    || "",
-        // ✅ Pre-fill lead received date from created_at
         lead_received_date: toLocalDate(l.created_at),
       });
     }
@@ -216,11 +214,9 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
 
   const isAppointmentStage = ["appointment_set", "cancelled_appointment", "closed_lost"].includes(currentStatus);
   const isEstimateSent     = currentStatus === "estimate_sent";
-  const isClosedWon        = ["closed_won", "won"].includes(currentStatus);
+  const isClosedWon        = ["closed_won", "won", "completed"].includes(currentStatus);
   const isLost             = currentStatus === "lost";
   const showFullContract   = isClosedWon || isLost;
-
-  // ── Handlers ──────────────────────────────────────────────────────────────
 
   const handleLsaStatusChange = async (val: string) => {
     setLsaStatus(val); setSavingLsaStatus(true);
@@ -244,10 +240,9 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
     if (onLeadUpdated) onLeadUpdated(leadId);
   };
 
-  // ✅ Inline job type — saves actual custom text, not "Other"
   const handleInlineJobTypeSave = async (val: string) => {
     const finalVal = val === "Other" ? inlineCustomJobType : val;
-    if (!finalVal && val === "Other") return; // don't save blank custom
+    if (!finalVal && val === "Other") return;
     setInlineJobType(finalVal); setSavingInlineJobType(true);
     await supabase.from("leads").update({ metadata: { ...l.metadata, job_type: finalVal || null } }).eq("id", leadId);
     setSavingInlineJobType(false);
@@ -275,19 +270,18 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
   const handleSaveEdit = async () => {
     setEditSaving(true);
     const fullName  = `${editFields.first_name} ${editFields.last_name}`.trim();
-    // ✅ Resolve job type — if "Other" was selected, use the custom text
     const finalJobType = editFields.job_type === "Other"
       ? editFields.custom_job_type
       : editFields.job_type;
 
     const updates: any = {
-      lead_name:     fullName,
-      phone:         editFields.phone,
-      email:         editFields.email,
+      lead_name:      fullName,
+      phone:          editFields.phone,
+      email:          editFields.email,
       client_address: editFields.address_line_1,
-      client_city:   editFields.city,
-      client_state:  editFields.state,
-      client_zip:    editFields.zip,
+      client_city:    editFields.city,
+      client_state:   editFields.state,
+      client_zip:     editFields.zip,
       metadata: {
         ...l.metadata,
         job_type:    finalJobType  || null,
@@ -296,8 +290,6 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
       },
     };
     if (editFields.source_id) updates.source_id = editFields.source_id;
-
-    // ✅ Save lead received date — converts YYYY-MM-DD → ISO for Supabase
     if (editFields.lead_received_date) {
       updates.created_at = new Date(editFields.lead_received_date + "T00:00:00").toISOString();
     }
@@ -482,25 +474,20 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
           {editMode && (
             <div className="rounded-lg border border-primary/30 bg-primary/5 p-4 space-y-3">
               <p className="text-xs font-semibold text-primary uppercase tracking-wide">Edit Lead Info</p>
-
               <div className="grid grid-cols-2 gap-2">
                 <div><label className="text-xs text-muted-foreground block mb-1">First Name</label><input value={editFields.first_name} onChange={(e) => setEditFields({ ...editFields, first_name: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" /></div>
                 <div><label className="text-xs text-muted-foreground block mb-1">Last Name</label><input value={editFields.last_name} onChange={(e) => setEditFields({ ...editFields, last_name: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" /></div>
               </div>
-
               <div className="grid grid-cols-2 gap-2">
                 <div><label className="text-xs text-muted-foreground block mb-1">Phone</label><input value={editFields.phone} onChange={(e) => setEditFields({ ...editFields, phone: formatPhone(e.target.value) })} placeholder="(201) 555-0000" className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" /></div>
                 <div><label className="text-xs text-muted-foreground block mb-1">Email</label><input value={editFields.email} onChange={(e) => setEditFields({ ...editFields, email: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" /></div>
               </div>
-
               <div><label className="text-xs text-muted-foreground block mb-1">Address</label><input value={editFields.address_line_1} onChange={(e) => setEditFields({ ...editFields, address_line_1: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" /></div>
-
               <div className="grid grid-cols-3 gap-2">
                 <div><label className="text-xs text-muted-foreground block mb-1">Zip {zipLooking && <span className="text-blue-500">...</span>}</label><input value={editFields.zip} maxLength={5} placeholder="07011" onChange={(e) => { const val = e.target.value.replace(/\D/g, "").slice(0, 5); setEditFields({ ...editFields, zip: val }); if (val.length === 5) handleZipLookup(val); }} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" /></div>
                 <div><label className="text-xs text-muted-foreground block mb-1">City</label><input value={editFields.city} onChange={(e) => setEditFields({ ...editFields, city: e.target.value })} placeholder="Auto-filled" className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" /></div>
                 <div><label className="text-xs text-muted-foreground block mb-1">State</label><input value={editFields.state} onChange={(e) => setEditFields({ ...editFields, state: e.target.value })} placeholder="Auto-filled" className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" /></div>
               </div>
-
               <div className="grid grid-cols-2 gap-2">
                 <div>
                   <label className="text-xs text-muted-foreground block mb-1">Lead Source</label>
@@ -516,20 +503,11 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
                     {STANDARD_JOB_TYPES.map((t) => <option key={t}>{t}</option>)}
                     <option value="Other">Other (type below)</option>
                   </select>
-                  {/* ✅ Show text input when "Other" is selected */}
                   {editFields.job_type === "Other" && (
-                    <input
-                      type="text"
-                      placeholder="e.g. Gutters, Insulation..."
-                      value={editFields.custom_job_type}
-                      onChange={(e) => setEditFields({ ...editFields, custom_job_type: e.target.value })}
-                      className="mt-1.5 w-full rounded-md border border-primary/40 bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
-                      autoFocus
-                    />
+                    <input type="text" placeholder="e.g. Gutters, Insulation..." value={editFields.custom_job_type} onChange={(e) => setEditFields({ ...editFields, custom_job_type: e.target.value })} className="mt-1.5 w-full rounded-md border border-primary/40 bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" autoFocus />
                   )}
                 </div>
               </div>
-
               <div>
                 <label className="text-xs text-muted-foreground block mb-1">Salesperson</label>
                 <select value={editFields.salesperson} onChange={(e) => setEditFields({ ...editFields, salesperson: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40">
@@ -537,24 +515,15 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
                   {SALESPERSONS.map((s) => <option key={s}>{s}</option>)}
                 </select>
               </div>
-
               <div>
                 <label className="text-xs text-muted-foreground block mb-1">Notes</label>
                 <textarea value={editFields.notes} onChange={(e) => setEditFields({ ...editFields, notes: e.target.value })} rows={3} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40 resize-none" />
               </div>
-
-              {/* ✅ Lead Received Date — editable in edit mode */}
               <div>
                 <label className="text-xs text-muted-foreground block mb-1">Lead Received Date</label>
-                <input
-                  type="date"
-                  value={editFields.lead_received_date}
-                  onChange={(e) => setEditFields({ ...editFields, lead_received_date: e.target.value })}
-                  className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
-                />
+                <input type="date" value={editFields.lead_received_date} onChange={(e) => setEditFields({ ...editFields, lead_received_date: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" />
                 <p className="text-xs text-muted-foreground mt-1">This updates when the lead was received in the system.</p>
               </div>
-
               <div className="flex gap-2">
                 <button onClick={handleSaveEdit} disabled={editSaving}
                   className="flex-1 flex items-center justify-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-40 transition-colors">
@@ -565,14 +534,13 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
             </div>
           )}
 
-          {/* ── STATUS CARDS (non-edit mode) ── */}
+          {/* ── STATUS CARDS ── */}
           {!editMode && (
             <div className="grid grid-cols-2 gap-3">
               <div className="rounded-lg bg-muted/50 p-3">
                 <p className="text-xs text-muted-foreground mb-1">Status</p>
                 <p className="font-semibold text-sm">{statusLabels[currentStatus] || currentStatus}</p>
               </div>
-
               <div className="rounded-lg bg-muted/50 p-3">
                 <p className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
                   Salesperson {savingInlineSalesperson && <span className="text-blue-400 text-xs">saving...</span>}
@@ -583,7 +551,6 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
                   {SALESPERSONS.map(s => <option key={s} value={s}>{s}</option>)}
                 </select>
               </div>
-
               <div className="rounded-lg bg-muted/50 p-3">
                 <p className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
                   LSA Status {savingLsaStatus && <span className="text-blue-400 text-xs">saving...</span>}
@@ -602,8 +569,6 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
                   )}
                 </div>
               </div>
-
-              {/* ✅ Inline Job Type — "Other" shows text input */}
               <div className="rounded-lg bg-muted/50 p-3">
                 <p className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
                   Job Type {savingInlineJobType && <span className="text-blue-400 text-xs">saving...</span>}
@@ -612,42 +577,25 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
                   value={inlineJobTypeDropdownVal}
                   onChange={(e) => {
                     const val = e.target.value;
-                    if (val !== "Other") {
-                      setInlineCustomJobType("");
-                      handleInlineJobTypeSave(val);
-                    } else {
-                      setInlineJobType("Other");
-                    }
+                    if (val !== "Other") { setInlineCustomJobType(""); handleInlineJobTypeSave(val); }
+                    else { setInlineJobType("Other"); }
                   }}
-                  className="w-full bg-transparent font-semibold text-sm focus:outline-none cursor-pointer"
-                >
+                  className="w-full bg-transparent font-semibold text-sm focus:outline-none cursor-pointer">
                   <option value="">— Select type —</option>
                   {STANDARD_JOB_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
                   <option value="Other">Other (type below)</option>
                 </select>
-                {/* ✅ Show text input + save button when "Other" selected inline */}
                 {inlineJobTypeDropdownVal === "Other" && (
                   <div className="flex gap-1 mt-1.5">
-                    <input
-                      type="text"
-                      placeholder="e.g. Gutters, Insulation..."
-                      value={inlineCustomJobType}
+                    <input type="text" placeholder="e.g. Gutters, Insulation..." value={inlineCustomJobType}
                       onChange={(e) => setInlineCustomJobType(e.target.value)}
                       onKeyDown={(e) => { if (e.key === "Enter") handleInlineJobTypeSave("Other"); }}
-                      className="flex-1 rounded-md border border-primary/40 bg-background px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-primary/40"
-                      autoFocus
-                    />
-                    <button
-                      onClick={() => handleInlineJobTypeSave("Other")}
-                      disabled={!inlineCustomJobType.trim()}
-                      className="text-xs px-2 py-1 rounded-md bg-primary text-primary-foreground disabled:opacity-40"
-                    >
-                      Save
-                    </button>
+                      className="flex-1 rounded-md border border-primary/40 bg-background px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-primary/40" autoFocus />
+                    <button onClick={() => handleInlineJobTypeSave("Other")} disabled={!inlineCustomJobType.trim()}
+                      className="text-xs px-2 py-1 rounded-md bg-primary text-primary-foreground disabled:opacity-40">Save</button>
                   </div>
                 )}
               </div>
-
               {source && source !== "No source" && (
                 <div className="rounded-lg bg-muted/50 p-3 col-span-2">
                   <p className="text-xs text-muted-foreground mb-1">Lead Source</p>
@@ -657,7 +605,7 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
             </div>
           )}
 
-          {/* ── APPOINTMENT PICKER ── */}
+          {/* ── APPOINTMENT ── */}
           {!editMode && isAppointmentStage && (
             <div className="rounded-lg border border-blue-200 bg-blue-50/50 dark:bg-blue-950/20 p-4 space-y-3">
               <p className="text-xs font-semibold text-blue-700 uppercase tracking-wide flex items-center gap-1">
@@ -877,14 +825,29 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
             </div>
           )}
 
-          {/* ── MOVE TO STAGE ── */}
+          {/* ── MOVE TO STAGE — ✅ Now includes completed + no_opportunity ── */}
           {!editMode && (
             <div>
               <p className="text-xs text-muted-foreground mb-2">Move to stage</p>
               <div className="flex flex-wrap gap-2">
-                {["new", "contacted", "appointment_set", "estimate_sent", "closed_won", "cancelled_appointment", "lost", "not_qualified"].map((s) => (
+                {[
+                  "new",
+                  "contacted",
+                  "appointment_set",
+                  "estimate_sent",
+                  "closed_won",
+                  "completed",
+                  "cancelled_appointment",
+                  "no_opportunity",
+                  "lost",
+                  "not_qualified",
+                ].map((s) => (
                   <button key={s} onClick={() => handleStageChange(s)}
-                    className={`text-xs px-3 py-1 rounded-full border transition-colors ${currentStatus === s ? "bg-primary text-primary-foreground border-primary" : "hover:bg-muted border-border"}`}>
+                    className={`text-xs px-3 py-1 rounded-full border transition-colors ${
+                      currentStatus === s
+                        ? "bg-primary text-primary-foreground border-primary"
+                        : "hover:bg-muted border-border"
+                    }`}>
                     {statusLabels[s]}
                   </button>
                 ))}
