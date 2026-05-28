@@ -7,12 +7,11 @@ import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, LineChart, Line,
 } from 'recharts'
 import {
-  ChevronLeft, ChevronRight, ChevronDown, ChevronUp,
-  Plus, Save, X, Loader2, LayoutDashboard, Printer, Trash2, TrendingUp,
+  ChevronDown, ChevronUp, Plus, Save, X, Loader2,
+  LayoutDashboard, Printer, Trash2, TrendingUp,
 } from 'lucide-react'
 import KpiInsights, { InsightData } from '@/components/KpiInsights'
 
-// ── Types ─────────────────────────────────────────────────────────────────────
 interface LeadRow {
   id: string; first_name?: string; last_name?: string; phone?: string;
   status: string; contact_type: string | null; lsa_status: string | null;
@@ -27,30 +26,19 @@ interface SpendRow {
   lead_sources: { name: string } | null;
 }
 interface LeadSource { id: string; name: string }
-
-// ── YTD types ─────────────────────────────────────────────────────────────────
 interface YTDData {
-  totalLeads:    number
-  totalInPerson: number
-  totalWon:      number
-  totalSpend:    number
-  totalRevenue:  number
-  apptConvRate:  number
-  cpa:           number
-  apptAcqCost:   number
-  roi:           number
+  totalLeads: number; totalInPerson: number; totalWon: number;
+  totalSpend: number; totalRevenue: number; apptConvRate: number;
+  cpa: number; apptAcqCost: number; roi: number; year: number;
 }
 
-// ── Constants ─────────────────────────────────────────────────────────────────
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
-const WON_STAGES = ['closed_won', 'won']
-// ✅ job_cancelled excluded automatically — not in WON_STAGES
+
+// ✅ FIX 1: completed + completed_with_balance also count as won
+const WON_STAGES = ['closed_won', 'won', 'completed', 'completed_with_balance']
+
 const SRC_COLORS = ['#378ADD','#E07B3A','#10b981','#8b5cf6','#ec4899','#06b6d4','#f59e0b','#ef4444']
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-function monthRange(y: number, m: number) {
-  return { start: new Date(y, m, 1).toISOString(), end: new Date(y, m + 1, 1).toISOString() }
-}
 function fmt$(n: number) {
   if (n >= 1000000) return '$' + (n / 1000000).toFixed(1) + 'M'
   if (n >= 1000) return '$' + (n / 1000).toFixed(1).replace(/\.0$/, '') + 'k'
@@ -60,8 +48,10 @@ function closeRatePct(won: number, appts: number) {
   return appts === 0 ? '—' : Math.round((won / appts) * 100) + '%'
 }
 function todayStr() { return new Date().toISOString().split('T')[0] }
+function firstOfMonthStr(d = new Date()) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2,'0')}-01`
+}
 
-// ── Sub-components ────────────────────────────────────────────────────────────
 function ExpandMetric({ label, value, color = '', children }: {
   label: string; value: React.ReactNode; color?: string; children: React.ReactNode
 }) {
@@ -112,107 +102,66 @@ function MetricCard({ label, value, sub, color = '' }: {
   )
 }
 
-// ── YTD Block ─────────────────────────────────────────────────────────────────
-function YTDBlock({ ytd, year }: { ytd: YTDData | null; year: number }) {
+function YTDBlock({ ytd }: { ytd: YTDData | null }) {
   if (!ytd) return (
-    <div className="rounded-xl border border-border p-6 flex items-center justify-center gap-2 text-muted-foreground">
+    <div className="rounded-xl border border-border p-4 flex items-center justify-center gap-2 text-muted-foreground text-sm">
       <Loader2 className="h-4 w-4 animate-spin" /> Loading year-to-date metrics…
     </div>
   )
-
-  const pct = (n: number) => Math.round(n * 100) + '%'
-
-  const metrics = [
-    {
-      label: 'YTD Total Leads',
-      value: ytd.totalLeads.toString(),
-      sub:   `Jan 1 – today ${year}`,
-      color: '',
-      info:  null,
-    },
-    {
-      label: 'YTD Marketing Spend',
-      value: ytd.totalSpend > 0 ? fmt$(ytd.totalSpend) : '—',
-      sub:   'All sources combined',
-      color: '',
-      info:  null,
-    },
-    {
-      label: 'YTD Appt Conversion',
-      value: ytd.apptConvRate > 0 ? pct(ytd.apptConvRate) : '—',
-      sub:   `${ytd.totalInPerson} in-person / ${ytd.totalLeads} leads`,
-      color: ytd.apptConvRate >= 0.20 ? 'text-emerald-600'
-           : ytd.apptConvRate >= 0.10 ? 'text-amber-500'
-           : ytd.apptConvRate >  0    ? 'text-red-500' : '',
-      info: '% of leads that became in-person appointments',
-    },
-    {
-      label: 'YTD Appt Acq. Cost',
-      value: ytd.apptAcqCost > 0 ? fmt$(ytd.apptAcqCost) : '—',
-      sub:   'Spend ÷ in-person appts',
-      color: ytd.apptAcqCost > 0 && ytd.apptAcqCost <= 250 ? 'text-emerald-600'
-           : ytd.apptAcqCost > 250 && ytd.apptAcqCost <= 400 ? 'text-amber-500'
-           : ytd.apptAcqCost > 400 ? 'text-red-500' : '',
-      info: 'How much you spend in marketing to get one in-person appointment',
-    },
-    {
-      label: 'YTD Cost Per Acquisition',
-      value: ytd.cpa > 0 ? fmt$(ytd.cpa) : '—',
-      sub:   `Spend ÷ ${ytd.totalWon} jobs closed`,
-      color: ytd.cpa > 0 && ytd.cpa <= 700    ? 'text-emerald-600'
-           : ytd.cpa > 700 && ytd.cpa <= 1200 ? 'text-amber-500'
-           : ytd.cpa > 1200                   ? 'text-red-500' : '',
-      info: 'Essential for pricing — bake this into every estimate',
-    },
-    {
-      label: 'YTD Marketing ROI',
-      value: ytd.roi > 0 ? ytd.roi.toFixed(1) + 'x' : '—',
-      sub:   ytd.roi > 0 ? `Every $1 spent → $${ytd.roi.toFixed(1)} collected` : 'Log spend to calculate',
-      color: ytd.roi >= 5 ? 'text-emerald-600'
-           : ytd.roi >= 2 ? 'text-amber-500'
-           : ytd.roi >  0 ? 'text-red-500' : '',
-      info: 'Collected revenue ÷ total marketing spend',
-    },
-  ]
-
+  const hasData = ytd.totalSpend > 0 && ytd.totalWon > 0
   return (
     <div className="rounded-xl border border-border overflow-hidden">
-      <div className="flex items-center justify-between px-5 py-3.5 bg-muted/20 border-b border-border">
-        <div>
-          <div className="flex items-center gap-2">
-            <TrendingUp className="h-4 w-4 text-primary" />
-            <p className="text-sm font-bold">Year-to-Date Marketing Metrics</p>
+      <div className="flex items-center justify-between px-5 py-3 bg-muted/20 border-b border-border">
+        <div className="flex items-center gap-2">
+          <TrendingUp className="h-4 w-4 text-primary" />
+          <div>
+            <p className="text-sm font-bold">Year-to-Date · {ytd.year}</p>
+            <p className="text-xs text-muted-foreground">
+              Jan 1 – today · For job pricing decisions
+              {!hasData && <span className="ml-1 text-amber-500">· Finish importing historical data for accuracy</span>}
+            </p>
           </div>
-          <p className="text-xs text-muted-foreground mt-0.5">
-            Jan 1 – today · {year} · All sources · Use these numbers when pricing jobs
-          </p>
         </div>
         <span className="text-xs px-2.5 py-1 rounded-full bg-primary/10 text-primary font-semibold border border-primary/20">
-          {year} YTD
+          {ytd.year} YTD
         </span>
       </div>
-
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 divide-x divide-y divide-border/50 bg-card">
-        {metrics.map((m) => (
-          <div key={m.label} className="px-4 py-4 flex flex-col justify-between min-h-[100px]">
-            <p className="text-xs text-muted-foreground font-semibold uppercase tracking-wide leading-tight">{m.label}</p>
-            <div>
-              <p className={`text-2xl font-bold mt-1 ${m.color || 'text-foreground'}`}>{m.value}</p>
-              <p className="text-xs text-muted-foreground mt-1 leading-snug">{m.sub}</p>
-              {m.info && <p className="text-[10px] text-muted-foreground/60 mt-1 leading-snug italic">{m.info}</p>}
-            </div>
-          </div>
-        ))}
+      <div className="grid grid-cols-1 sm:grid-cols-3 divide-y sm:divide-y-0 sm:divide-x divide-border bg-card">
+        <div className="px-6 py-5">
+          <p className="text-xs text-muted-foreground font-semibold uppercase tracking-wide mb-1">Cost Per Acquisition</p>
+          <p className={`text-3xl font-bold mt-1 ${!ytd.cpa ? 'text-muted-foreground' : ytd.cpa <= 700 ? 'text-emerald-600' : ytd.cpa <= 1200 ? 'text-amber-500' : 'text-red-500'}`}>
+            {ytd.cpa > 0 ? fmt$(ytd.cpa) : '—'}
+          </p>
+          <p className="text-xs text-muted-foreground mt-1">
+            {ytd.cpa > 0 ? `${fmt$(ytd.totalSpend)} spend ÷ ${ytd.totalWon} jobs` : 'Log spend + close jobs to calculate'}
+          </p>
+          <p className="text-[11px] text-primary/70 mt-2 font-medium">💡 Minimum to include in every estimate</p>
+        </div>
+        <div className="px-6 py-5">
+          <p className="text-xs text-muted-foreground font-semibold uppercase tracking-wide mb-1">Appt Conversion Rate</p>
+          <p className={`text-3xl font-bold mt-1 ${!ytd.apptConvRate ? 'text-muted-foreground' : ytd.apptConvRate >= 0.20 ? 'text-emerald-600' : ytd.apptConvRate >= 0.10 ? 'text-amber-500' : 'text-red-500'}`}>
+            {ytd.apptConvRate > 0 ? Math.round(ytd.apptConvRate * 100) + '%' : '—'}
+          </p>
+          <p className="text-xs text-muted-foreground mt-1">{ytd.totalInPerson} in-person / {ytd.totalLeads} leads YTD</p>
+          <p className="text-[11px] text-muted-foreground/60 mt-2 italic">Target: ≥ 20% · Below 10% = lead quality issue</p>
+        </div>
+        <div className="px-6 py-5">
+          <p className="text-xs text-muted-foreground font-semibold uppercase tracking-wide mb-1">Marketing ROI</p>
+          <p className={`text-3xl font-bold mt-1 ${!ytd.roi ? 'text-muted-foreground' : ytd.roi >= 5 ? 'text-emerald-600' : ytd.roi >= 2 ? 'text-amber-500' : 'text-red-500'}`}>
+            {ytd.roi > 0 ? ytd.roi.toFixed(1) + 'x' : '—'}
+          </p>
+          <p className="text-xs text-muted-foreground mt-1">
+            {ytd.roi > 0 ? `Every $1 spent → $${ytd.roi.toFixed(1)} collected` : 'Log spend to calculate'}
+          </p>
+          <p className="text-[11px] text-muted-foreground/60 mt-2 italic">Target: ≥ 5x · Below 2x = review spend allocation</p>
+        </div>
       </div>
-
       {ytd.cpa > 0 && (
         <div className="px-5 py-3 bg-amber-50/50 dark:bg-amber-950/10 border-t border-amber-200/50 dark:border-amber-800/30">
           <p className="text-xs text-amber-800 dark:text-amber-300">
-            <span className="font-semibold">💡 Pricing note:</span>{' '}
-            YTD cost per acquisition is <span className="font-bold">{fmt$(ytd.cpa)}</span> — include at least this in every estimate before profit.
-            {ytd.apptAcqCost > 0 && (
-              <> Each appointment costs <span className="font-bold">{fmt$(ytd.apptAcqCost)}</span> — if it rises above $300, reduce spend on underperforming sources.</>
-            )}
+            <span className="font-semibold">Pricing floor:</span>{' '}
+            Every estimate needs at least <span className="font-bold">{fmt$(ytd.cpa)}</span> built in before profit.
+            {!hasData && <span className="ml-1 text-amber-600 font-medium">Import missing historical jobs to improve accuracy.</span>}
           </p>
         </div>
       )}
@@ -220,149 +169,146 @@ function YTDBlock({ ytd, year }: { ytd: YTDData | null; year: number }) {
   )
 }
 
-// ── Main page ─────────────────────────────────────────────────────────────────
 export default function KPIPage() {
   const today  = new Date()
   const router = useRouter()
 
-  const [viewMode,        setViewMode]        = useState<'monthly' | 'weekly'>('monthly')
+  // ✅ FIX 2: Single date range — no monthly/weekly toggle
+  const [dateFrom,        setDateFrom]        = useState(firstOfMonthStr())
+  const [dateTo,          setDateTo]          = useState(todayStr())
   const [kpiDropdownOpen, setKpiDropdownOpen] = useState(false)
-  const [year,            setYear]            = useState(today.getFullYear())
-  const [month,           setMonth]           = useState(today.getMonth())
   const [filterSrc,       setFilterSrc]       = useState('')
-  const [customStart,     setCustomStart]     = useState(todayStr())
-  const [customEnd,       setCustomEnd]       = useState(todayStr())
 
-  // ── Data ──────────────────────────────────────────────────────────────────
-  const [leads,        setLeads]       = useState<LeadRow[]>([])
-  const [payments,     setPayments]    = useState<PaymentRow[]>([])
-  const [changeOrders, setChangeOrders]= useState<{ amount: number; lead_id: string }[]>([])
-  const [spend,        setSpend]       = useState<SpendRow[]>([])
-  const [sources,      setSources]     = useState<LeadSource[]>([])
-  const [trend,        setTrend]       = useState<{ label: string; contracted: number; actual: number; leads: number }[]>([])
-  const [loading,      setLoading]     = useState(true)
-  const [ytd,          setYtd]         = useState<YTDData | null>(null)
+  const [leads,        setLeads]        = useState<LeadRow[]>([])
+  const [payments,     setPayments]     = useState<PaymentRow[]>([])
+  const [changeOrders, setChangeOrders] = useState<{ amount: number; lead_id: string }[]>([])
+  const [spend,        setSpend]        = useState<SpendRow[]>([])
+  const [sources,      setSources]      = useState<LeadSource[]>([])
+  const [trend,        setTrend]        = useState<{ label: string; contracted: number; actual: number; leads: number }[]>([])
+  const [loading,      setLoading]      = useState(true)
+  const [ytd,          setYtd]          = useState<YTDData | null>(null)
 
-  // ── Source monthly comparison ─────────────────────────────────────────────
-  const [compareMonth,  setCompareMonth]  = useState<number | null>(null)
-  const [compareYear,   setCompareYear]   = useState<number>(today.getFullYear())
-  const [compareLeads,  setCompareLeads]  = useState<LeadRow[]>([])
-  const [compareSpend,  setCompareSpend]  = useState<SpendRow[]>([])
+  const [compareMonth, setCompareMonth] = useState<number | null>(null)
+  const [compareYear,  setCompareYear]  = useState<number>(today.getFullYear())
+  const [compareLeads, setCompareLeads] = useState<LeadRow[]>([])
+  const [compareSpend, setCompareSpend] = useState<SpendRow[]>([])
 
-  // ── Spend form ────────────────────────────────────────────────────────────
   const [showSpendForm,    setShowSpendForm]    = useState(false)
   const [spendForm,        setSpendForm]        = useState({ source_id: '', amount: '', period_start: todayStr(), period_end: todayStr() })
   const [savingSpend,      setSavingSpend]      = useState(false)
   const [deletingSpendId,  setDeletingSpendId]  = useState<string | null>(null)
   const [expandedSpendSrc, setExpandedSpendSrc] = useState<Record<string, boolean>>({})
 
-  const range = useMemo(() => {
-    if (viewMode === 'monthly') return monthRange(year, month)
-    const start = new Date(customStart + 'T00:00:00').toISOString()
-    const end   = new Date(customEnd   + 'T23:59:59').toISOString()
-    return { start, end }
-  }, [viewMode, year, month, customStart, customEnd])
+  const rangeStart = useMemo(() => new Date(dateFrom + 'T00:00:00').toISOString(), [dateFrom])
+  const rangeEnd   = useMemo(() => new Date(dateTo   + 'T23:59:59').toISOString(), [dateTo])
 
   const periodLabel = useMemo(() => {
-    if (viewMode === 'monthly') return `${MONTHS[month]} ${year}`
-    if (customStart === customEnd) return customStart
-    return `${customStart} – ${customEnd}`
-  }, [viewMode, year, month, customStart, customEnd])
+    if (dateFrom === dateTo) return dateFrom
+    return `${dateFrom} – ${dateTo}`
+  }, [dateFrom, dateTo])
 
-  useEffect(() => { fetchAll() }, [range])
+  // ✅ FIX 3: YTD year derived from the selected date range start year
+  const selectedYear = useMemo(() => new Date(dateFrom + 'T00:00:00').getFullYear(), [dateFrom])
+
+  // Quick range buttons
+  function setThisWeek() {
+    const now = new Date()
+    const mon = new Date(now); mon.setDate(now.getDate() - ((now.getDay() + 6) % 7))
+    const sun = new Date(mon); sun.setDate(mon.getDate() + 6)
+    setDateFrom(mon.toISOString().split('T')[0])
+    setDateTo(sun.toISOString().split('T')[0])
+  }
+  function setThisMonth() {
+    setDateFrom(firstOfMonthStr())
+    setDateTo(todayStr())
+  }
+  function setLastMonth() {
+    const d = new Date()
+    d.setDate(1); d.setMonth(d.getMonth() - 1)
+    const last = new Date(d.getFullYear(), d.getMonth() + 1, 0)
+    setDateFrom(d.toISOString().split('T')[0])
+    setDateTo(last.toISOString().split('T')[0])
+  }
+
+  useEffect(() => { fetchAll() }, [rangeStart, rangeEnd])
 
   async function fetchAll() {
     setLoading(true)
-    const { start, end } = range
-    const spendStart = start.split('T')[0]
-    const spendEnd   = viewMode === 'monthly'
-      ? new Date(year, month + 1, 1).toISOString().split('T')[0]
-      : customEnd
+    const spendStart = dateFrom
+    const spendEnd   = dateTo
 
     const [leadsRes, paymentsRes, spendRes, srcRes] = await Promise.all([
       supabase.from('leads')
         .select('id,first_name,last_name,phone,status,contact_type,lsa_status,initial_contract_value,created_at,source_id,metadata,lead_sources(name)')
-        .gte('created_at', start).lt('created_at', end).eq('archived', false),
-      supabase.from('payments')
-        .select('amount,paid_at,lead_id')
-        .gte('paid_at', start).lt('paid_at', end),
+        .gte('created_at', rangeStart).lte('created_at', rangeEnd).eq('archived', false),
+      supabase.from('payments').select('amount,paid_at,lead_id')
+        .gte('paid_at', rangeStart).lte('paid_at', rangeEnd),
       supabase.from('marketing_spend')
         .select('id,period_start,period_end,source_name,source_id,amount_spent,lead_sources(name)')
-        .gte('period_start', spendStart).lt('period_start', spendEnd),
+        .gte('period_start', spendStart).lte('period_start', spendEnd),
       supabase.from('lead_sources').select('id,name').order('name'),
     ])
 
-    // ── Change orders for won leads ──────────────────────────────────────
-    const wonIds = (leadsRes.data || [])
-      .filter((l: any) => WON_STAGES.includes(l.status))
-      .map((l: any) => l.id)
+    // Change orders for won leads
+    const wonIds = (leadsRes.data || []).filter((l: any) => WON_STAGES.includes(l.status)).map((l: any) => l.id)
     let coData: any[] = []
     if (wonIds.length > 0) {
-      const { data } = await supabase.from('change_orders')
-        .select('amount,lead_id').eq('status','won').in('lead_id', wonIds)
+      const { data } = await supabase.from('change_orders').select('amount,lead_id').eq('status','won').in('lead_id', wonIds)
       coData = data || []
     }
 
-    // ── 6-month trend ────────────────────────────────────────────────────
-    if (viewMode === 'monthly') {
-      const trendStart = new Date(year, month - 5, 1).toISOString()
-      const [tLeads, tPay] = await Promise.all([
-        supabase.from('leads').select('status,initial_contract_value,created_at').gte('created_at', trendStart).lt('created_at', end).eq('archived', false),
-        supabase.from('payments').select('amount,paid_at').gte('paid_at', trendStart).lt('paid_at', end),
-      ])
-      const tMap: Record<string, { contracted: number; actual: number; leads: number }> = {}
-      for (let i = 5; i >= 0; i--) {
-        const d = new Date(year, month - i, 1)
-        tMap[`${MONTHS[d.getMonth()]} ${String(d.getFullYear()).slice(2)}`] = { contracted: 0, actual: 0, leads: 0 }
-      }
-      ;(tLeads.data || []).forEach((l: any) => {
-        const d = new Date(l.created_at)
-        const k = `${MONTHS[d.getMonth()]} ${String(d.getFullYear()).slice(2)}`
-        if (tMap[k]) { tMap[k].leads++; if (WON_STAGES.includes(l.status)) tMap[k].contracted += Number(l.initial_contract_value || 0) }
-      })
-      ;(tPay.data || []).forEach((p: any) => {
-        const d = new Date(p.paid_at)
-        const k = `${MONTHS[d.getMonth()]} ${String(d.getFullYear()).slice(2)}`
-        if (tMap[k]) tMap[k].actual += Number(p.amount || 0)
-      })
-      setTrend(Object.entries(tMap).map(([label, v]) => ({ label, ...v })))
+    // 6-month trend (based on the end date month)
+    const endDate    = new Date(dateTo + 'T00:00:00')
+    const trendStart = new Date(endDate.getFullYear(), endDate.getMonth() - 5, 1).toISOString()
+    const [tLeads, tPay] = await Promise.all([
+      supabase.from('leads').select('status,initial_contract_value,created_at').gte('created_at', trendStart).lte('created_at', rangeEnd).eq('archived', false),
+      supabase.from('payments').select('amount,paid_at').gte('paid_at', trendStart).lte('paid_at', rangeEnd),
+    ])
+    const tMap: Record<string, { contracted: number; actual: number; leads: number }> = {}
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(endDate.getFullYear(), endDate.getMonth() - i, 1)
+      tMap[`${MONTHS[d.getMonth()]} ${String(d.getFullYear()).slice(2)}`] = { contracted: 0, actual: 0, leads: 0 }
     }
+    ;(tLeads.data || []).forEach((l: any) => {
+      const d = new Date(l.created_at)
+      const k = `${MONTHS[d.getMonth()]} ${String(d.getFullYear()).slice(2)}`
+      if (tMap[k]) { tMap[k].leads++; if (WON_STAGES.includes(l.status)) tMap[k].contracted += Number(l.initial_contract_value || 0) }
+    })
+    ;(tPay.data || []).forEach((p: any) => {
+      const d = new Date(p.paid_at)
+      const k = `${MONTHS[d.getMonth()]} ${String(d.getFullYear()).slice(2)}`
+      if (tMap[k]) tMap[k].actual += Number(p.amount || 0)
+    })
+    setTrend(Object.entries(tMap).map(([label, v]) => ({ label, ...v })))
 
-    // ── YTD fetch ────────────────────────────────────────────────────────
-    const ytdStart     = new Date(year, 0, 1).toISOString()
-    const ytdEnd       = new Date().toISOString()
-    const ytdSpendEnd  = todayStr()
+    // ✅ FIX 3: YTD uses selectedYear derived from dateFrom
+    const ytdStart    = new Date(selectedYear, 0, 1).toISOString()
+    const ytdEnd      = new Date().toISOString()
+    const ytdSpendEnd = todayStr()
 
     const [ytdLeadsRes, ytdSpendRes, ytdPayRes] = await Promise.all([
-      supabase.from('leads')
-        .select('id,status,contact_type,initial_contract_value')
+      supabase.from('leads').select('id,status,contact_type,initial_contract_value')
         .gte('created_at', ytdStart).lt('created_at', ytdEnd).eq('archived', false),
-      supabase.from('marketing_spend')
-        .select('amount_spent')
-        .gte('period_start', `${year}-01-01`).lte('period_start', ytdSpendEnd),
-      supabase.from('payments')
-        .select('amount')
-        .gte('paid_at', ytdStart).lt('paid_at', ytdEnd)
-        .gt('amount', 0), // ✅ exclude refunds (negative amounts)
+      supabase.from('marketing_spend').select('amount_spent')
+        .gte('period_start', `${selectedYear}-01-01`).lte('period_start', ytdSpendEnd),
+      supabase.from('payments').select('amount')
+        .gte('paid_at', ytdStart).lt('paid_at', ytdEnd).gt('amount', 0),
     ])
 
-    const ytdLeads   = (ytdLeadsRes.data || []) as any[]
-    const ytdSpendAmt= (ytdSpendRes.data || []).reduce((s: number, r: any) => s + Number(r.amount_spent || 0), 0)
-    const ytdRevenue = (ytdPayRes.data  || []).reduce((s: number, r: any) => s + Number(r.amount || 0), 0)
-    const ytdIP      = ytdLeads.filter((l: any) => l.contact_type === 'in_person').length
-    // ✅ Exclude job_cancelled from YTD won count
-    const ytdWon     = ytdLeads.filter((l: any) => WON_STAGES.includes(l.status)).length
+    const ytdLeads    = (ytdLeadsRes.data || []) as any[]
+    const ytdSpendAmt = (ytdSpendRes.data || []).reduce((s: number, r: any) => s + Number(r.amount_spent || 0), 0)
+    const ytdRevenue  = (ytdPayRes.data  || []).reduce((s: number, r: any) => s + Number(r.amount || 0), 0)
+    const ytdIP       = ytdLeads.filter((l: any) => l.contact_type === 'in_person').length
+    const ytdWon      = ytdLeads.filter((l: any) => WON_STAGES.includes(l.status)).length
 
     setYtd({
-      totalLeads:    ytdLeads.length,
-      totalInPerson: ytdIP,
-      totalWon:      ytdWon,
-      totalSpend:    ytdSpendAmt,
-      totalRevenue:  ytdRevenue,
-      apptConvRate:  ytdLeads.length > 0 ? ytdIP / ytdLeads.length : 0,
-      cpa:           ytdWon > 0 && ytdSpendAmt > 0 ? ytdSpendAmt / ytdWon : 0,
-      apptAcqCost:   ytdIP > 0 && ytdSpendAmt > 0 ? ytdSpendAmt / ytdIP : 0,
-      roi:           ytdSpendAmt > 0 && ytdRevenue > 0 ? ytdRevenue / ytdSpendAmt : 0,
+      totalLeads: ytdLeads.length, totalInPerson: ytdIP, totalWon: ytdWon,
+      totalSpend: ytdSpendAmt, totalRevenue: ytdRevenue,
+      apptConvRate: ytdLeads.length > 0 ? ytdIP / ytdLeads.length : 0,
+      cpa:         ytdWon > 0 && ytdSpendAmt > 0 ? ytdSpendAmt / ytdWon : 0,
+      apptAcqCost: ytdIP > 0 && ytdSpendAmt > 0 ? ytdSpendAmt / ytdIP : 0,
+      roi:         ytdSpendAmt > 0 && ytdRevenue > 0 ? ytdRevenue / ytdSpendAmt : 0,
+      year:        selectedYear,
     })
 
     setLeads((leadsRes.data as any[]) || [])
@@ -373,10 +319,10 @@ export default function KPIPage() {
     setLoading(false)
   }
 
-  // ── Fetch comparison month ─────────────────────────────────────────────────
   useEffect(() => {
     if (compareMonth === null) { setCompareLeads([]); setCompareSpend([]); return; }
-    const { start, end } = monthRange(compareYear, compareMonth)
+    const start   = new Date(compareYear, compareMonth, 1).toISOString()
+    const end     = new Date(compareYear, compareMonth + 1, 1).toISOString()
     const spStart = start.split('T')[0]
     const spEnd   = new Date(compareYear, compareMonth + 1, 1).toISOString().split('T')[0]
     Promise.all([
@@ -388,8 +334,7 @@ export default function KPIPage() {
     })
   }, [compareMonth, compareYear])
 
-  const filtered = useMemo(() =>
-    leads.filter(l => !filterSrc || l.source_id === filterSrc), [leads, filterSrc])
+  const filtered = useMemo(() => leads.filter(l => !filterSrc || l.source_id === filterSrc), [leads, filterSrc])
 
   const kpi = useMemo(() => {
     const total         = filtered.length
@@ -409,7 +354,6 @@ export default function KPIPage() {
     const totalSpend    = spend.filter(s => !filterSrc || s.source_id === filterSrc).reduce((s, r) => s + Number(r.amount_spent || 0), 0)
     const apptAcqCost   = inPerson > 0 && totalSpend > 0 ? totalSpend / inPerson : 0
     const projAcqCost   = wonCount > 0 && totalSpend > 0 ? totalSpend / wonCount : 0
-
     const bySrc: Record<string, { name: string; total: number; inPerson: number; phoneQ: number; won: number; contracted: number; lsaCharged: number }> = {}
     filtered.forEach(l => {
       const key  = l.source_id || 'unknown'
@@ -424,7 +368,6 @@ export default function KPIPage() {
     return { total, inPerson, phoneQ, totalAppts, wonCount, contracted, coVolume, totalRev, actual, lsaCharged, lsaCredited, lsaNotCharged, lsaInReview, totalSpend, apptAcqCost, projAcqCost, bySrc }
   }, [filtered, payments, spend, changeOrders, filterSrc])
 
-  // ── Comparison month bySrc ────────────────────────────────────────────────
   const compareBySrc = useMemo(() => {
     if (!compareLeads.length) return {}
     const bySrc: Record<string, { name: string; total: number; inPerson: number; won: number; contracted: number; spend: number }> = {}
@@ -444,35 +387,28 @@ export default function KPIPage() {
   }, [compareLeads, compareSpend])
 
   const spendBySrc = useMemo(() => {
-    if (viewMode === 'weekly') {
-      return spend.map(row => ({
-        id: row.id, name: (row.lead_sources as any)?.name || row.source_name || 'Unknown',
-        amount: Number(row.amount_spent), source_id: row.source_id,
-        period_start: row.period_start, period_end: row.period_end || row.period_start,
-      })).sort((a, b) => a.period_start.localeCompare(b.period_start))
-    }
     const map: Record<string, any> = {}
     spend.forEach(row => {
       const key  = row.source_id || row.source_name || 'unknown'
       const name = (row.lead_sources as any)?.name || row.source_name || 'Unknown'
-      if (!map[key]) map[key] = { id: row.id, name, amount: 0, source_id: row.source_id, period_start: row.period_start, period_end: row.period_end || row.period_start }
+      if (!map[key]) map[key] = { id: row.id, name, amount: 0, source_id: row.source_id }
       map[key].amount += Number(row.amount_spent || 0)
     })
     return Object.values(map).sort((a: any, b: any) => b.amount - a.amount)
-  }, [spend, viewMode])
+  }, [spend])
 
   const srcList = Object.values(kpi.bySrc).sort((a, b) => b.total - a.total)
 
   const insightsData: InsightData = useMemo(() => ({
     totalLeads: kpi.total, totalAppts: kpi.inPerson, totalPhoneQ: kpi.phoneQ,
     totalWon: kpi.wonCount, totalContracted: kpi.contracted + kpi.coVolume,
-    totalSpend: kpi.totalSpend, period: periodLabel, viewMode,
+    totalSpend: kpi.totalSpend, period: periodLabel, viewMode: 'weekly',
     sources: srcList.map(src => {
       const srcSpendRow = spendBySrc.find(s => { const key = Object.keys(kpi.bySrc).find(k => kpi.bySrc[k] === src); return s.source_id === key })
       return { name: src.name, leads: src.total, inPerson: src.inPerson, won: src.won, contracted: src.contracted, spend: srcSpendRow?.amount || 0 }
     }),
     trend: trend.map(t => ({ label: t.label, contracted: t.contracted, leads: t.leads })),
-  }), [kpi, periodLabel, viewMode, srcList, spendBySrc, trend])
+  }), [kpi, periodLabel, srcList, spendBySrc, trend])
 
   const spendGrouped = useMemo(() => {
     const grouped: Record<string, any> = {}
@@ -512,24 +448,19 @@ export default function KPIPage() {
     setDeletingSpendId(null); fetchAll()
   }
 
-  function prevPeriod() { if (viewMode === 'monthly') { if (month === 0) { setMonth(11); setYear(y => y - 1) } else setMonth(m => m - 1) } }
-  function nextPeriod() { if (viewMode === 'monthly') { if (month === 11) { setMonth(0); setYear(y => y + 1) } else setMonth(m => m + 1) } }
-
-  // ── Comparison month options ───────────────────────────────────────────────
   const compareOptions = useMemo(() => {
     const opts: { label: string; m: number; y: number }[] = []
-    for (let i = 1; i <= 12; i++) {
+    for (let i = 1; i <= 24; i++) {
       const d = new Date(today.getFullYear(), today.getMonth() - i, 1)
       opts.push({ label: `${MONTHS[d.getMonth()]} ${d.getFullYear()}`, m: d.getMonth(), y: d.getFullYear() })
     }
     return opts
   }, [])
 
-  // ── Render ────────────────────────────────────────────────────────────────
   return (
     <div className="p-6 max-w-6xl mx-auto space-y-5">
 
-      {/* ── Header ── */}
+      {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-center gap-3">
           <button onClick={() => router.push('/dashboard')}
@@ -553,15 +484,6 @@ export default function KPIPage() {
             </button>
             {kpiDropdownOpen && (
               <div className="absolute right-0 top-full mt-1 w-48 rounded-lg border border-border bg-background shadow-lg z-50 overflow-hidden">
-                <button onClick={() => { setViewMode('monthly'); setKpiDropdownOpen(false) }}
-                  className={`w-full text-left px-4 py-2.5 text-sm hover:bg-muted flex items-center justify-between ${viewMode === 'monthly' ? 'font-semibold text-primary' : ''}`}>
-                  Monthly KPI {viewMode === 'monthly' && <span className="text-xs text-primary">●</span>}
-                </button>
-                <button onClick={() => { setViewMode('weekly'); setKpiDropdownOpen(false) }}
-                  className={`w-full text-left px-4 py-2.5 text-sm hover:bg-muted flex items-center justify-between ${viewMode === 'weekly' ? 'font-semibold text-primary' : ''}`}>
-                  Weekly KPI {viewMode === 'weekly' && <span className="text-xs text-primary">●</span>}
-                </button>
-                <div className="border-t border-border" />
                 <button onClick={() => { router.push('/kpi/salesperson'); setKpiDropdownOpen(false) }}
                   className="w-full text-left px-4 py-2.5 text-sm hover:bg-muted text-muted-foreground">
                   Salesperson KPI
@@ -569,42 +491,27 @@ export default function KPIPage() {
               </div>
             )}
           </div>
-          {/* Period nav */}
-          <div className="flex items-center gap-1 rounded-lg border border-border px-2 py-1">
-            {viewMode === 'monthly' ? (
-              <>
-                <button onClick={prevPeriod} className="p-1 hover:bg-muted rounded"><ChevronLeft className="h-4 w-4" /></button>
-                <span className="text-sm font-medium w-32 text-center">{periodLabel}</span>
-                <button onClick={nextPeriod} disabled={month === today.getMonth() && year === today.getFullYear()}
-                  className="p-1 hover:bg-muted rounded disabled:opacity-30"><ChevronRight className="h-4 w-4" /></button>
-              </>
-            ) : (
-              <div className="flex items-center gap-2 px-1">
-                <span className="text-xs text-muted-foreground">From</span>
-                <input type="date" value={customStart}
-                  onChange={e => { setCustomStart(e.target.value); if (e.target.value > customEnd) setCustomEnd(e.target.value) }}
-                  className="text-xs rounded border border-border bg-background px-2 py-1 focus:outline-none" />
-                <span className="text-xs text-muted-foreground">To</span>
-                <input type="date" value={customEnd} min={customStart}
-                  onChange={e => setCustomEnd(e.target.value)}
-                  className="text-xs rounded border border-border bg-background px-2 py-1 focus:outline-none" />
-                <button onClick={() => {
-                    const now = new Date()
-                    const mon = new Date(now); mon.setDate(now.getDate() - ((now.getDay() + 6) % 7))
-                    const sun = new Date(mon); sun.setDate(mon.getDate() + 6)
-                    setCustomStart(mon.toISOString().split('T')[0])
-                    setCustomEnd(sun.toISOString().split('T')[0])
-                  }}
-                  className="text-xs px-2 py-1 rounded border border-border hover:bg-muted text-muted-foreground whitespace-nowrap">
-                  This week
-                </button>
-              </div>
-            )}
+
+          {/* ✅ Single date range picker + quick buttons */}
+          <div className="flex items-center gap-2 flex-wrap rounded-lg border border-border px-3 py-1.5">
+            <span className="text-xs text-muted-foreground">From</span>
+            <input type="date" value={dateFrom}
+              onChange={e => { setDateFrom(e.target.value); if (e.target.value > dateTo) setDateTo(e.target.value) }}
+              className="text-xs rounded border border-border bg-background px-2 py-1 focus:outline-none" />
+            <span className="text-xs text-muted-foreground">To</span>
+            <input type="date" value={dateTo} min={dateFrom}
+              onChange={e => setDateTo(e.target.value)}
+              className="text-xs rounded border border-border bg-background px-2 py-1 focus:outline-none" />
+            <div className="flex gap-1">
+              <button onClick={setThisWeek}  className="text-xs px-2 py-1 rounded border border-border hover:bg-muted text-muted-foreground whitespace-nowrap">This week</button>
+              <button onClick={setThisMonth} className="text-xs px-2 py-1 rounded border border-border hover:bg-muted text-muted-foreground whitespace-nowrap">This month</button>
+              <button onClick={setLastMonth} className="text-xs px-2 py-1 rounded border border-border hover:bg-muted text-muted-foreground whitespace-nowrap">Last month</button>
+            </div>
           </div>
         </div>
       </div>
 
-      {/* ── Source filter ── */}
+      {/* Source filter */}
       <div className="flex gap-3 items-center flex-wrap">
         <select value={filterSrc} onChange={e => setFilterSrc(e.target.value)}
           className="rounded-md border border-border bg-background px-3 py-1.5 text-sm focus:outline-none">
@@ -627,7 +534,7 @@ export default function KPIPage() {
       ) : (
         <div className="space-y-5">
 
-          {/* ── 1. MARKETING SPEND ── */}
+          {/* 1. MARKETING SPEND */}
           <div className="rounded-xl border-2 border-primary/30 bg-primary/5 overflow-hidden">
             <div className="px-6 py-4 border-b border-primary/20 flex items-center justify-between">
               <div>
@@ -645,7 +552,6 @@ export default function KPIPage() {
                 </button>
               </div>
             </div>
-
             {showSpendForm && (
               <div className="px-6 py-4 border-b border-primary/20 bg-primary/5">
                 <p className="text-xs font-semibold text-primary uppercase tracking-wide mb-3">Add Spend</p>
@@ -675,10 +581,9 @@ export default function KPIPage() {
                 </div>
               </div>
             )}
-
             <div className="px-6 py-4">
               {spendGrouped.length === 0 ? (
-                <p className="text-sm text-muted-foreground text-center py-2">No spend logged for {periodLabel}.</p>
+                <p className="text-sm text-muted-foreground text-center py-2">No spend logged for this period.</p>
               ) : (
                 <div className="rounded-lg border border-border/60 overflow-hidden divide-y divide-border/60 bg-background">
                   {(spendGrouped as any[]).map((group: any) => {
@@ -745,7 +650,7 @@ export default function KPIPage() {
             </div>
           </div>
 
-          {/* ── 2. KEY METRICS ── */}
+          {/* 2. KEY METRICS */}
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
             <div className="rounded-lg border border-border bg-card overflow-hidden">
               <div className="px-4 py-4">
@@ -789,16 +694,15 @@ export default function KPIPage() {
               color={kpi.wonCount > 0 && kpi.totalAppts > 0 && kpi.wonCount / kpi.totalAppts >= 0.3 ? 'text-emerald-600' : 'text-foreground'} />
           </div>
 
-          {/* ── 3. YTD BLOCK ── */}
-          <YTDBlock ytd={ytd} year={year} />
+          {/* 3. YTD BLOCK */}
+          <YTDBlock ytd={ytd} />
 
-          {/* ── 4. SOURCE PERFORMANCE ── */}
+          {/* 4. SOURCE PERFORMANCE */}
           <Section title="Lead Source Performance" badge={`${srcList.length} sources`} defaultOpen>
             {srcList.length === 0 ? (
               <p className="text-sm text-muted-foreground text-center py-4">No leads for this period.</p>
             ) : (
               <>
-                {/* ── Monthly comparison picker ── */}
                 <div className="flex items-center gap-3 mb-4 flex-wrap">
                   <p className="text-xs text-muted-foreground font-semibold uppercase tracking-wide">Compare with:</p>
                   <select
@@ -816,11 +720,10 @@ export default function KPIPage() {
                   </select>
                   {compareMonth !== null && (
                     <span className="text-xs text-primary font-medium">
-                      Comparing {periodLabel} vs {MONTHS[compareMonth]} {compareYear}
+                      vs {MONTHS[compareMonth]} {compareYear}
                     </span>
                   )}
                 </div>
-
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
@@ -837,18 +740,15 @@ export default function KPIPage() {
                     </thead>
                     <tbody>
                       {srcList.map((src, i) => {
-                        const srcKey    = Object.keys(kpi.bySrc).find(k => kpi.bySrc[k] === src) || ''
-                        const srcSpend  = spendBySrc.filter(s => s.source_id === srcKey).reduce((sum, s) => sum + s.amount, 0)
-                        const apptCost  = src.inPerson > 0 && srcSpend > 0 ? srcSpend / src.inPerson : 0
-                        const projCost  = src.won > 0 && srcSpend > 0 ? srcSpend / src.won : 0
-                        const srcAppts  = src.inPerson + src.phoneQ
-                        const cr        = srcAppts > 0 ? Math.round((src.won / srcAppts) * 100) : 0
-                        const crColor   = cr >= 40 ? 'text-emerald-600 font-bold' : cr >= 20 ? 'text-yellow-600 font-bold' : 'text-red-500 font-bold'
-
-                        // Comparison delta
-                        const cmp       = compareBySrc[srcKey]
+                        const srcKey   = Object.keys(kpi.bySrc).find(k => kpi.bySrc[k] === src) || ''
+                        const srcSpend = spendBySrc.filter(s => s.source_id === srcKey).reduce((sum, s) => sum + s.amount, 0)
+                        const apptCost = src.inPerson > 0 && srcSpend > 0 ? srcSpend / src.inPerson : 0
+                        const projCost = src.won > 0 && srcSpend > 0 ? srcSpend / src.won : 0
+                        const srcAppts = src.inPerson + src.phoneQ
+                        const cr       = srcAppts > 0 ? Math.round((src.won / srcAppts) * 100) : 0
+                        const crColor  = cr >= 40 ? 'text-emerald-600 font-bold' : cr >= 20 ? 'text-yellow-600 font-bold' : 'text-red-500 font-bold'
+                        const cmp      = compareBySrc[srcKey]
                         const leadDelta = cmp ? src.total - cmp.total : null
-
                         return (
                           <tr key={src.name} className="border-b border-border/50 hover:bg-muted/20">
                             <td className="py-3 pr-3">
@@ -903,7 +803,6 @@ export default function KPIPage() {
                     </tbody>
                   </table>
                 </div>
-
                 {srcList.some(s => s.contracted > 0) && (
                   <div className="mt-4 pt-4 border-t border-border">
                     <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Revenue by source</p>
@@ -924,44 +823,42 @@ export default function KPIPage() {
             )}
           </Section>
 
-          {/* ── 5. KPI INSIGHTS ── */}
+          {/* 5. KPI INSIGHTS */}
           <KpiInsights label="KPI Performance Analysis" data={insightsData} />
 
-          {/* ── 6. REVENUE TREND ── */}
-          {viewMode === 'monthly' && (
-            <Section title="Revenue Trend — Last 6 Months" defaultOpen={false}>
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-                <div className="lg:col-span-2">
-                  <div className="flex gap-3 text-xs text-muted-foreground mb-3">
-                    <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm inline-block bg-[#E07B3A]" /> Contracted</span>
-                    <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm inline-block bg-[#378ADD]" /> Collected</span>
-                  </div>
-                  <ResponsiveContainer width="100%" height={220}>
-                    <BarChart data={trend} barGap={4}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="rgba(128,128,128,0.1)" vertical={false} />
-                      <XAxis dataKey="label" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
-                      <YAxis tick={{ fontSize: 11 }} axisLine={false} tickLine={false} tickFormatter={v => '$' + (v/1000).toFixed(0) + 'k'} />
-                      <Tooltip formatter={(v: number) => fmt$(v)} />
-                      <Bar dataKey="contracted" fill="#E07B3A" radius={[3,3,0,0]} name="Contracted" />
-                      <Bar dataKey="actual"     fill="#378ADD" radius={[3,3,0,0]} name="Collected" />
-                    </BarChart>
-                  </ResponsiveContainer>
+          {/* 6. REVENUE TREND */}
+          <Section title="Revenue Trend — Last 6 Months" defaultOpen={false}>
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+              <div className="lg:col-span-2">
+                <div className="flex gap-3 text-xs text-muted-foreground mb-3">
+                  <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm inline-block bg-[#E07B3A]" /> Contracted</span>
+                  <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm inline-block bg-[#378ADD]" /> Collected</span>
                 </div>
-                <div>
-                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Lead count trend</p>
-                  <ResponsiveContainer width="100%" height={200}>
-                    <LineChart data={trend}>
-                      <Line type="monotone" dataKey="leads" stroke="#378ADD" strokeWidth={2} dot={{ r: 3 }} />
-                      <XAxis dataKey="label" tick={{ fontSize: 10 }} axisLine={false} tickLine={false} />
-                      <Tooltip formatter={(v: number) => [v, 'Leads']} />
-                    </LineChart>
-                  </ResponsiveContainer>
-                </div>
+                <ResponsiveContainer width="100%" height={220}>
+                  <BarChart data={trend} barGap={4}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(128,128,128,0.1)" vertical={false} />
+                    <XAxis dataKey="label" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
+                    <YAxis tick={{ fontSize: 11 }} axisLine={false} tickLine={false} tickFormatter={v => '$' + (v/1000).toFixed(0) + 'k'} />
+                    <Tooltip formatter={(v: number) => fmt$(v)} />
+                    <Bar dataKey="contracted" fill="#E07B3A" radius={[3,3,0,0]} name="Contracted" />
+                    <Bar dataKey="actual"     fill="#378ADD" radius={[3,3,0,0]} name="Collected" />
+                  </BarChart>
+                </ResponsiveContainer>
               </div>
-            </Section>
-          )}
+              <div>
+                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Lead count trend</p>
+                <ResponsiveContainer width="100%" height={200}>
+                  <LineChart data={trend}>
+                    <Line type="monotone" dataKey="leads" stroke="#378ADD" strokeWidth={2} dot={{ r: 3 }} />
+                    <XAxis dataKey="label" tick={{ fontSize: 10 }} axisLine={false} tickLine={false} />
+                    <Tooltip formatter={(v: number) => [v, 'Leads']} />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          </Section>
 
-          {/* ── 7. LEADS THIS PERIOD ── */}
+          {/* 7. LEADS THIS PERIOD */}
           <Section title="Leads This Period" badge={`${filtered.length} leads`} defaultOpen={false}>
             {filtered.length === 0 ? (
               <p className="text-sm text-muted-foreground text-center py-4">No leads for this period.</p>
