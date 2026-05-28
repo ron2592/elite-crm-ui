@@ -8,10 +8,11 @@ import {
 } from 'recharts'
 import {
   ChevronLeft, ChevronRight, ChevronDown, ChevronUp,
-  Plus, Save, X, Loader2, LayoutDashboard, Printer, Trash2,
+  Plus, Save, X, Loader2, LayoutDashboard, Printer, Trash2, TrendingUp,
 } from 'lucide-react'
 import KpiInsights, { InsightData } from '@/components/KpiInsights'
 
+// ── Types ─────────────────────────────────────────────────────────────────────
 interface LeadRow {
   id: string; first_name?: string; last_name?: string; phone?: string;
   status: string; contact_type: string | null; lsa_status: string | null;
@@ -27,10 +28,26 @@ interface SpendRow {
 }
 interface LeadSource { id: string; name: string }
 
+// ── YTD types ─────────────────────────────────────────────────────────────────
+interface YTDData {
+  totalLeads:    number
+  totalInPerson: number
+  totalWon:      number
+  totalSpend:    number
+  totalRevenue:  number
+  apptConvRate:  number
+  cpa:           number
+  apptAcqCost:   number
+  roi:           number
+}
+
+// ── Constants ─────────────────────────────────────────────────────────────────
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
 const WON_STAGES = ['closed_won', 'won']
+// ✅ job_cancelled excluded automatically — not in WON_STAGES
 const SRC_COLORS = ['#378ADD','#E07B3A','#10b981','#8b5cf6','#ec4899','#06b6d4','#f59e0b','#ef4444']
 
+// ── Helpers ───────────────────────────────────────────────────────────────────
 function monthRange(y: number, m: number) {
   return { start: new Date(y, m, 1).toISOString(), end: new Date(y, m + 1, 1).toISOString() }
 }
@@ -39,12 +56,12 @@ function fmt$(n: number) {
   if (n >= 1000) return '$' + (n / 1000).toFixed(1).replace(/\.0$/, '') + 'k'
   return '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
-// ✅ FIXED: close rate uses appointments as denominator
 function closeRatePct(won: number, appts: number) {
   return appts === 0 ? '—' : Math.round((won / appts) * 100) + '%'
 }
 function todayStr() { return new Date().toISOString().split('T')[0] }
 
+// ── Sub-components ────────────────────────────────────────────────────────────
 function ExpandMetric({ label, value, color = '', children }: {
   label: string; value: React.ReactNode; color?: string; children: React.ReactNode
 }) {
@@ -95,29 +112,148 @@ function MetricCard({ label, value, sub, color = '' }: {
   )
 }
 
+// ── YTD Block ─────────────────────────────────────────────────────────────────
+function YTDBlock({ ytd, year }: { ytd: YTDData | null; year: number }) {
+  if (!ytd) return (
+    <div className="rounded-xl border border-border p-6 flex items-center justify-center gap-2 text-muted-foreground">
+      <Loader2 className="h-4 w-4 animate-spin" /> Loading year-to-date metrics…
+    </div>
+  )
+
+  const pct = (n: number) => Math.round(n * 100) + '%'
+
+  const metrics = [
+    {
+      label: 'YTD Total Leads',
+      value: ytd.totalLeads.toString(),
+      sub:   `Jan 1 – today ${year}`,
+      color: '',
+      info:  null,
+    },
+    {
+      label: 'YTD Marketing Spend',
+      value: ytd.totalSpend > 0 ? fmt$(ytd.totalSpend) : '—',
+      sub:   'All sources combined',
+      color: '',
+      info:  null,
+    },
+    {
+      label: 'YTD Appt Conversion',
+      value: ytd.apptConvRate > 0 ? pct(ytd.apptConvRate) : '—',
+      sub:   `${ytd.totalInPerson} in-person / ${ytd.totalLeads} leads`,
+      color: ytd.apptConvRate >= 0.20 ? 'text-emerald-600'
+           : ytd.apptConvRate >= 0.10 ? 'text-amber-500'
+           : ytd.apptConvRate >  0    ? 'text-red-500' : '',
+      info: '% of leads that became in-person appointments',
+    },
+    {
+      label: 'YTD Appt Acq. Cost',
+      value: ytd.apptAcqCost > 0 ? fmt$(ytd.apptAcqCost) : '—',
+      sub:   'Spend ÷ in-person appts',
+      color: ytd.apptAcqCost > 0 && ytd.apptAcqCost <= 250 ? 'text-emerald-600'
+           : ytd.apptAcqCost > 250 && ytd.apptAcqCost <= 400 ? 'text-amber-500'
+           : ytd.apptAcqCost > 400 ? 'text-red-500' : '',
+      info: 'How much you spend in marketing to get one in-person appointment',
+    },
+    {
+      label: 'YTD Cost Per Acquisition',
+      value: ytd.cpa > 0 ? fmt$(ytd.cpa) : '—',
+      sub:   `Spend ÷ ${ytd.totalWon} jobs closed`,
+      color: ytd.cpa > 0 && ytd.cpa <= 700    ? 'text-emerald-600'
+           : ytd.cpa > 700 && ytd.cpa <= 1200 ? 'text-amber-500'
+           : ytd.cpa > 1200                   ? 'text-red-500' : '',
+      info: 'Essential for pricing — bake this into every estimate',
+    },
+    {
+      label: 'YTD Marketing ROI',
+      value: ytd.roi > 0 ? ytd.roi.toFixed(1) + 'x' : '—',
+      sub:   ytd.roi > 0 ? `Every $1 spent → $${ytd.roi.toFixed(1)} collected` : 'Log spend to calculate',
+      color: ytd.roi >= 5 ? 'text-emerald-600'
+           : ytd.roi >= 2 ? 'text-amber-500'
+           : ytd.roi >  0 ? 'text-red-500' : '',
+      info: 'Collected revenue ÷ total marketing spend',
+    },
+  ]
+
+  return (
+    <div className="rounded-xl border border-border overflow-hidden">
+      <div className="flex items-center justify-between px-5 py-3.5 bg-muted/20 border-b border-border">
+        <div>
+          <div className="flex items-center gap-2">
+            <TrendingUp className="h-4 w-4 text-primary" />
+            <p className="text-sm font-bold">Year-to-Date Marketing Metrics</p>
+          </div>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Jan 1 – today · {year} · All sources · Use these numbers when pricing jobs
+          </p>
+        </div>
+        <span className="text-xs px-2.5 py-1 rounded-full bg-primary/10 text-primary font-semibold border border-primary/20">
+          {year} YTD
+        </span>
+      </div>
+
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 divide-x divide-y divide-border/50 bg-card">
+        {metrics.map((m) => (
+          <div key={m.label} className="px-4 py-4 flex flex-col justify-between min-h-[100px]">
+            <p className="text-xs text-muted-foreground font-semibold uppercase tracking-wide leading-tight">{m.label}</p>
+            <div>
+              <p className={`text-2xl font-bold mt-1 ${m.color || 'text-foreground'}`}>{m.value}</p>
+              <p className="text-xs text-muted-foreground mt-1 leading-snug">{m.sub}</p>
+              {m.info && <p className="text-[10px] text-muted-foreground/60 mt-1 leading-snug italic">{m.info}</p>}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {ytd.cpa > 0 && (
+        <div className="px-5 py-3 bg-amber-50/50 dark:bg-amber-950/10 border-t border-amber-200/50 dark:border-amber-800/30">
+          <p className="text-xs text-amber-800 dark:text-amber-300">
+            <span className="font-semibold">💡 Pricing note:</span>{' '}
+            YTD cost per acquisition is <span className="font-bold">{fmt$(ytd.cpa)}</span> — include at least this in every estimate before profit.
+            {ytd.apptAcqCost > 0 && (
+              <> Each appointment costs <span className="font-bold">{fmt$(ytd.apptAcqCost)}</span> — if it rises above $300, reduce spend on underperforming sources.</>
+            )}
+          </p>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Main page ─────────────────────────────────────────────────────────────────
 export default function KPIPage() {
-  const today = new Date()
+  const today  = new Date()
   const router = useRouter()
-  const [viewMode, setViewMode] = useState<'monthly' | 'weekly'>('monthly')
+
+  const [viewMode,        setViewMode]        = useState<'monthly' | 'weekly'>('monthly')
   const [kpiDropdownOpen, setKpiDropdownOpen] = useState(false)
-  const [year, setYear]   = useState(today.getFullYear())
-  const [month, setMonth] = useState(today.getMonth())
-  const [filterSrc, setFilterSrc] = useState('')
-  const [customStart, setCustomStart] = useState(todayStr())
-  const [customEnd,   setCustomEnd]   = useState(todayStr())
+  const [year,            setYear]            = useState(today.getFullYear())
+  const [month,           setMonth]           = useState(today.getMonth())
+  const [filterSrc,       setFilterSrc]       = useState('')
+  const [customStart,     setCustomStart]     = useState(todayStr())
+  const [customEnd,       setCustomEnd]       = useState(todayStr())
 
-  const [leads, setLeads]       = useState<LeadRow[]>([])
-  const [payments, setPayments] = useState<PaymentRow[]>([])
-  const [changeOrders, setChangeOrders] = useState<{ amount: number; lead_id: string }[]>([])
-  const [spend, setSpend]       = useState<SpendRow[]>([])
-  const [sources, setSources]   = useState<LeadSource[]>([])
-  const [trend, setTrend]       = useState<{ label: string; contracted: number; actual: number; leads: number }[]>([])
-  const [loading, setLoading]   = useState(true)
+  // ── Data ──────────────────────────────────────────────────────────────────
+  const [leads,        setLeads]       = useState<LeadRow[]>([])
+  const [payments,     setPayments]    = useState<PaymentRow[]>([])
+  const [changeOrders, setChangeOrders]= useState<{ amount: number; lead_id: string }[]>([])
+  const [spend,        setSpend]       = useState<SpendRow[]>([])
+  const [sources,      setSources]     = useState<LeadSource[]>([])
+  const [trend,        setTrend]       = useState<{ label: string; contracted: number; actual: number; leads: number }[]>([])
+  const [loading,      setLoading]     = useState(true)
+  const [ytd,          setYtd]         = useState<YTDData | null>(null)
 
-  const [showSpendForm, setShowSpendForm] = useState(false)
-  const [spendForm, setSpendForm] = useState({ source_id: '', amount: '', period_start: todayStr(), period_end: todayStr() })
-  const [savingSpend, setSavingSpend] = useState(false)
-  const [deletingSpendId, setDeletingSpendId] = useState<string | null>(null)
+  // ── Source monthly comparison ─────────────────────────────────────────────
+  const [compareMonth,  setCompareMonth]  = useState<number | null>(null)
+  const [compareYear,   setCompareYear]   = useState<number>(today.getFullYear())
+  const [compareLeads,  setCompareLeads]  = useState<LeadRow[]>([])
+  const [compareSpend,  setCompareSpend]  = useState<SpendRow[]>([])
+
+  // ── Spend form ────────────────────────────────────────────────────────────
+  const [showSpendForm,    setShowSpendForm]    = useState(false)
+  const [spendForm,        setSpendForm]        = useState({ source_id: '', amount: '', period_start: todayStr(), period_end: todayStr() })
+  const [savingSpend,      setSavingSpend]      = useState(false)
+  const [deletingSpendId,  setDeletingSpendId]  = useState<string | null>(null)
   const [expandedSpendSrc, setExpandedSpendSrc] = useState<Record<string, boolean>>({})
 
   const range = useMemo(() => {
@@ -152,18 +288,22 @@ export default function KPIPage() {
         .gte('paid_at', start).lt('paid_at', end),
       supabase.from('marketing_spend')
         .select('id,period_start,period_end,source_name,source_id,amount_spent,lead_sources(name)')
-        .gte('period_start', spendStart)
-        .lt('period_start', spendEnd),
+        .gte('period_start', spendStart).lt('period_start', spendEnd),
       supabase.from('lead_sources').select('id,name').order('name'),
     ])
 
-    const wonIds = (leadsRes.data || []).filter((l: any) => WON_STAGES.includes(l.status)).map((l: any) => l.id)
+    // ── Change orders for won leads ──────────────────────────────────────
+    const wonIds = (leadsRes.data || [])
+      .filter((l: any) => WON_STAGES.includes(l.status))
+      .map((l: any) => l.id)
     let coData: any[] = []
     if (wonIds.length > 0) {
-      const { data } = await supabase.from('change_orders').select('amount,lead_id').eq('status', 'won').in('lead_id', wonIds)
+      const { data } = await supabase.from('change_orders')
+        .select('amount,lead_id').eq('status','won').in('lead_id', wonIds)
       coData = data || []
     }
 
+    // ── 6-month trend ────────────────────────────────────────────────────
     if (viewMode === 'monthly') {
       const trendStart = new Date(year, month - 5, 1).toISOString()
       const [tLeads, tPay] = await Promise.all([
@@ -188,6 +328,43 @@ export default function KPIPage() {
       setTrend(Object.entries(tMap).map(([label, v]) => ({ label, ...v })))
     }
 
+    // ── YTD fetch ────────────────────────────────────────────────────────
+    const ytdStart     = new Date(year, 0, 1).toISOString()
+    const ytdEnd       = new Date().toISOString()
+    const ytdSpendEnd  = todayStr()
+
+    const [ytdLeadsRes, ytdSpendRes, ytdPayRes] = await Promise.all([
+      supabase.from('leads')
+        .select('id,status,contact_type,initial_contract_value')
+        .gte('created_at', ytdStart).lt('created_at', ytdEnd).eq('archived', false),
+      supabase.from('marketing_spend')
+        .select('amount_spent')
+        .gte('period_start', `${year}-01-01`).lte('period_start', ytdSpendEnd),
+      supabase.from('payments')
+        .select('amount')
+        .gte('paid_at', ytdStart).lt('paid_at', ytdEnd)
+        .gt('amount', 0), // ✅ exclude refunds (negative amounts)
+    ])
+
+    const ytdLeads   = (ytdLeadsRes.data || []) as any[]
+    const ytdSpendAmt= (ytdSpendRes.data || []).reduce((s: number, r: any) => s + Number(r.amount_spent || 0), 0)
+    const ytdRevenue = (ytdPayRes.data  || []).reduce((s: number, r: any) => s + Number(r.amount || 0), 0)
+    const ytdIP      = ytdLeads.filter((l: any) => l.contact_type === 'in_person').length
+    // ✅ Exclude job_cancelled from YTD won count
+    const ytdWon     = ytdLeads.filter((l: any) => WON_STAGES.includes(l.status)).length
+
+    setYtd({
+      totalLeads:    ytdLeads.length,
+      totalInPerson: ytdIP,
+      totalWon:      ytdWon,
+      totalSpend:    ytdSpendAmt,
+      totalRevenue:  ytdRevenue,
+      apptConvRate:  ytdLeads.length > 0 ? ytdIP / ytdLeads.length : 0,
+      cpa:           ytdWon > 0 && ytdSpendAmt > 0 ? ytdSpendAmt / ytdWon : 0,
+      apptAcqCost:   ytdIP > 0 && ytdSpendAmt > 0 ? ytdSpendAmt / ytdIP : 0,
+      roi:           ytdSpendAmt > 0 && ytdRevenue > 0 ? ytdRevenue / ytdSpendAmt : 0,
+    })
+
     setLeads((leadsRes.data as any[]) || [])
     setPayments(paymentsRes.data || [])
     setChangeOrders(coData)
@@ -196,7 +373,23 @@ export default function KPIPage() {
     setLoading(false)
   }
 
-  const filtered = useMemo(() => leads.filter(l => !filterSrc || l.source_id === filterSrc), [leads, filterSrc])
+  // ── Fetch comparison month ─────────────────────────────────────────────────
+  useEffect(() => {
+    if (compareMonth === null) { setCompareLeads([]); setCompareSpend([]); return; }
+    const { start, end } = monthRange(compareYear, compareMonth)
+    const spStart = start.split('T')[0]
+    const spEnd   = new Date(compareYear, compareMonth + 1, 1).toISOString().split('T')[0]
+    Promise.all([
+      supabase.from('leads').select('id,status,contact_type,initial_contract_value,source_id,lead_sources(name)').gte('created_at', start).lt('created_at', end).eq('archived', false),
+      supabase.from('marketing_spend').select('id,source_id,amount_spent,lead_sources(name)').gte('period_start', spStart).lt('period_start', spEnd),
+    ]).then(([lr, sr]) => {
+      setCompareLeads((lr.data as any[]) || [])
+      setCompareSpend((sr.data as any[]) || [])
+    })
+  }, [compareMonth, compareYear])
+
+  const filtered = useMemo(() =>
+    leads.filter(l => !filterSrc || l.source_id === filterSrc), [leads, filterSrc])
 
   const kpi = useMemo(() => {
     const total         = filtered.length
@@ -230,6 +423,25 @@ export default function KPIPage() {
     })
     return { total, inPerson, phoneQ, totalAppts, wonCount, contracted, coVolume, totalRev, actual, lsaCharged, lsaCredited, lsaNotCharged, lsaInReview, totalSpend, apptAcqCost, projAcqCost, bySrc }
   }, [filtered, payments, spend, changeOrders, filterSrc])
+
+  // ── Comparison month bySrc ────────────────────────────────────────────────
+  const compareBySrc = useMemo(() => {
+    if (!compareLeads.length) return {}
+    const bySrc: Record<string, { name: string; total: number; inPerson: number; won: number; contracted: number; spend: number }> = {}
+    compareLeads.forEach((l: any) => {
+      const key  = l.source_id || 'unknown'
+      const name = (l.lead_sources as any)?.name || 'Unknown'
+      if (!bySrc[key]) bySrc[key] = { name, total: 0, inPerson: 0, won: 0, contracted: 0, spend: 0 }
+      bySrc[key].total++
+      if (l.contact_type === 'in_person') bySrc[key].inPerson++
+      if (WON_STAGES.includes(l.status)) { bySrc[key].won++; bySrc[key].contracted += Number(l.initial_contract_value || 0) }
+    })
+    compareSpend.forEach((s: any) => {
+      const key = s.source_id || 'unknown'
+      if (bySrc[key]) bySrc[key].spend += Number(s.amount_spent || 0)
+    })
+    return bySrc
+  }, [compareLeads, compareSpend])
 
   const spendBySrc = useMemo(() => {
     if (viewMode === 'weekly') {
@@ -279,6 +491,7 @@ export default function KPIPage() {
   }, [spend, filterSrc, kpi.bySrc])
 
   const grandTotalSpend = spendGrouped.reduce((s: number, g: any) => s + g.total, 0)
+  const maxRev = Math.max(...srcList.map(s => s.contracted), 1)
 
   async function handleAddSpend() {
     if (!spendForm.amount || Number(spendForm.amount) <= 0) return
@@ -302,12 +515,21 @@ export default function KPIPage() {
   function prevPeriod() { if (viewMode === 'monthly') { if (month === 0) { setMonth(11); setYear(y => y - 1) } else setMonth(m => m - 1) } }
   function nextPeriod() { if (viewMode === 'monthly') { if (month === 11) { setMonth(0); setYear(y => y + 1) } else setMonth(m => m + 1) } }
 
-  const maxRev = Math.max(...srcList.map(s => s.contracted), 1)
+  // ── Comparison month options ───────────────────────────────────────────────
+  const compareOptions = useMemo(() => {
+    const opts: { label: string; m: number; y: number }[] = []
+    for (let i = 1; i <= 12; i++) {
+      const d = new Date(today.getFullYear(), today.getMonth() - i, 1)
+      opts.push({ label: `${MONTHS[d.getMonth()]} ${d.getFullYear()}`, m: d.getMonth(), y: d.getFullYear() })
+    }
+    return opts
+  }, [])
 
+  // ── Render ────────────────────────────────────────────────────────────────
   return (
     <div className="p-6 max-w-6xl mx-auto space-y-5">
 
-      {/* Header */}
+      {/* ── Header ── */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-center gap-3">
           <button onClick={() => router.push('/dashboard')}
@@ -332,21 +554,22 @@ export default function KPIPage() {
             {kpiDropdownOpen && (
               <div className="absolute right-0 top-full mt-1 w-48 rounded-lg border border-border bg-background shadow-lg z-50 overflow-hidden">
                 <button onClick={() => { setViewMode('monthly'); setKpiDropdownOpen(false) }}
-                  className={`w-full text-left px-4 py-2.5 text-sm hover:bg-muted transition-colors flex items-center justify-between ${viewMode === 'monthly' ? 'font-semibold text-primary' : ''}`}>
+                  className={`w-full text-left px-4 py-2.5 text-sm hover:bg-muted flex items-center justify-between ${viewMode === 'monthly' ? 'font-semibold text-primary' : ''}`}>
                   Monthly KPI {viewMode === 'monthly' && <span className="text-xs text-primary">●</span>}
                 </button>
                 <button onClick={() => { setViewMode('weekly'); setKpiDropdownOpen(false) }}
-                  className={`w-full text-left px-4 py-2.5 text-sm hover:bg-muted transition-colors flex items-center justify-between ${viewMode === 'weekly' ? 'font-semibold text-primary' : ''}`}>
+                  className={`w-full text-left px-4 py-2.5 text-sm hover:bg-muted flex items-center justify-between ${viewMode === 'weekly' ? 'font-semibold text-primary' : ''}`}>
                   Weekly KPI {viewMode === 'weekly' && <span className="text-xs text-primary">●</span>}
                 </button>
                 <div className="border-t border-border" />
                 <button onClick={() => { router.push('/kpi/salesperson'); setKpiDropdownOpen(false) }}
-                  className="w-full text-left px-4 py-2.5 text-sm hover:bg-muted transition-colors text-muted-foreground">
+                  className="w-full text-left px-4 py-2.5 text-sm hover:bg-muted text-muted-foreground">
                   Salesperson KPI
                 </button>
               </div>
             )}
           </div>
+          {/* Period nav */}
           <div className="flex items-center gap-1 rounded-lg border border-border px-2 py-1">
             {viewMode === 'monthly' ? (
               <>
@@ -381,7 +604,7 @@ export default function KPIPage() {
         </div>
       </div>
 
-      {/* Source filter */}
+      {/* ── Source filter ── */}
       <div className="flex gap-3 items-center flex-wrap">
         <select value={filterSrc} onChange={e => setFilterSrc(e.target.value)}
           className="rounded-md border border-border bg-background px-3 py-1.5 text-sm focus:outline-none">
@@ -404,7 +627,7 @@ export default function KPIPage() {
       ) : (
         <div className="space-y-5">
 
-          {/* 1. MARKETING SPEND */}
+          {/* ── 1. MARKETING SPEND ── */}
           <div className="rounded-xl border-2 border-primary/30 bg-primary/5 overflow-hidden">
             <div className="px-6 py-4 border-b border-primary/20 flex items-center justify-between">
               <div>
@@ -417,7 +640,7 @@ export default function KPIPage() {
                   <p className="text-xs text-muted-foreground">total spent</p>
                 </div>
                 <button onClick={() => setShowSpendForm(v => !v)}
-                  className="flex items-center gap-1.5 text-sm px-4 py-2 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 font-medium transition-colors">
+                  className="flex items-center gap-1.5 text-sm px-4 py-2 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 font-medium">
                   <Plus className="h-4 w-4" /> Log Spend
                 </button>
               </div>
@@ -450,29 +673,27 @@ export default function KPIPage() {
                     <button onClick={() => setShowSpendForm(false)} className="rounded-md border border-border px-3 py-2 text-sm hover:bg-muted">Cancel</button>
                   </div>
                 </div>
-                <p className="text-xs text-muted-foreground mt-2">Tip: Log each week separately per source.</p>
               </div>
             )}
 
-            {/* Collapsed spend panel */}
             <div className="px-6 py-4">
               {spendGrouped.length === 0 ? (
                 <p className="text-sm text-muted-foreground text-center py-2">No spend logged for {periodLabel}.</p>
               ) : (
                 <div className="rounded-lg border border-border/60 overflow-hidden divide-y divide-border/60 bg-background">
                   {(spendGrouped as any[]).map((group: any) => {
-                    const isOpen      = !!expandedSpendSrc[group.source_id || group.name]
-                    const cpl         = group.lsaCharged > 0 ? group.total / group.lsaCharged : 0
-                    const notCharged  = (kpi.bySrc[group.source_id || '']?.total ?? 0) - group.lsaCharged
+                    const isOpen     = !!expandedSpendSrc[group.source_id || group.name]
+                    const cpl        = group.lsaCharged > 0 ? group.total / group.lsaCharged : 0
+                    const notCharged = (kpi.bySrc[group.source_id || '']?.total ?? 0) - group.lsaCharged
                     return (
                       <div key={group.source_id || group.name}>
                         <button onClick={() => setExpandedSpendSrc(prev => ({ ...prev, [group.source_id || group.name]: !prev[group.source_id || group.name] }))}
-                          className="w-full flex items-center gap-3 px-4 py-3.5 hover:bg-muted/30 transition-colors text-left">
+                          className="w-full flex items-center gap-3 px-4 py-3.5 hover:bg-muted/30 text-left">
                           <span className="text-muted-foreground shrink-0">
                             {isOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
                           </span>
                           <span className="h-2.5 w-2.5 rounded-full shrink-0" style={{ backgroundColor: group.color }} />
-                          <span className="text-sm font-semibold flex-1 min-w-0 truncate">{group.name}</span>
+                          <span className="text-sm font-semibold flex-1 truncate">{group.name}</span>
                           <div className="hidden sm:flex items-center gap-2 mr-4">
                             {group.lsaCharged > 0 && <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 font-medium">{group.lsaCharged} charged</span>}
                             {notCharged > 0 && <span className="text-xs px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 font-medium">{notCharged} not charged</span>}
@@ -524,7 +745,7 @@ export default function KPIPage() {
             </div>
           </div>
 
-          {/* 2. KEY METRICS */}
+          {/* ── 2. KEY METRICS ── */}
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
             <div className="rounded-lg border border-border bg-card overflow-hidden">
               <div className="px-4 py-4">
@@ -562,53 +783,100 @@ export default function KPIPage() {
             <MetricCard label="Marketing Proj. Acq. Cost"
               value={kpi.projAcqCost > 0 ? fmt$(kpi.projAcqCost) : '—'}
               sub={kpi.totalSpend > 0 ? 'spend ÷ jobs closed' : 'log spend to calculate'} />
-            {/* ✅ FIXED: Close rate = won / appointments (not won / total leads) */}
             <MetricCard label="Sales Closing Ratio"
               value={closeRatePct(kpi.wonCount, kpi.totalAppts)}
               sub={`${kpi.wonCount} won / ${kpi.totalAppts} appts`}
               color={kpi.wonCount > 0 && kpi.totalAppts > 0 && kpi.wonCount / kpi.totalAppts >= 0.3 ? 'text-emerald-600' : 'text-foreground'} />
           </div>
 
-          {/* 3. SOURCE PERFORMANCE */}
+          {/* ── 3. YTD BLOCK ── */}
+          <YTDBlock ytd={ytd} year={year} />
+
+          {/* ── 4. SOURCE PERFORMANCE ── */}
           <Section title="Lead Source Performance" badge={`${srcList.length} sources`} defaultOpen>
             {srcList.length === 0 ? (
               <p className="text-sm text-muted-foreground text-center py-4">No leads for this period.</p>
             ) : (
               <>
+                {/* ── Monthly comparison picker ── */}
+                <div className="flex items-center gap-3 mb-4 flex-wrap">
+                  <p className="text-xs text-muted-foreground font-semibold uppercase tracking-wide">Compare with:</p>
+                  <select
+                    value={compareMonth !== null ? `${compareYear}-${compareMonth}` : ''}
+                    onChange={e => {
+                      if (!e.target.value) { setCompareMonth(null); return; }
+                      const [y, m] = e.target.value.split('-').map(Number)
+                      setCompareYear(y); setCompareMonth(m);
+                    }}
+                    className="rounded-md border border-border bg-background px-2 py-1.5 text-xs focus:outline-none text-muted-foreground">
+                    <option value="">— No comparison —</option>
+                    {compareOptions.map(o => (
+                      <option key={`${o.y}-${o.m}`} value={`${o.y}-${o.m}`}>{o.label}</option>
+                    ))}
+                  </select>
+                  {compareMonth !== null && (
+                    <span className="text-xs text-primary font-medium">
+                      Comparing {periodLabel} vs {MONTHS[compareMonth]} {compareYear}
+                    </span>
+                  )}
+                </div>
+
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="border-b border-border">
-                        {['Source','Leads','Charged','Appts (In-Person)','Phone Quotes','Closed Won','Close %','Revenue','Spend','Appt Acq. Cost','Proj Acq. Cost'].map(h => (
+                        {['Source','Leads','Charged','Appts','Phone Q','Closed','Close %','Revenue','Spend','Appt Cost','Proj Cost'].map(h => (
                           <th key={h} className="text-left text-xs text-muted-foreground font-semibold pb-2 pr-3 whitespace-nowrap">{h}</th>
                         ))}
+                        {compareMonth !== null && (
+                          <th className="text-left text-xs text-primary font-semibold pb-2 pr-3 whitespace-nowrap border-l border-primary/20 pl-3">
+                            vs {MONTHS[compareMonth]}
+                          </th>
+                        )}
                       </tr>
                     </thead>
                     <tbody>
                       {srcList.map((src, i) => {
-                        const srcSpend = spendBySrc
-                          .filter(s => s.source_id === Object.keys(kpi.bySrc).find(k => kpi.bySrc[k] === src))
-                          .reduce((sum, s) => sum + s.amount, 0)
+                        const srcKey    = Object.keys(kpi.bySrc).find(k => kpi.bySrc[k] === src) || ''
+                        const srcSpend  = spendBySrc.filter(s => s.source_id === srcKey).reduce((sum, s) => sum + s.amount, 0)
                         const apptCost  = src.inPerson > 0 && srcSpend > 0 ? srcSpend / src.inPerson : 0
                         const projCost  = src.won > 0 && srcSpend > 0 ? srcSpend / src.won : 0
-                        // ✅ FIXED: Close % per source = won / (in-person + phone quotes)
                         const srcAppts  = src.inPerson + src.phoneQ
                         const cr        = srcAppts > 0 ? Math.round((src.won / srcAppts) * 100) : 0
                         const crColor   = cr >= 40 ? 'text-emerald-600 font-bold' : cr >= 20 ? 'text-yellow-600 font-bold' : 'text-red-500 font-bold'
+
+                        // Comparison delta
+                        const cmp       = compareBySrc[srcKey]
+                        const leadDelta = cmp ? src.total - cmp.total : null
+
                         return (
                           <tr key={src.name} className="border-b border-border/50 hover:bg-muted/20">
-                            <td className="py-3 pr-3"><div className="flex items-center gap-2"><div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: SRC_COLORS[i % SRC_COLORS.length] }} /><span className="font-semibold">{src.name}</span></div></td>
+                            <td className="py-3 pr-3">
+                              <div className="flex items-center gap-2">
+                                <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: SRC_COLORS[i % SRC_COLORS.length] }} />
+                                <span className="font-semibold">{src.name}</span>
+                              </div>
+                            </td>
                             <td className="py-3 pr-3 font-semibold">{src.total}</td>
                             <td className="py-3 pr-3 text-muted-foreground">{src.lsaCharged}</td>
                             <td className="py-3 pr-3 font-semibold">{src.inPerson}</td>
                             <td className="py-3 pr-3 text-muted-foreground">{src.phoneQ}</td>
                             <td className="py-3 pr-3"><span className="px-2 py-0.5 rounded-full text-xs bg-emerald-100 text-emerald-700 font-bold">{src.won}</span></td>
-                            {/* ✅ FIXED: Show close rate as won/appts */}
                             <td className={`py-3 pr-3 ${crColor}`}>{srcAppts > 0 ? cr + '%' : '—'}</td>
                             <td className="py-3 pr-3 font-bold text-emerald-600">{src.contracted > 0 ? fmt$(src.contracted) : '—'}</td>
                             <td className="py-3 pr-3 text-muted-foreground">{srcSpend > 0 ? fmt$(srcSpend) : '—'}</td>
                             <td className="py-3 pr-3 text-muted-foreground">{apptCost > 0 ? fmt$(apptCost) : '—'}</td>
                             <td className="py-3 pr-3 text-muted-foreground">{projCost > 0 ? fmt$(projCost) : '—'}</td>
+                            {compareMonth !== null && (
+                              <td className="py-3 pr-3 border-l border-primary/20 pl-3">
+                                {leadDelta !== null ? (
+                                  <span className={`text-xs font-semibold ${leadDelta > 0 ? 'text-emerald-600' : leadDelta < 0 ? 'text-red-500' : 'text-muted-foreground'}`}>
+                                    {leadDelta > 0 ? '+' : ''}{leadDelta} leads
+                                    {cmp && <span className="text-muted-foreground font-normal ml-1">({cmp.total} prior)</span>}
+                                  </span>
+                                ) : <span className="text-xs text-muted-foreground">New</span>}
+                              </td>
+                            )}
                           </tr>
                         )
                       })}
@@ -619,16 +887,23 @@ export default function KPIPage() {
                         <td className="py-2.5 pr-3">{kpi.inPerson}</td>
                         <td className="py-2.5 pr-3">{kpi.phoneQ}</td>
                         <td className="py-2.5 pr-3">{kpi.wonCount}</td>
-                        {/* ✅ FIXED: Total close rate = won / total appts */}
                         <td className="py-2.5 pr-3">{closeRatePct(kpi.wonCount, kpi.totalAppts)}</td>
                         <td className="py-2.5 pr-3 text-emerald-600">{fmt$(kpi.contracted)}</td>
                         <td className="py-2.5 pr-3">{fmt$(kpi.totalSpend)}</td>
                         <td className="py-2.5 pr-3">{kpi.apptAcqCost > 0 ? fmt$(kpi.apptAcqCost) : '—'}</td>
                         <td className="py-2.5 pr-3">{kpi.projAcqCost > 0 ? fmt$(kpi.projAcqCost) : '—'}</td>
+                        {compareMonth !== null && (
+                          <td className="py-2.5 pr-3 border-l border-primary/20 pl-3">
+                            <span className={`text-xs font-semibold ${kpi.total > compareLeads.length ? 'text-emerald-600' : 'text-red-500'}`}>
+                              {kpi.total > compareLeads.length ? '+' : ''}{kpi.total - compareLeads.length} total
+                            </span>
+                          </td>
+                        )}
                       </tr>
                     </tbody>
                   </table>
                 </div>
+
                 {srcList.some(s => s.contracted > 0) && (
                   <div className="mt-4 pt-4 border-t border-border">
                     <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Revenue by source</p>
@@ -637,7 +912,7 @@ export default function KPIPage() {
                         <div key={src.name} className="flex items-center gap-3">
                           <span className="text-xs text-muted-foreground w-28 truncate shrink-0">{src.name}</span>
                           <div className="flex-1 h-2 bg-muted rounded-full overflow-hidden">
-                            <div className="h-full rounded-full transition-all" style={{ background: SRC_COLORS[i % SRC_COLORS.length], width: `${(src.contracted / maxRev) * 100}%` }} />
+                            <div className="h-full rounded-full" style={{ background: SRC_COLORS[i % SRC_COLORS.length], width: `${(src.contracted / maxRev) * 100}%` }} />
                           </div>
                           <span className="text-xs font-bold w-14 text-right">{fmt$(src.contracted)}</span>
                         </div>
@@ -649,10 +924,10 @@ export default function KPIPage() {
             )}
           </Section>
 
-          {/* 4. KPI INSIGHTS */}
+          {/* ── 5. KPI INSIGHTS ── */}
           <KpiInsights label="KPI Performance Analysis" data={insightsData} />
 
-          {/* 5. REVENUE TREND */}
+          {/* ── 6. REVENUE TREND ── */}
           {viewMode === 'monthly' && (
             <Section title="Revenue Trend — Last 6 Months" defaultOpen={false}>
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
@@ -686,7 +961,7 @@ export default function KPIPage() {
             </Section>
           )}
 
-          {/* 6. LEADS THIS PERIOD */}
+          {/* ── 7. LEADS THIS PERIOD ── */}
           <Section title="Leads This Period" badge={`${filtered.length} leads`} defaultOpen={false}>
             {filtered.length === 0 ? (
               <p className="text-sm text-muted-foreground text-center py-4">No leads for this period.</p>
@@ -702,15 +977,15 @@ export default function KPIPage() {
                   </thead>
                   <tbody>
                     {filtered.map((lead, i) => {
-                      const name = `${lead.first_name || ''} ${lead.last_name || ''}`.trim() || '—'
-                      const source = (lead.lead_sources as any)?.name || '—'
+                      const name        = `${lead.first_name || ''} ${lead.last_name || ''}`.trim() || '—'
+                      const source      = (lead.lead_sources as any)?.name || '—'
                       const salesperson = lead.metadata?.salesperson || '—'
                       const contactType = lead.contact_type === 'in_person' ? '🏠 In-Person' : lead.contact_type === 'phone_quote' ? '📞 Phone' : '—'
-                      const lsaStatus = lead.lsa_status ? lead.lsa_status.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase()) : '—'
-                      const isWon = WON_STAGES.includes(lead.status)
-                      const stageColor = isWon ? 'text-emerald-600 font-semibold' : lead.status === 'lost' ? 'text-red-500' : 'text-muted-foreground'
-                      const stageLabel = lead.status.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase())
-                      const date = new Date(lead.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+                      const lsaStatus   = lead.lsa_status ? lead.lsa_status.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase()) : '—'
+                      const isWon       = WON_STAGES.includes(lead.status)
+                      const stageColor  = isWon ? 'text-emerald-600 font-semibold' : lead.status === 'lost' ? 'text-red-500' : 'text-muted-foreground'
+                      const stageLabel  = lead.status.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase())
+                      const date        = new Date(lead.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
                       return (
                         <tr key={lead.id} className={`border-b border-border/40 hover:bg-muted/20 ${i % 2 === 0 ? '' : 'bg-muted/10'}`}>
                           <td className="py-2.5 pr-3 font-semibold whitespace-nowrap">{name}</td>
