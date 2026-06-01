@@ -34,16 +34,20 @@ interface YTDData {
 
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
 
-// ✅ FIX 1: completed + completed_with_balance also count as won
 const WON_STAGES = ['closed_won', 'won', 'completed', 'completed_with_balance']
 
 const SRC_COLORS = ['#378ADD','#E07B3A','#10b981','#8b5cf6','#ec4899','#06b6d4','#f59e0b','#ef4444']
 
 function fmt$(n: number) {
   if (n >= 1000000) return '$' + (n / 1000000).toFixed(1) + 'M'
-  if (n >= 1000) return '$' + (n / 1000).toFixed(1).replace(/\.0$/, '') + 'k'
   return '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
+
+function fmtDate(d: string) {
+  const [y, m, day] = d.split('-')
+  return `${m}-${day}-${y}`
+}
+
 function closeRatePct(won: number, appts: number) {
   return appts === 0 ? '—' : Math.round((won / appts) * 100) + '%'
 }
@@ -173,7 +177,6 @@ export default function KPIPage() {
   const today  = new Date()
   const router = useRouter()
 
-  // ✅ FIX 2: Single date range — no monthly/weekly toggle
   const [dateFrom,        setDateFrom]        = useState(firstOfMonthStr())
   const [dateTo,          setDateTo]          = useState(todayStr())
   const [kpiDropdownOpen, setKpiDropdownOpen] = useState(false)
@@ -203,14 +206,12 @@ export default function KPIPage() {
   const rangeEnd   = useMemo(() => new Date(dateTo   + 'T23:59:59').toISOString(), [dateTo])
 
   const periodLabel = useMemo(() => {
-    if (dateFrom === dateTo) return dateFrom
-    return `${dateFrom} – ${dateTo}`
+    if (dateFrom === dateTo) return fmtDate(dateFrom)
+    return `${fmtDate(dateFrom)} – ${fmtDate(dateTo)}`
   }, [dateFrom, dateTo])
 
-  // ✅ FIX 3: YTD year derived from the selected date range start year
   const selectedYear = useMemo(() => new Date(dateFrom + 'T00:00:00').getFullYear(), [dateFrom])
 
-  // Quick range buttons
   function setThisWeek() {
     const now = new Date()
     const mon = new Date(now); mon.setDate(now.getDate() - ((now.getDay() + 6) % 7))
@@ -249,7 +250,6 @@ export default function KPIPage() {
       supabase.from('lead_sources').select('id,name').order('name'),
     ])
 
-    // Change orders for won leads
     const wonIds = (leadsRes.data || []).filter((l: any) => WON_STAGES.includes(l.status)).map((l: any) => l.id)
     let coData: any[] = []
     if (wonIds.length > 0) {
@@ -257,7 +257,6 @@ export default function KPIPage() {
       coData = data || []
     }
 
-    // 6-month trend (based on the end date month)
     const endDate    = new Date(dateTo + 'T00:00:00')
     const trendStart = new Date(endDate.getFullYear(), endDate.getMonth() - 5, 1).toISOString()
     const [tLeads, tPay] = await Promise.all([
@@ -281,7 +280,6 @@ export default function KPIPage() {
     })
     setTrend(Object.entries(tMap).map(([label, v]) => ({ label, ...v })))
 
-    // ✅ FIX 3: YTD uses selectedYear derived from dateFrom
     const ytdStart    = new Date(selectedYear, 0, 1).toISOString()
     const ytdEnd      = new Date().toISOString()
     const ytdSpendEnd = todayStr()
@@ -492,7 +490,6 @@ export default function KPIPage() {
             )}
           </div>
 
-          {/* ✅ Single date range picker + quick buttons */}
           <div className="flex items-center gap-2 flex-wrap rounded-lg border border-border px-3 py-1.5">
             <span className="text-xs text-muted-foreground">From</span>
             <input type="date" value={dateFrom}
@@ -616,7 +613,9 @@ export default function KPIPage() {
                           <div className="bg-muted/10 border-t border-border/40 divide-y divide-border/30">
                             {group.entries.slice().sort((a: any, b: any) => a.period_start.localeCompare(b.period_start)).map((entry: any) => {
                               const isDeleting = deletingSpendId === entry.id
-                              const dl = !entry.period_end || entry.period_start === entry.period_end ? entry.period_start : `${entry.period_start} – ${entry.period_end}`
+                              const dl = !entry.period_end || entry.period_start === entry.period_end
+                                ? fmtDate(entry.period_start)
+                                : `${fmtDate(entry.period_start)} – ${fmtDate(entry.period_end)}`
                               return (
                                 <div key={entry.id} className="flex items-center gap-3 px-4 py-2.5 pl-12 group/row">
                                   <span className="text-xs text-muted-foreground w-48 shrink-0">{dl}</span>
@@ -882,7 +881,7 @@ export default function KPIPage() {
                       const isWon       = WON_STAGES.includes(lead.status)
                       const stageColor  = isWon ? 'text-emerald-600 font-semibold' : lead.status === 'lost' ? 'text-red-500' : 'text-muted-foreground'
                       const stageLabel  = lead.status.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase())
-                      const date        = new Date(lead.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+                      const date        = new Date(lead.created_at).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' })
                       return (
                         <tr key={lead.id} className={`border-b border-border/40 hover:bg-muted/20 ${i % 2 === 0 ? '' : 'bg-muted/10'}`}>
                           <td className="py-2.5 pr-3 font-semibold whitespace-nowrap">{name}</td>
