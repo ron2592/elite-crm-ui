@@ -4,7 +4,6 @@ import { useState, useEffect } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { X, Loader2 } from "lucide-react";
 
-// ── Constants ─────────────────────────────────────────────────────────────────
 const JOB_TYPES = [
   "Roof Replacement","Roof Repair","Deck","Siding","Gutters",
   "Windows","Doors","Painting","Masonry","Patio","Walkway",
@@ -17,11 +16,6 @@ function formatPhone(v: string) {
   if (d.length <= 3) return d;
   if (d.length <= 6) return `(${d.slice(0,3)}) ${d.slice(3)}`;
   return `(${d.slice(0,3)}) ${d.slice(3,6)}-${d.slice(6)}`;
-}
-function normalizePhone(raw: string): string {
-  const digits = raw.replace(/\D/g,"").slice(0,10);
-  if (digits.length === 10) return `(${digits.slice(0,3)}) ${digits.slice(3,6)}-${digits.slice(6)}`;
-  return raw;
 }
 function todayStr() {
   const d = new Date();
@@ -42,9 +36,7 @@ const BLANK_FORM = {
   job_type:       "",
   salesperson:    "",
   notes:          "",
-  // Pipeline
   status:         "new",
-  // Contract (only for closed_won / completed)
   contact_type:   "",
   contract_value: "",
   description:    "",
@@ -65,7 +57,6 @@ export default function AddLeadModal({ open, onOpenChange, onLeadCreated }: AddL
   const [otherJobType,  setOtherJobType]  = useState("");
   const [showOtherJob,  setShowOtherJob]  = useState(false);
 
-  // ✅ Shows contract fields when stage is Closed Won or Completed
   const isWonStage = ["closed_won","completed"].includes(form.status);
 
   useEffect(() => {
@@ -81,7 +72,6 @@ export default function AddLeadModal({ open, onOpenChange, onLeadCreated }: AddL
     }
   }, [open]);
 
-  // ── Zip autofill ─────────────────────────────────────────────────────────────
   async function handleZipBlur(zip: string) {
     if (zip.length !== 5) return;
     setZipLoading(true);
@@ -96,37 +86,10 @@ export default function AddLeadModal({ open, onOpenChange, onLeadCreated }: AddL
     setZipLoading(false);
   }
 
-  // ── Dedup + Save ──────────────────────────────────────────────────────────────
   async function handleSave(force = false) {
     if (!form.phone && !form.first_name) return;
     setSaving(true);
     setDupWarning(null);
-
-    if (form.phone && !force) {
-      const normalized = normalizePhone(form.phone);
-      const digits     = form.phone.replace(/\D/g,"");
-
-      // 1. Exact match on normalized format
-      const { data: m1 } = await supabase.from("leads")
-        .select("id,lead_name,status").eq("phone", normalized).neq("archived", true).limit(1).maybeSingle();
-      // 2. Exact match on raw input (different format)
-      const { data: m2 } = !m1 ? await supabase.from("leads")
-        .select("id,lead_name,status").eq("phone", form.phone).neq("archived", true).limit(1).maybeSingle()
-        : { data: null };
-      // 3. Digit-normalized fallback on recent 200 leads
-      let existing = m1 || m2;
-      if (!existing && digits.length >= 7) {
-        const { data: cands } = await supabase.from("leads")
-          .select("id,lead_name,status,phone").neq("archived",true).order("created_at",{ascending:false}).limit(200);
-        existing = (cands || []).find((l: any) => l.phone?.replace(/\D/g,"") === digits) || null;
-      }
-
-      if (existing) {
-        setDupWarning({ name: existing.lead_name || "Unnamed", status: existing.status });
-        setSaving(false);
-        return;
-      }
-    }
 
     const fullName  = `${form.first_name} ${form.last_name}`.trim();
     const jobType   = showOtherJob ? otherJobType : form.job_type;
@@ -134,36 +97,56 @@ export default function AddLeadModal({ open, onOpenChange, onLeadCreated }: AddL
       ? new Date(form.lead_received + "T12:00:00").toISOString()
       : new Date().toISOString();
 
-    const { error } = await supabase.from("leads").insert({
-      lead_name:              fullName || form.phone || "New Lead",
-      // ⚠️ NEVER insert first_name/last_name — GENERATED ALWAYS columns
-      phone:                  form.phone ? normalizePhone(form.phone) : null,
-      email:                  form.email   || null,
-      created_at:             createdAt,
-      client_address:         form.address || null,
-      client_city:            form.city    || null,
-      client_state:           form.state   || null,
-      client_zip:             form.zip     || null,
-      source_id:              form.source_id || null,
-      status:                 form.status,
-      contact_type:           isWonStage ? (form.contact_type || null) : null,
-      initial_contract_value: isWonStage && form.contract_value ? Number(form.contract_value) : 0,
-      archived:               false,
-      bad_lead:               false,
-      metadata: {
-        salesperson:                    form.salesperson || null,
-        job_type:                       jobType         || null,
-        notes:                          form.notes      || null,
-        initial_contract_description:   isWonStage ? (form.description || null) : null,
-      },
-    });
+    try {
+      const res = await fetch('/api/leads', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          lead_name:              fullName || form.phone || "New Lead",
+          first_name:             form.first_name || "",
+          last_name:              form.last_name  || "",
+          phone:                  form.phone      || null,
+          email:                  form.email      || null,
+          created_at:             createdAt,
+          client_address:         form.address    || null,
+          client_city:            form.city       || null,
+          client_state:           form.state      || null,
+          client_zip:             form.zip        || null,
+          source_id:              form.source_id  || null,
+          status:                 form.status,
+          contact_type:           isWonStage ? (form.contact_type || null) : null,
+          initial_contract_value: isWonStage && form.contract_value ? Number(form.contract_value) : 0,
+          bad_lead:               false,
+          meta_salesperson:       form.salesperson || null,
+          meta_job_type:          jobType          || null,
+          meta_notes:             form.notes       || null,
+          meta_description:       isWonStage ? (form.description || null) : null,
+          force:                  force,
+        }),
+      });
 
-    setSaving(false);
-    if (!error) {
+      const result = await res.json();
+      setSaving(false);
+
+      if (res.status === 409) {
+        setDupWarning({
+          name:   result.existing?.name   || "Unnamed",
+          status: result.existing?.status || "unknown",
+        });
+        return;
+      }
+
+      if (!res.ok) {
+        alert("Error saving lead: " + (result.error || "Unknown error"));
+        return;
+      }
+
       onOpenChange(false);
       onLeadCreated?.();
-    } else {
-      alert("Error saving lead: " + error.message);
+
+    } catch (err) {
+      setSaving(false);
+      alert("Network error — please try again.");
     }
   }
 
@@ -183,7 +166,7 @@ export default function AddLeadModal({ open, onOpenChange, onLeadCreated }: AddL
 
         <div className="px-6 py-5 space-y-4">
 
-          {/* ── Duplicate warning ── */}
+          {/* Duplicate warning */}
           {dupWarning && (
             <div className="rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/30 p-3">
               <p className="text-xs font-semibold text-amber-700 mb-1">⚠ Duplicate Found</p>
@@ -203,7 +186,7 @@ export default function AddLeadModal({ open, onOpenChange, onLeadCreated }: AddL
             </div>
           )}
 
-          {/* ── Lead Received Date ── */}
+          {/* Lead Received Date */}
           <div>
             <label className="text-xs font-medium text-muted-foreground block mb-1">Lead Received Date</label>
             <input type="date" value={form.lead_received}
@@ -211,7 +194,7 @@ export default function AddLeadModal({ open, onOpenChange, onLeadCreated }: AddL
               className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" />
           </div>
 
-          {/* ── Name ── */}
+          {/* Name */}
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="text-xs font-medium text-muted-foreground block mb-1">First Name</label>
@@ -225,7 +208,7 @@ export default function AddLeadModal({ open, onOpenChange, onLeadCreated }: AddL
             </div>
           </div>
 
-          {/* ── Phone + Email ── */}
+          {/* Phone + Email */}
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="text-xs font-medium text-muted-foreground block mb-1">Phone *</label>
@@ -242,7 +225,7 @@ export default function AddLeadModal({ open, onOpenChange, onLeadCreated }: AddL
             </div>
           </div>
 
-          {/* ── Address ── */}
+          {/* Address */}
           <div>
             <label className="text-xs font-medium text-muted-foreground block mb-1">Address</label>
             <input value={form.address} onChange={e => setForm(f => ({ ...f, address: e.target.value }))}
@@ -250,7 +233,7 @@ export default function AddLeadModal({ open, onOpenChange, onLeadCreated }: AddL
               className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" />
           </div>
 
-          {/* ── Zip / City / State ── */}
+          {/* Zip / City / State */}
           <div className="grid grid-cols-3 gap-3">
             <div>
               <label className="text-xs font-medium text-muted-foreground block mb-1">Zip</label>
@@ -272,7 +255,7 @@ export default function AddLeadModal({ open, onOpenChange, onLeadCreated }: AddL
             </div>
           </div>
 
-          {/* ── Source + Salesperson ── */}
+          {/* Source + Salesperson */}
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="text-xs font-medium text-muted-foreground block mb-1">Lead Source</label>
@@ -292,7 +275,7 @@ export default function AddLeadModal({ open, onOpenChange, onLeadCreated }: AddL
             </div>
           </div>
 
-          {/* ── Job Type ── */}
+          {/* Job Type */}
           <div>
             <label className="text-xs font-medium text-muted-foreground block mb-1">Job Type</label>
             <select
@@ -312,7 +295,7 @@ export default function AddLeadModal({ open, onOpenChange, onLeadCreated }: AddL
             )}
           </div>
 
-          {/* ── Pipeline Stage — ALL 10 STAGES ── */}
+          {/* Pipeline Stage */}
           <div>
             <label className="text-xs font-medium text-muted-foreground block mb-1">Pipeline Stage</label>
             <select value={form.status}
@@ -340,12 +323,10 @@ export default function AddLeadModal({ open, onOpenChange, onLeadCreated }: AddL
             )}
           </div>
 
-          {/* ── Contract fields — only for Closed Won / Completed ── */}
+          {/* Contract fields — only for Closed Won / Completed */}
           {isWonStage && (
             <div className="rounded-lg border-2 border-primary/25 bg-primary/5 p-4 space-y-3">
               <p className="text-xs font-bold text-primary uppercase tracking-wide">$ Initial Contract</p>
-
-              {/* Contact Type */}
               <div>
                 <label className="text-xs font-medium text-muted-foreground block mb-1.5">Contact Type</label>
                 <div className="grid grid-cols-2 gap-2">
@@ -369,8 +350,6 @@ export default function AddLeadModal({ open, onOpenChange, onLeadCreated }: AddL
                   </button>
                 </div>
               </div>
-
-              {/* Contract Value + Description */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-xs font-medium text-muted-foreground block mb-1">Contract Value ($)</label>
@@ -392,7 +371,7 @@ export default function AddLeadModal({ open, onOpenChange, onLeadCreated }: AddL
             </div>
           )}
 
-          {/* ── Notes ── */}
+          {/* Notes */}
           <div>
             <label className="text-xs font-medium text-muted-foreground block mb-1">Notes</label>
             <textarea value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
@@ -400,7 +379,7 @@ export default function AddLeadModal({ open, onOpenChange, onLeadCreated }: AddL
               className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40 resize-none" />
           </div>
 
-          {/* ── Action buttons ── */}
+          {/* Action buttons */}
           <div className="flex gap-3 pt-1">
             <button onClick={() => onOpenChange(false)}
               className="flex-1 py-2.5 rounded-md border border-border hover:bg-muted text-sm font-medium transition-colors">
