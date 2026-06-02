@@ -1,4 +1,4 @@
-# FlowCRM — Modern Sales Pipeline Dashboard
+# ComCenter — Modern Sales Pipeline Dashboard
 
 A production-ready CRM dashboard built with **Next.js 14 App Router**, **TypeScript**, **Tailwind CSS**, and **shadcn/ui**.
 

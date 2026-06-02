@@ -47,7 +47,7 @@ export default function SettingsPage() {
             </div>
             <div>
               <p className="font-display font-semibold text-lg">Jamie Davis</p>
-              <p className="text-sm text-muted-foreground">jamie.davis@flowcrm.io · Admin</p>
+              <p className="text-sm text-muted-foreground">jamie.davis@ComCenter.io · Admin</p>
             </div>
             <Button variant="outline" size="sm" className="ml-auto">
               Edit Profile

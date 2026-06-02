@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "FlowCRM — Sales Pipeline Dashboard",
+  title: "ComCenter — Sales Pipeline Dashboard",
   description: "Modern CRM dashboard for managing leads, appointments, and revenue.",
 };
 
