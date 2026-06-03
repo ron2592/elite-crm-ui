@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { X, Loader2 } from "lucide-react";
+import { pushLeadToJN } from "@/lib/jn-sync";
 
 const JOB_TYPES = [
   "Roof Replacement","Roof Repair","Deck","Siding","Gutters",
@@ -141,6 +142,9 @@ export default function AddLeadModal({ open, onOpenChange, onLeadCreated }: AddL
         return;
       }
 
+      // Push to JobNimbus silently in the background
+      if (result.lead?.id) pushLeadToJN(result.lead.id);
+
       onOpenChange(false);
       onLeadCreated?.();
 
@@ -231,7 +235,7 @@ export default function AddLeadModal({ open, onOpenChange, onLeadCreated }: AddL
             <input value={form.address} onChange={e => setForm(f => ({ ...f, address: e.target.value }))}
               placeholder="Street address"
               className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" />
-          </div>
+            </div>
 
           {/* Zip / City / State */}
           <div className="grid grid-cols-3 gap-3">
