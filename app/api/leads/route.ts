@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
-// ✅ Always normalize phone to (XXX) XXX-XXXX format
 function normalizePhone(raw: string): string {
   const digits = raw.replace(/\D/g, "").slice(0, 10);
   if (digits.length === 10) {
@@ -10,19 +9,6 @@ function normalizePhone(raw: string): string {
   return raw;
 }
 
-// ✅ Map Command Center lead source name to JN lead source name
-function mapLeadSource(sourceName: string | null): string {
-  if (!sourceName) return "";
-  const name = sourceName.toLowerCase();
-  if (name.includes("facebook") || name.includes("social media")) return "Facebook";
-  if (name.includes("google")) return "Google Ads";
-  if (name.includes("referral")) return "Referral";
-  if (name.includes("angi") || name.includes("homeadvisor")) return "HomeAdvisor";
-  if (name.includes("canvass")) return "Canvassing";
-  return "";
-}
-
-// ✅ Push new lead to JobNimbus as a contact under Elite Work Home Improvement
 async function pushToJobNimbus(lead: {
   first_name?: string;
   last_name?: string;
@@ -32,59 +18,34 @@ async function pushToJobNimbus(lead: {
   client_city?: string;
   client_state?: string;
   client_zip?: string;
-  lead_source?: string;
 }) {
-  const apiKey = process.env.JOBNIMBUS_API_KEY;
-  if (!apiKey) {
-    console.warn("JOBNIMBUS_API_KEY not set — skipping JN sync");
-    return null;
-  }
-
-  const nameParts = (lead.first_name || lead.last_name)
-    ? `${lead.first_name || ""} ${lead.last_name || ""}`.trim()
-    : "Unknown";
-
-  const payload: Record<string, any> = {
-    first_name:    lead.first_name  || "",
-    last_name:     lead.last_name   || "",
-    display_name:  nameParts,
-    // Phone fields
-    ...(lead.phone && { mobile_phone: lead.phone, number: lead.phone }),
-    // Email
-    ...(lead.email && { email: lead.email }),
-    // Address
-    ...(lead.client_address && { address_line1: lead.client_address }),
-    ...(lead.client_city    && { city:          lead.client_city }),
-    ...(lead.client_state   && { state_text:    lead.client_state }),
-    ...(lead.client_zip     && { zip:           lead.client_zip }),
-    // Lead source
-    ...(lead.lead_source && { lead_source: mapLeadSource(lead.lead_source) }),
-    // Contact type = Lead (status in JN workflow)
-    record_type_name: "Customer",
-    status_name:      "Lead",
-    // Tag so we know it came from Command Center
-    tags: ["Command Center"],
-  };
+  const MAKE_WEBHOOK = "https://hook.us2.make.com/jhn3fgt8fgvhr87sxt9ppynht4ibqcwy";
 
   try {
-    const res = await fetch("https://app.jobnimbus.com/api1/contacts", {
+    const res = await fetch(MAKE_WEBHOOK, {
       method: "POST",
-      headers: {
-        "Authorization": `Bearer ${apiKey}`,
-        "Content-Type":  "application/json",
-      },
-      body: JSON.stringify(payload),
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        first_name: lead.first_name     || "",
+        last_name:  lead.last_name      || "",
+        phone:      lead.phone          || "",
+        email:      lead.email          || "",
+        address:    lead.client_address || "",
+        city:       lead.client_city    || "",
+        state:      lead.client_state   || "",
+        zip:        lead.client_zip     || "",
+      }),
     });
 
-    const json = await res.json();
     if (!res.ok) {
-      console.error("JN API error:", json);
+      console.error("Make.com webhook failed:", res.status);
       return null;
     }
-    console.log("JN contact created:", json.jnid);
-    return json.jnid as string;
+
+    console.log("Make.com webhook triggered successfully");
+    return "make-webhook-sent";
   } catch (err) {
-    console.error("JN push failed:", err);
+    console.error("Make.com webhook error:", err);
     return null;
   }
 }
@@ -97,7 +58,7 @@ export async function POST(req: Request) {
 
   const body = await req.json();
 
-  // ─── Duplicate check ────────────────────────────────────────────────────────
+  // ─── Duplicate check ─────────────────────────────────────────────────────────
   if (body.phone && !body.force) {
     const normalizedInput = normalizePhone(body.phone);
     const rawInput        = body.phone;
@@ -158,7 +119,7 @@ export async function POST(req: Request) {
     }
   }
 
-  // ─── Source lookup ──────────────────────────────────────────────────────────
+  // ─── Source lookup ────────────────────────────────────────────────────────────
   let source_id = body.source_id || null;
   let sourceName: string | null = null;
 
@@ -180,18 +141,17 @@ export async function POST(req: Request) {
     sourceName = src?.name || null;
   }
 
-  // ─── Parse name ─────────────────────────────────────────────────────────────
+  // ─── Parse name ───────────────────────────────────────────────────────────────
   let firstName = body.first_name || "";
   let lastName  = body.last_name  || "";
 
-  // If lead_name provided but not split, try to split it
   if (!firstName && !lastName && body.lead_name) {
     const parts = body.lead_name.trim().split(" ");
     firstName = parts[0] || "";
     lastName  = parts.slice(1).join(" ") || "";
   }
 
-  // ─── Insert to Supabase ─────────────────────────────────────────────────────
+  // ─── Insert to Supabase ───────────────────────────────────────────────────────
   const { data, error } = await supabase.from("leads").insert([
     {
       lead_name:              body.lead_name || `${firstName} ${lastName}`.trim() || "LSA Lead",
@@ -223,7 +183,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  // ─── Push to JobNimbus (non-blocking) ───────────────────────────────────────
+  // ─── Push to Make.com → JobNimbus ─────────────────────────────────────────────
   const jnId = await pushToJobNimbus({
     first_name:     firstName,
     last_name:      lastName,
@@ -233,7 +193,6 @@ export async function POST(req: Request) {
     client_city:    body.client_city    || body.city           || undefined,
     client_state:   body.client_state   || body.state          || undefined,
     client_zip:     body.client_zip     || body.postal_code    || body.zip || undefined,
-    lead_source:    sourceName || body.lead_source || undefined,
   });
 
   return NextResponse.json({ success: true, data, jn_id: jnId || null });
