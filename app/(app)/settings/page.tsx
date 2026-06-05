@@ -1,6 +1,6 @@
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Separator } from "@/components/ui/separator";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import Link from "next/link";
 import {
   User,
   Bell,
@@ -9,28 +9,30 @@ import {
   Plug,
   Palette,
   ChevronRight,
+  Users,
 } from "lucide-react";
 
 const settingsGroups = [
   {
     title: "Account",
     items: [
-      { icon: User, label: "Profile", description: "Update your name, email, and photo" },
-      { icon: Shield, label: "Security", description: "Password and two-factor authentication" },
+      { icon: User, label: "Profile", description: "Update your name, email, and photo", href: null },
+      { icon: Shield, label: "Security", description: "Password and two-factor authentication", href: null },
     ],
   },
   {
     title: "Workspace",
     items: [
-      { icon: Bell, label: "Notifications", description: "Configure how you receive alerts" },
-      { icon: Palette, label: "Appearance", description: "Theme, density, and display preferences" },
-      { icon: Plug, label: "Integrations", description: "Connect to Twilio, Gmail, and more" },
+      { icon: Users, label: "Team Members", description: "Invite and manage users (max 3)", href: "/settings/users" },
+      { icon: Bell, label: "Notifications", description: "Configure how you receive alerts", href: null },
+      { icon: Palette, label: "Appearance", description: "Theme, density, and display preferences", href: null },
+      { icon: Plug, label: "Integrations", description: "Connect to Twilio, Gmail, and more", href: null },
     ],
   },
   {
     title: "Billing",
     items: [
-      { icon: CreditCard, label: "Plan & Billing", description: "Manage your subscription" },
+      { icon: CreditCard, label: "Plan & Billing", description: "Manage your subscription", href: null },
     ],
   },
 ];
@@ -43,11 +45,11 @@ export default function SettingsPage() {
         <CardContent className="p-5">
           <div className="flex items-center gap-4">
             <div className="h-14 w-14 rounded-full bg-primary/10 flex items-center justify-center text-lg font-bold text-primary">
-              JD
+              EW
             </div>
             <div>
-              <p className="font-display font-semibold text-lg">Jamie Davis</p>
-              <p className="text-sm text-muted-foreground">jamie.davis@ComCenter.io · Admin</p>
+              <p className="font-semibold text-lg">Elite Work</p>
+              <p className="text-sm text-muted-foreground">elitework.ron@gmail.com · Admin</p>
             </div>
             <Button variant="outline" size="sm" className="ml-auto">
               Edit Profile
@@ -66,11 +68,8 @@ export default function SettingsPage() {
             <CardContent className="p-0 divide-y">
               {group.items.map((item) => {
                 const Icon = item.icon;
-                return (
-                  <button
-                    key={item.label}
-                    className="w-full flex items-center gap-4 px-5 py-4 hover:bg-muted/50 transition-colors text-left first:rounded-t-xl last:rounded-b-xl"
-                  >
+                const inner = (
+                  <div className="w-full flex items-center gap-4 px-5 py-4 hover:bg-muted/50 transition-colors text-left first:rounded-t-xl last:rounded-b-xl">
                     <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-secondary">
                       <Icon className="h-4 w-4 text-muted-foreground" />
                     </div>
@@ -79,6 +78,16 @@ export default function SettingsPage() {
                       <p className="text-xs text-muted-foreground">{item.description}</p>
                     </div>
                     <ChevronRight className="h-4 w-4 text-muted-foreground/50" />
+                  </div>
+                );
+
+                return item.href ? (
+                  <Link key={item.label} href={item.href} className="block">
+                    {inner}
+                  </Link>
+                ) : (
+                  <button key={item.label} className="w-full first:rounded-t-xl last:rounded-b-xl">
+                    {inner}
                   </button>
                 );
               })}
