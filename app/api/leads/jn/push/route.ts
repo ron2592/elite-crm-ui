@@ -93,7 +93,7 @@ function buildJNPayload(lead: any) {
     phone: lead.phone ? [{ number: lead.phone, type: 'mobile' }] : [],
     address_line_1: lead.client_address || '',
     city: lead.client_city || '',
-    state_text: lead.client_state || '',
+    state: lead.client_state || '',
     zip: lead.client_zip || '',
     tags: ['com-center'],
   }
