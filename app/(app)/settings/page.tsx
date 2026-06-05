@@ -16,7 +16,7 @@ const settingsGroups = [
   {
     title: "Account",
     items: [
-      { icon: User, label: "Profile", description: "Update your name, email, and photo", href: null },
+      { icon: User, label: "Profile", description: "Update your name, email, and photo", href: "/settings/profile" },
       { icon: Shield, label: "Security", description: "Password and two-factor authentication", href: null },
     ],
   },
