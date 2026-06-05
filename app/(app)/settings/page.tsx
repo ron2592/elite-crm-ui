@@ -1,3 +1,6 @@
+"use client";
+
+import { useEffect, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import Link from "next/link";
@@ -11,12 +14,13 @@ import {
   ChevronRight,
   Users,
 } from "lucide-react";
+import { supabase } from "@/lib/supabaseClient";
 
 const settingsGroups = [
   {
     title: "Account",
     items: [
-      { icon: User, label: "Profile", description: "Update your name, email, and photo", href: "/settings/profile" },
+      { icon: User, label: "Profile", description: "Update your name, company, and logo", href: "/settings/profile" },
       { icon: Shield, label: "Security", description: "Password and two-factor authentication", href: null },
     ],
   },
@@ -37,23 +41,56 @@ const settingsGroups = [
   },
 ];
 
+interface ProfileData {
+  full_name: string;
+  email: string;
+  role: string;
+  company_name: string | null;
+  logo_url: string | null;
+}
+
 export default function SettingsPage() {
+  const [profile, setProfile] = useState<ProfileData | null>(null);
+
+  useEffect(() => {
+    const load = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      const { data } = await supabase
+        .from('profiles')
+        .select('full_name, email, role, company_name, logo_url')
+        .eq('id', user.id)
+        .single();
+      if (data) setProfile(data);
+    };
+    load();
+  }, []);
+
+  const displayName = profile?.company_name || profile?.full_name || 'Elite Work';
+  const email = profile?.email || '';
+  const role = profile?.role || 'Admin';
+  const initials = displayName.split(' ').map((w: string) => w[0]).slice(0, 2).join('').toUpperCase();
+
   return (
     <div className="max-w-2xl space-y-6">
       {/* Profile Preview */}
       <Card>
         <CardContent className="p-5">
           <div className="flex items-center gap-4">
-            <div className="h-14 w-14 rounded-full bg-primary/10 flex items-center justify-center text-lg font-bold text-primary">
-              EW
+            <div className="h-14 w-14 rounded-full bg-primary/10 flex items-center justify-center overflow-hidden shrink-0">
+              {profile?.logo_url ? (
+                <img src={profile.logo_url} alt="Logo" className="w-full h-full object-contain" />
+              ) : (
+                <span className="text-lg font-bold text-primary">{initials}</span>
+              )}
             </div>
             <div>
-              <p className="font-semibold text-lg">Elite Work</p>
-              <p className="text-sm text-muted-foreground">elitework.ron@gmail.com · Admin</p>
+              <p className="font-semibold text-lg">{displayName}</p>
+              <p className="text-sm text-muted-foreground">{email} · {role}</p>
             </div>
-            <Button variant="outline" size="sm" className="ml-auto">
-              Edit Profile
-            </Button>
+            <Link href="/settings/profile" className="ml-auto">
+              <Button variant="outline" size="sm">Edit Profile</Button>
+            </Link>
           </div>
         </CardContent>
       </Card>

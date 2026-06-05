@@ -43,7 +43,6 @@ const bottomItems = [
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 
-// ── Collapse state persisted to localStorage ──
 function useCollapsed() {
   const [collapsed, setCollapsed] = useState(false);
 
@@ -71,6 +70,23 @@ export default function Sidebar({ mobileOpen = false, onMobileClose }: SidebarPr
   const pathname   = usePathname();
   const router     = useRouter();
   const { collapsed, toggle } = useCollapsed();
+  const [logoUrl, setLogoUrl] = useState<string | null>(null);
+  const [companyName, setCompanyName] = useState<string>(COMPANY.name);
+
+  useEffect(() => {
+    const loadBranding = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      const { data } = await supabase
+        .from('profiles')
+        .select('logo_url, company_name')
+        .eq('id', user.id)
+        .single();
+      if (data?.logo_url) setLogoUrl(data.logo_url);
+      if (data?.company_name) setCompanyName(data.company_name);
+    };
+    loadBranding();
+  }, []);
 
   const handleSignOut = async () => {
     await supabase.auth.signOut();
@@ -78,13 +94,11 @@ export default function Sidebar({ mobileOpen = false, onMobileClose }: SidebarPr
   };
 
   const handleNavClick = () => {
-    // Close mobile overlay on nav click
     if (onMobileClose) onMobileClose();
   };
 
   return (
     <>
-      {/* ── Mobile overlay backdrop ── */}
       {mobileOpen && (
         <div
           className="fixed inset-0 z-40 bg-black/50 lg:hidden"
@@ -92,27 +106,29 @@ export default function Sidebar({ mobileOpen = false, onMobileClose }: SidebarPr
         />
       )}
 
-      {/* ── Sidebar ── */}
       <aside
         className={cn(
           "flex h-full flex-col bg-sidebar border-r border-sidebar-border transition-all duration-300 z-50",
-          // Desktop: collapsible width
           collapsed ? "w-16" : "w-60",
-          // Mobile: fixed overlay
           "max-lg:fixed max-lg:top-0 max-lg:left-0 max-lg:h-screen max-lg:w-72",
           mobileOpen ? "max-lg:translate-x-0" : "max-lg:-translate-x-full",
         )}
       >
-        {/* ── Logo + collapse toggle ── */}
+        {/* Logo + collapse toggle */}
         <div className="flex h-16 items-center justify-between px-3 border-b border-sidebar-border shrink-0">
           <div className={cn("flex items-center gap-2.5 min-w-0", collapsed && "lg:justify-center lg:w-full")}>
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary shrink-0">
-              <Command className="h-4 w-4 text-white" />
+            {/* Logo: show uploaded logo or fallback to Command icon */}
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary shrink-0 overflow-hidden">
+              {logoUrl ? (
+                <img src={logoUrl} alt="Logo" className="w-full h-full object-contain" />
+              ) : (
+                <Command className="h-4 w-4 text-white" />
+              )}
             </div>
             {!collapsed && (
               <div className="min-w-0">
                 <p className="font-bold text-sm text-white tracking-tight leading-tight truncate">
-                  {COMPANY.name}
+                  {companyName}
                 </p>
                 <p className="text-[10px] text-sidebar-foreground/50 leading-tight truncate">
                   {COMPANY.appName}
@@ -121,7 +137,6 @@ export default function Sidebar({ mobileOpen = false, onMobileClose }: SidebarPr
             )}
           </div>
 
-          {/* Desktop collapse toggle */}
           <button
             onClick={toggle}
             className="hidden lg:flex h-7 w-7 items-center justify-center rounded-md text-sidebar-foreground/50 hover:text-sidebar-foreground hover:bg-sidebar-accent/60 transition-colors shrink-0"
@@ -133,7 +148,6 @@ export default function Sidebar({ mobileOpen = false, onMobileClose }: SidebarPr
             }
           </button>
 
-          {/* Mobile close button */}
           <button
             onClick={onMobileClose}
             className="lg:hidden flex h-7 w-7 items-center justify-center rounded-md text-sidebar-foreground/50 hover:text-sidebar-foreground transition-colors"
@@ -142,7 +156,7 @@ export default function Sidebar({ mobileOpen = false, onMobileClose }: SidebarPr
           </button>
         </div>
 
-        {/* ── Navigation ── */}
+        {/* Navigation */}
         <nav className="flex flex-1 flex-col gap-1 p-3 pt-4 overflow-y-auto">
           {!collapsed && (
             <p className="px-3 pb-2 text-xs font-semibold uppercase tracking-widest text-sidebar-foreground/40">
@@ -189,7 +203,7 @@ export default function Sidebar({ mobileOpen = false, onMobileClose }: SidebarPr
           })}
         </nav>
 
-        {/* ── Bottom ── */}
+        {/* Bottom */}
         <div className="border-t border-sidebar-border p-3 shrink-0">
           {bottomItems.map((item) => {
             const Icon = item.icon;
@@ -226,7 +240,6 @@ export default function Sidebar({ mobileOpen = false, onMobileClose }: SidebarPr
             {!collapsed && <span>Sign Out</span>}
           </button>
 
-          {/* ── User chip ── */}
           {!collapsed && <UserChip />}
         </div>
       </aside>
@@ -235,29 +248,43 @@ export default function Sidebar({ mobileOpen = false, onMobileClose }: SidebarPr
 }
 
 function UserChip() {
-  const [user, setUser] = useState<{ name: string; initials: string; role: string } | null>(null);
+  const [user, setUser] = useState<{ name: string; initials: string; role: string; logoUrl: string | null } | null>(null);
 
   useEffect(() => {
-    supabase.auth.getUser().then(({ data }) => {
-      if (!data.user) return;
-      const meta     = data.user.user_metadata ?? {};
-      const email    = data.user.email ?? "";
-      const name     = meta.full_name || meta.name || email.split("@")[0] || "User";
-      const parts    = name.trim().split(" ");
+    const load = async () => {
+      const { data: authData } = await supabase.auth.getUser();
+      if (!authData.user) return;
+
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('full_name, role, logo_url')
+        .eq('id', authData.user.id)
+        .single();
+
+      const email = authData.user.email ?? '';
+      const name = profile?.full_name || email.split('@')[0] || 'User';
+      const parts = name.trim().split(' ');
       const initials = parts.length >= 2
         ? (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
         : name.slice(0, 2).toUpperCase();
-      const role = meta.role || "Admin";
-      setUser({ name, initials, role });
-    });
+      const role = profile?.role || 'Admin';
+      const logoUrl = profile?.logo_url || null;
+
+      setUser({ name, initials, role, logoUrl });
+    };
+    load();
   }, []);
 
   if (!user) return null;
 
   return (
     <div className="mt-3 flex items-center gap-3 rounded-lg px-3 py-2.5">
-      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/20 text-xs font-bold text-primary">
-        {user.initials}
+      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/20 overflow-hidden">
+        {user.logoUrl ? (
+          <img src={user.logoUrl} alt="Logo" className="w-full h-full object-contain" />
+        ) : (
+          <span className="text-xs font-bold text-primary">{user.initials}</span>
+        )}
       </div>
       <div className="flex-1 min-w-0">
         <p className="text-sm font-medium text-sidebar-accent-foreground truncate">{user.name}</p>
