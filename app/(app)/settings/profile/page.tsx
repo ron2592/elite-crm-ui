@@ -53,7 +53,7 @@ export default function EditProfilePage() {
     const file = e.target.files?.[0]
     if (!file || !profile) return
 
-    const maxSize = 2 * 1024 * 1024 // 2MB
+    const maxSize = 2 * 1024 * 1024
     if (file.size > maxSize) {
       setError('Logo must be under 2MB.')
       return
@@ -90,9 +90,14 @@ export default function EditProfilePage() {
     setError(null)
 
     try {
+      const { data: { session } } = await supabase.auth.getSession()
+
       const res = await fetch('/api/profile/update', {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session?.access_token}`,
+        },
         body: JSON.stringify({
           full_name: fullName.trim(),
           company_name: companyName.trim(),
@@ -124,7 +129,6 @@ export default function EditProfilePage() {
 
   return (
     <div className="max-w-2xl mx-auto py-10 px-4">
-      {/* Header */}
       <div className="mb-8">
         <h1 className="text-2xl font-bold text-white">Edit Profile</h1>
         <p className="text-sm text-gray-400 mt-1">Update your name, company, and branding.</p>
@@ -141,11 +145,7 @@ export default function EditProfilePage() {
               onClick={() => fileInputRef.current?.click()}
             >
               {logoUrl ? (
-                <img
-                  src={logoUrl}
-                  alt="Company logo"
-                  className="w-full h-full object-contain"
-                />
+                <img src={logoUrl} alt="Company logo" className="w-full h-full object-contain" />
               ) : (
                 <User size={28} className="text-gray-500" />
               )}
@@ -158,11 +158,7 @@ export default function EditProfilePage() {
                 disabled={uploading}
                 className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 text-white text-sm rounded-lg transition-colors disabled:opacity-50"
               >
-                {uploading ? (
-                  <Loader2 size={14} className="animate-spin" />
-                ) : (
-                  <Upload size={14} />
-                )}
+                {uploading ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
                 {uploading ? 'Uploading...' : 'Upload Logo'}
               </button>
               <p className="text-xs text-gray-500 mt-1.5">PNG or JPG · Max 2MB</p>
@@ -178,14 +174,11 @@ export default function EditProfilePage() {
           </div>
         </div>
 
-        {/* Divider */}
         <div className="border-t border-white/10" />
 
         {/* Full Name */}
         <div>
-          <label className="block text-sm font-medium text-gray-300 mb-2">
-            Full Name
-          </label>
+          <label className="block text-sm font-medium text-gray-300 mb-2">Full Name</label>
           <input
             type="text"
             value={fullName}
@@ -197,9 +190,7 @@ export default function EditProfilePage() {
 
         {/* Company Name */}
         <div>
-          <label className="block text-sm font-medium text-gray-300 mb-2">
-            Company Name
-          </label>
+          <label className="block text-sm font-medium text-gray-300 mb-2">Company Name</label>
           <input
             type="text"
             value={companyName}
