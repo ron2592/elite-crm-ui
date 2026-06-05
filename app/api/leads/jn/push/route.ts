@@ -11,7 +11,6 @@ const supabase = createClient(
 
 export async function POST(req: NextRequest) {
   try {
-    // ── DEBUG: log raw body before parsing ──────────────────────────
     const rawBody = await req.text()
     console.log('[JN] Raw incoming body:', rawBody)
 
@@ -25,7 +24,6 @@ export async function POST(req: NextRequest) {
       console.error('[JN] Body parse failed:', parseErr)
       return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
     }
-    // ────────────────────────────────────────────────────────────────
 
     if (!lead_id) {
       console.error('[JN] lead_id missing from body')
@@ -128,11 +126,12 @@ function buildJNPayload(lead: any) {
     first_name: firstName,
     last_name: lastName,
     display_name: displayName,
-    email: lead.email ? [{ email: lead.email }] : [],
-    phone: lead.phone ? [{ number: lead.phone, type: 'mobile' }] : [],
-    address_line_1: lead.client_address || '',
+    // FLAT strings — JN does not accept array format
+    email: lead.email || '',
+    phone: lead.phone || '',
+    address_line1: lead.client_address || '',
     city: lead.client_city || '',
-    state: lead.client_state || '',
+    state_text: lead.client_state || '',
     zip: lead.client_zip || '',
     tags: ['com-center'],
   }
