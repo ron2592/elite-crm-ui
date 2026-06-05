@@ -29,6 +29,9 @@ export async function POST(req: NextRequest) {
 
     const payload = buildJNPayload(lead)
 
+    // Log payload for debugging
+    console.log('[JN] Payload:', JSON.stringify(payload))
+
     if (lead.jn_contact_id) {
       const updateRes = await fetch(`${JN_BASE_URL}/contacts/${lead.jn_contact_id}`, {
         method: 'PUT',
@@ -39,9 +42,11 @@ export async function POST(req: NextRequest) {
         body: JSON.stringify(payload),
       })
 
+      const updateText = await updateRes.text()
+      console.log('[JN] Update response:', updateRes.status, updateText)
+
       if (!updateRes.ok) {
-        const err = await updateRes.text()
-        return NextResponse.json({ error: `JN update failed: ${err}` }, { status: 500 })
+        return NextResponse.json({ error: `JN update failed: ${updateText}` }, { status: 500 })
       }
 
       return NextResponse.json({ success: true, action: 'updated', jn_contact_id: lead.jn_contact_id })
@@ -56,12 +61,20 @@ export async function POST(req: NextRequest) {
       body: JSON.stringify(payload),
     })
 
+    const createText = await createRes.text()
+    console.log('[JN] Create response:', createRes.status, createText)
+
     if (!createRes.ok) {
-      const err = await createRes.text()
-      return NextResponse.json({ error: `JN create failed: ${err}` }, { status: 500 })
+      return NextResponse.json({ error: `JN create failed: ${createText}` }, { status: 500 })
     }
 
-    const jnData = await createRes.json()
+    let jnData: any = {}
+    try {
+      jnData = JSON.parse(createText)
+    } catch (e) {
+      return NextResponse.json({ error: `JN parse failed: ${createText}` }, { status: 500 })
+    }
+
     const jn_contact_id = jnData.jnid || jnData.id || jnData.record_id
 
     await supabase
@@ -76,6 +89,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: true, action: 'created', jn_contact_id })
 
   } catch (err: any) {
+    console.error('[JN] Caught error:', err.message)
     return NextResponse.json({ error: err.message }, { status: 500 })
   }
 }
