@@ -68,6 +68,7 @@ export async function POST(req: NextRequest) {
       .from('leads')
       .update({
         jn_contact_id,
+        jn_sync_status: 'synced',
         jn_synced_at: new Date().toISOString(),
       })
       .eq('id', lead_id)
@@ -80,8 +81,8 @@ export async function POST(req: NextRequest) {
 }
 
 function buildJNPayload(lead: any) {
-  const firstName = lead.first_name || ''
-  const lastName = lead.last_name || ''
+  const firstName = lead.first_name || lead.lead_name?.split(' ')[0] || ''
+  const lastName = lead.last_name || lead.lead_name?.split(' ').slice(1).join(' ') || ''
   const displayName = `${firstName} ${lastName}`.trim() || lead.lead_name || 'Unknown'
 
   return {
@@ -90,12 +91,10 @@ function buildJNPayload(lead: any) {
     display_name: displayName,
     email: lead.email ? [{ email: lead.email }] : [],
     phone: lead.phone ? [{ number: lead.phone, type: 'mobile' }] : [],
-    address: {
-      line1: lead.address_line_1 || lead.client_address || '',
-      city: lead.city || lead.client_city || '',
-      state: lead.state || lead.client_state || '',
-      zip: lead.postal_code || lead.client_zip || '',
-    },
+    address_line_1: lead.client_address || '',
+    city: lead.client_city || '',
+    state_text: lead.client_state || '',
+    zip: lead.client_zip || '',
     tags: ['com-center'],
   }
 }
