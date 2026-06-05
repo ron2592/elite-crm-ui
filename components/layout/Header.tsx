@@ -1,7 +1,7 @@
 "use client";
 
 import { usePathname, useRouter } from "next/navigation";
-import { Bell, Search, X, Loader2, Plus, CheckSquare, Clock, AlertCircle } from "lucide-react";
+import { Bell, Search, X, Loader2, Plus, CheckSquare, Clock, AlertCircle, Menu } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import AddLeadModal from "@/components/leads/AddLeadModal";
 import { useState, useEffect, useRef, useCallback } from "react";
@@ -42,7 +42,6 @@ const statusColors: Record<string, string> = {
   lost: "bg-red-100 text-red-600", not_qualified: "bg-gray-100 text-gray-500",
 };
 
-// ── Types ─────────────────────────────────────────────────────────────────────
 interface SearchResult {
   id: string; lead_name: string; first_name: string;
   phone: string; status: string; source: string; metadata: any;
@@ -55,20 +54,18 @@ interface NotifTask {
 }
 
 function todayStr() { return new Date().toISOString().split("T")[0]; }
+function isOverdue(t: NotifTask) { return !!t.due_date && t.due_date < todayStr() && t.status !== "done"; }
+function isDueToday(t: NotifTask) { return t.due_date === todayStr() && t.status !== "done"; }
 
-function isOverdue(t: NotifTask) {
-  return !!t.due_date && t.due_date < todayStr() && t.status !== "done";
-}
-function isDueToday(t: NotifTask) {
-  return t.due_date === todayStr() && t.status !== "done";
+// ── Props — onMobileMenuToggle is optional so existing usages don't break ──
+interface HeaderProps {
+  onMobileMenuToggle?: () => void;
 }
 
-// ── Component ─────────────────────────────────────────────────────────────────
-export default function Header() {
+export default function Header({ onMobileMenuToggle }: HeaderProps) {
   const pathname = usePathname();
   const router   = useRouter();
 
-  // Match exact path or prefix (e.g. /leads/import → /leads)
   const pageInfo = pageTitles[pathname]
     ?? Object.entries(pageTitles)
         .filter(([k]) => k !== "/")
@@ -94,7 +91,7 @@ export default function Header() {
   const [notifCount, setNotifCount] = useState(0);
   const notifRef = useRef<HTMLDivElement>(null);
 
-  // ── Outside click handler ─────────────────────────────────────────────────
+  // ── Outside click ─────────────────────────────────────────────────────────
   useEffect(() => {
     function handleClick(e: MouseEvent) {
       if (searchRef.current   && !searchRef.current.contains(e.target as Node))   { setSearchOpen(false); setQuery(""); setResults([]); }
@@ -120,7 +117,7 @@ export default function Header() {
     return () => document.removeEventListener("keydown", handleKey);
   }, []);
 
-  // ── Fetch notification tasks ──────────────────────────────────────────────
+  // ── Fetch notifications ───────────────────────────────────────────────────
   const fetchNotifs = useCallback(async () => {
     const { data } = await supabase
       .from("tasks")
@@ -130,8 +127,6 @@ export default function Header() {
       .limit(20);
 
     const tasks = (data as NotifTask[]) || [];
-
-    // Show: overdue first, then due today, then open tasks due soon
     const prioritized = [
       ...tasks.filter(t => isOverdue(t)),
       ...tasks.filter(t => isDueToday(t)),
@@ -144,9 +139,7 @@ export default function Header() {
 
   useEffect(() => {
     fetchNotifs();
-    // Re-fetch every 5 minutes
     const interval = setInterval(fetchNotifs, 5 * 60 * 1000);
-    // Real-time updates
     const ch = supabase
       .channel("notif-tasks")
       .on("postgres_changes", { event: "*", schema: "public", table: "tasks" }, fetchNotifs)
@@ -186,24 +179,33 @@ export default function Header() {
     router.push(`/leads?open=${leadId}`);
   };
 
-  // ── Priority color ────────────────────────────────────────────────────────
   const priorityDot: Record<string, string> = {
-    high:   "bg-red-500",
-    medium: "bg-amber-400",
-    low:    "bg-slate-400",
+    high: "bg-red-500", medium: "bg-amber-400", low: "bg-slate-400",
   };
 
-  // ── Render ────────────────────────────────────────────────────────────────
   return (
-    <header className="flex h-16 items-center justify-between border-b bg-background px-6 shrink-0">
-      <div>
-        <h1 className="font-display text-lg font-semibold leading-tight">{pageInfo.title}</h1>
-        <p className="text-xs text-muted-foreground">{pageInfo.description}</p>
+    <header className="flex h-16 items-center justify-between border-b bg-background px-4 lg:px-6 shrink-0">
+
+      {/* ── Left: Hamburger (mobile) + Page title ── */}
+      <div className="flex items-center gap-3 min-w-0">
+        {/* Mobile hamburger */}
+        <button
+          onClick={onMobileMenuToggle}
+          className="lg:hidden flex h-8 w-8 items-center justify-center rounded-lg hover:bg-muted transition-colors shrink-0"
+        >
+          <Menu className="h-5 w-5" />
+        </button>
+
+        <div className="min-w-0">
+          <h1 className="font-display text-lg font-semibold leading-tight truncate">{pageInfo.title}</h1>
+          <p className="text-xs text-muted-foreground hidden sm:block">{pageInfo.description}</p>
+        </div>
       </div>
 
-      <div className="flex items-center gap-2">
+      {/* ── Right: Search + Bell + New ── */}
+      <div className="flex items-center gap-2 shrink-0">
 
-        {/* ── Global Search ── */}
+        {/* Global Search — hidden on small mobile */}
         <div ref={searchRef} className="relative hidden md:flex items-center">
           {!searchOpen ? (
             <button
@@ -270,7 +272,7 @@ export default function Header() {
           )}
         </div>
 
-        {/* ── Notification Bell ── */}
+        {/* Notification Bell */}
         <div ref={notifRef} className="relative">
           <button
             onClick={() => { setNotifOpen(v => !v); if (!notifOpen) fetchNotifs(); }}
@@ -286,7 +288,6 @@ export default function Header() {
 
           {notifOpen && (
             <div className="absolute right-0 top-10 w-80 rounded-xl border border-border bg-background shadow-xl z-50 overflow-hidden">
-              {/* Header */}
               <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-muted/20">
                 <p className="text-sm font-semibold">Notifications</p>
                 {notifCount > 0 && (
@@ -295,8 +296,6 @@ export default function Header() {
                   </span>
                 )}
               </div>
-
-              {/* Task list */}
               <div className="max-h-80 overflow-y-auto divide-y divide-border/50">
                 {notifTasks.length === 0 ? (
                   <div className="flex flex-col items-center justify-center py-8 gap-2 text-center">
@@ -309,38 +308,29 @@ export default function Header() {
                     const overdue = isOverdue(task);
                     const today   = isDueToday(task);
                     return (
-                      <button
-                        key={task.id}
+                      <button key={task.id}
                         onClick={() => { setNotifOpen(false); router.push("/tasks"); }}
                         className={`w-full flex items-start gap-3 px-4 py-3 text-left hover:bg-muted/40 transition-colors ${
                           overdue ? "bg-red-50/50 dark:bg-red-950/10" :
                           today   ? "bg-amber-50/50 dark:bg-amber-950/10" : ""
                         }`}
                       >
-                        {/* Priority dot */}
                         <div className={`mt-1.5 h-2 w-2 rounded-full shrink-0 ${priorityDot[task.priority] ?? "bg-slate-400"}`} />
-
                         <div className="flex-1 min-w-0">
                           <p className="text-sm font-medium leading-snug truncate">{task.title}</p>
                           <div className="flex items-center gap-2 mt-1 flex-wrap">
                             {overdue && (
                               <span className="flex items-center gap-0.5 text-xs text-red-600 font-medium">
-                                <AlertCircle className="h-3 w-3" />
-                                Overdue
+                                <AlertCircle className="h-3 w-3" /> Overdue
                               </span>
                             )}
                             {today && !overdue && (
                               <span className="flex items-center gap-0.5 text-xs text-amber-600 font-medium">
-                                <Clock className="h-3 w-3" />
-                                Due today
+                                <Clock className="h-3 w-3" /> Due today
                               </span>
                             )}
-                            {task.assigned_to && (
-                              <span className="text-xs text-muted-foreground">→ {task.assigned_to}</span>
-                            )}
-                            {task.lead_name && (
-                              <span className="text-xs text-muted-foreground truncate">· {task.lead_name}</span>
-                            )}
+                            {task.assigned_to && <span className="text-xs text-muted-foreground">→ {task.assigned_to}</span>}
+                            {task.lead_name && <span className="text-xs text-muted-foreground truncate">· {task.lead_name}</span>}
                           </div>
                         </div>
                       </button>
@@ -348,8 +338,6 @@ export default function Header() {
                   })
                 )}
               </div>
-
-              {/* Footer */}
               <div className="border-t border-border px-4 py-2.5 bg-muted/10">
                 <button
                   onClick={() => { setNotifOpen(false); router.push("/tasks"); }}
@@ -362,7 +350,7 @@ export default function Header() {
           )}
         </div>
 
-        {/* ── Plus Quick Add ── */}
+        {/* Plus Quick Add */}
         <div ref={quickAddRef} className="relative">
           <button
             onClick={() => setQuickAddOpen(v => !v)}
