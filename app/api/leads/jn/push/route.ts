@@ -15,21 +15,33 @@ export async function POST(req: NextRequest) {
     console.log('[JN] Raw incoming body:', rawBody)
 
     let lead_id: string | undefined
+    let operation: string = 'INSERT'
+
     try {
       const parsed = JSON.parse(rawBody)
-      console.log('[JN] Parsed body:', JSON.stringify(parsed))
-      lead_id = parsed?.lead_id ?? parsed?.record?.id ?? parsed?.id
-      console.log('[JN] Resolved lead_id:', lead_id)
+      lead_id   = parsed?.lead_id ?? parsed?.record?.id ?? parsed?.id
+      operation = parsed?.operation ?? 'INSERT'
+      console.log('[JN] lead_id:', lead_id, '| operation:', operation)
     } catch (parseErr) {
       console.error('[JN] Body parse failed:', parseErr)
       return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
     }
 
     if (!lead_id) {
-      console.error('[JN] lead_id missing from body')
+      console.error('[JN] lead_id missing')
       return NextResponse.json({ error: 'lead_id required' }, { status: 400 })
     }
 
+    // ── DELETE ────────────────────────────────────────────────────────────────
+    if (operation === 'DELETE') {
+      // We need the jn_contact_id — but the row is already deleted.
+      // We can't fetch it. Skip JN delete for now unless jn_contact_id
+      // is passed in the payload. Log and return success.
+      console.log('[JN] DELETE operation — lead removed from ComCenter:', lead_id)
+      return NextResponse.json({ success: true, action: 'delete_noted', lead_id })
+    }
+
+    // ── Fetch lead from Supabase ──────────────────────────────────────────────
     const { data: lead, error } = await supabase
       .from('leads')
       .select('*')
@@ -46,7 +58,7 @@ export async function POST(req: NextRequest) {
     const payload = buildJNPayload(lead)
     console.log('[JN] Payload:', JSON.stringify(payload))
 
-    // ── UPDATE existing JN contact ───────────────────────────────────
+    // ── UPDATE existing JN contact ────────────────────────────────────────────
     if (lead.jn_contact_id) {
       const updateRes = await fetch(`${JN_BASE_URL}/contacts/${lead.jn_contact_id}`, {
         method: 'PUT',
@@ -61,13 +73,22 @@ export async function POST(req: NextRequest) {
       console.log('[JN] Update response:', updateRes.status, updateText)
 
       if (!updateRes.ok) {
+        await supabase
+          .from('leads')
+          .update({ jn_sync_status: 'failed' })
+          .eq('id', lead_id)
         return NextResponse.json({ error: `JN update failed: ${updateText}` }, { status: 500 })
       }
+
+      await supabase
+        .from('leads')
+        .update({ jn_sync_status: 'synced', jn_synced_at: new Date().toISOString() })
+        .eq('id', lead_id)
 
       return NextResponse.json({ success: true, action: 'updated', jn_contact_id: lead.jn_contact_id })
     }
 
-    // ── CREATE new JN contact ────────────────────────────────────────
+    // ── CREATE new JN contact ─────────────────────────────────────────────────
     const createRes = await fetch(`${JN_BASE_URL}/contacts`, {
       method: 'POST',
       headers: {
@@ -85,7 +106,6 @@ export async function POST(req: NextRequest) {
         .from('leads')
         .update({ jn_sync_status: 'failed' })
         .eq('id', lead_id)
-
       return NextResponse.json({ error: `JN create failed: ${createText}` }, { status: 500 })
     }
 
@@ -119,20 +139,19 @@ export async function POST(req: NextRequest) {
 
 function buildJNPayload(lead: any) {
   const firstName = lead.first_name || lead.lead_name?.split(' ')[0] || ''
-  const lastName = lead.last_name || lead.lead_name?.split(' ').slice(1).join(' ') || ''
+  const lastName  = lead.last_name  || lead.lead_name?.split(' ').slice(1).join(' ') || ''
   const displayName = `${firstName} ${lastName}`.trim() || lead.lead_name || 'Unknown'
 
   return {
-    first_name: firstName,
-    last_name: lastName,
-    display_name: displayName,
-    // FLAT strings — JN does not accept array format
-    email: lead.email || '',
-    phone: lead.phone || '',
+    first_name:    firstName,
+    last_name:     lastName,
+    display_name:  displayName,
+    email:         lead.email || '',
+    phone:         lead.phone || '',
     address_line1: lead.client_address || '',
-    city: lead.client_city || '',
-    state_text: lead.client_state || '',
-    zip: lead.client_zip || '',
-    tags: ['com-center'],
+    city:          lead.client_city    || '',
+    state_text:    lead.client_state   || '',
+    zip:           lead.client_zip     || '',
+    tags:          ['com-center'],
   }
 }
