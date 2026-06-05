@@ -11,9 +11,24 @@ const supabase = createClient(
 
 export async function POST(req: NextRequest) {
   try {
-    const { lead_id } = await req.json()
+    // ── DEBUG: log raw body before parsing ──────────────────────────
+    const rawBody = await req.text()
+    console.log('[JN] Raw incoming body:', rawBody)
+
+    let lead_id: string | undefined
+    try {
+      const parsed = JSON.parse(rawBody)
+      console.log('[JN] Parsed body:', JSON.stringify(parsed))
+      lead_id = parsed?.lead_id ?? parsed?.record?.id ?? parsed?.id
+      console.log('[JN] Resolved lead_id:', lead_id)
+    } catch (parseErr) {
+      console.error('[JN] Body parse failed:', parseErr)
+      return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
+    }
+    // ────────────────────────────────────────────────────────────────
 
     if (!lead_id) {
+      console.error('[JN] lead_id missing from body')
       return NextResponse.json({ error: 'lead_id required' }, { status: 400 })
     }
 
@@ -24,14 +39,16 @@ export async function POST(req: NextRequest) {
       .single()
 
     if (error || !lead) {
+      console.error('[JN] Lead not found:', lead_id, error)
       return NextResponse.json({ error: 'Lead not found' }, { status: 404 })
     }
 
-    const payload = buildJNPayload(lead)
+    console.log('[JN] Lead fetched:', lead.id, lead.lead_name)
 
-    // Log payload for debugging
+    const payload = buildJNPayload(lead)
     console.log('[JN] Payload:', JSON.stringify(payload))
 
+    // ── UPDATE existing JN contact ───────────────────────────────────
     if (lead.jn_contact_id) {
       const updateRes = await fetch(`${JN_BASE_URL}/contacts/${lead.jn_contact_id}`, {
         method: 'PUT',
@@ -52,6 +69,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: true, action: 'updated', jn_contact_id: lead.jn_contact_id })
     }
 
+    // ── CREATE new JN contact ────────────────────────────────────────
     const createRes = await fetch(`${JN_BASE_URL}/contacts`, {
       method: 'POST',
       headers: {
@@ -65,6 +83,11 @@ export async function POST(req: NextRequest) {
     console.log('[JN] Create response:', createRes.status, createText)
 
     if (!createRes.ok) {
+      await supabase
+        .from('leads')
+        .update({ jn_sync_status: 'failed' })
+        .eq('id', lead_id)
+
       return NextResponse.json({ error: `JN create failed: ${createText}` }, { status: 500 })
     }
 
@@ -72,10 +95,12 @@ export async function POST(req: NextRequest) {
     try {
       jnData = JSON.parse(createText)
     } catch (e) {
+      console.error('[JN] Failed to parse create response:', createText)
       return NextResponse.json({ error: `JN parse failed: ${createText}` }, { status: 500 })
     }
 
     const jn_contact_id = jnData.jnid || jnData.id || jnData.record_id
+    console.log('[JN] Created contact ID:', jn_contact_id)
 
     await supabase
       .from('leads')
