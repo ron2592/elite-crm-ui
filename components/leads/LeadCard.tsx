@@ -1,10 +1,33 @@
-import { Phone, Globe } from "lucide-react";
+import { Phone, Globe, RefreshCw, CheckCircle2, XCircle, Clock } from "lucide-react";
 import { Lead } from "@/types";
 
 interface LeadCardProps {
   lead: Lead;
   onClick?: () => void;
   changeOrderTotal?: number;
+}
+
+// ── JN Sync Status Badge ──────────────────────────────────────────────────────
+function JNSyncBadge({ status }: { status?: string }) {
+  if (!status || status === 'pending') return (
+    <span className="inline-flex items-center gap-0.5 text-[9px] font-medium text-gray-400 border border-gray-200 rounded-full px-1.5 py-0.5"
+      title="Not yet synced to JobNimbus">
+      <Clock className="h-2.5 w-2.5" /> JN
+    </span>
+  )
+  if (status === 'synced') return (
+    <span className="inline-flex items-center gap-0.5 text-[9px] font-medium text-emerald-600 border border-emerald-200 rounded-full px-1.5 py-0.5 bg-emerald-50"
+      title="Synced to JobNimbus">
+      <CheckCircle2 className="h-2.5 w-2.5" /> JN
+    </span>
+  )
+  if (status === 'failed') return (
+    <span className="inline-flex items-center gap-0.5 text-[9px] font-medium text-red-600 border border-red-200 rounded-full px-1.5 py-0.5 bg-red-50"
+      title="JN sync failed">
+      <XCircle className="h-2.5 w-2.5" /> JN
+    </span>
+  )
+  return null
 }
 
 export default function LeadCard({ lead, onClick, changeOrderTotal = 0 }: LeadCardProps) {
@@ -30,6 +53,7 @@ export default function LeadCard({ lead, onClick, changeOrderTotal = 0 }: LeadCa
       }}
       onClick={onClick}
     >
+      {/* ── Top row: avatar + name + value ── */}
       <div className="flex items-start justify-between gap-2 mb-2.5">
         <div className="flex items-center gap-2">
           <div className="flex h-7 w-7 items-center justify-center rounded-full bg-primary/10 text-xs font-bold text-primary shrink-0">
@@ -47,6 +71,7 @@ export default function LeadCard({ lead, onClick, changeOrderTotal = 0 }: LeadCa
         </div>
       </div>
 
+      {/* ── Contact info ── */}
       <div className="space-y-1.5 text-xs text-muted-foreground">
         <div className="flex items-center gap-1.5">
           <Phone className="h-3 w-3 shrink-0" />
@@ -58,8 +83,12 @@ export default function LeadCard({ lead, onClick, changeOrderTotal = 0 }: LeadCa
         </div>
       </div>
 
-      <div className="mt-2.5 border-t pt-2 text-xs text-muted-foreground/60">
-        {createdAt ? new Date(createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "No date"}
+      {/* ── Footer: date + JN sync badge ── */}
+      <div className="mt-2.5 border-t pt-2 flex items-center justify-between">
+        <span className="text-xs text-muted-foreground/60">
+          {createdAt ? new Date(createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "No date"}
+        </span>
+        <JNSyncBadge status={l.jn_sync_status} />
       </div>
     </div>
   );
