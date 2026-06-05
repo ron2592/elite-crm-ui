@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
-import "@/globals.css";
-
+import './globals.css'
 export const metadata: Metadata = {
   title: "ComCenter — Elite Work Command Center",
   description: "Elite Work operational hub for leads, pipeline, and reporting.",
