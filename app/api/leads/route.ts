@@ -9,47 +9,6 @@ function normalizePhone(raw: string): string {
   return raw;
 }
 
-async function pushToJobNimbus(lead: {
-  first_name?: string;
-  last_name?: string;
-  phone?: string;
-  email?: string;
-  client_address?: string;
-  client_city?: string;
-  client_state?: string;
-  client_zip?: string;
-}) {
-  const MAKE_WEBHOOK = "https://hook.us2.make.com/jhn3fgt8fgvhr87sxt9ppynht4ibqcwy";
-
-  try {
-    const res = await fetch(MAKE_WEBHOOK, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        first_name: lead.first_name     || "",
-        last_name:  lead.last_name      || "",
-        phone:      lead.phone          || "",
-        email:      lead.email          || "",
-        address:    lead.client_address || "",
-        city:       lead.client_city    || "",
-        state:      lead.client_state   || "",
-        zip:        lead.client_zip     || "",
-      }),
-    });
-
-    if (!res.ok) {
-      console.error("Make.com webhook failed:", res.status);
-      return null;
-    }
-
-    console.log("Make.com webhook triggered successfully");
-    return "make-webhook-sent";
-  } catch (err) {
-    console.error("Make.com webhook error:", err);
-    return null;
-  }
-}
-
 export async function POST(req: Request) {
   const supabase = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -183,17 +142,5 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  // ─── Push to Make.com → JobNimbus ─────────────────────────────────────────────
-  const jnId = await pushToJobNimbus({
-    first_name:     firstName,
-    last_name:      lastName,
-    phone:          body.phone ? normalizePhone(body.phone) : undefined,
-    email:          body.email || undefined,
-    client_address: body.client_address || body.address_line_1 || undefined,
-    client_city:    body.client_city    || body.city           || undefined,
-    client_state:   body.client_state   || body.state          || undefined,
-    client_zip:     body.client_zip     || body.postal_code    || body.zip || undefined,
-  });
-
-  return NextResponse.json({ success: true, data, jn_id: jnId || null });
+  return NextResponse.json({ success: true, data, jn_id: null });
 }
