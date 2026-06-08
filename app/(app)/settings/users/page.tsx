@@ -6,20 +6,20 @@ import { UserPlus, Trash2, Shield, User, Briefcase } from 'lucide-react'
 
 const ROLE_LABELS: Record<string, string> = {
   admin: 'Admin',
-  salesperson: 'Salesperson',
-  va: 'VA',
+  sales: 'Salesperson',
+  staff: 'VA',
 }
 
 const ROLE_COLORS: Record<string, string> = {
   admin: 'bg-purple-100 text-purple-700',
-  salesperson: 'bg-blue-100 text-blue-700',
-  va: 'bg-green-100 text-green-700',
+  sales: 'bg-blue-100 text-blue-700',
+  staff: 'bg-green-100 text-green-700',
 }
 
 const ROLE_ICONS: Record<string, any> = {
   admin: Shield,
-  salesperson: Briefcase,
-  va: User,
+  sales: Briefcase,
+  staff: User,
 }
 
 interface Profile {
@@ -44,7 +44,7 @@ export default function UsersPage() {
     full_name: '',
     email: '',
     phone: '',
-    role: 'salesperson',
+    role: 'sales',
   })
 
   const fetchUsers = async () => {
@@ -84,7 +84,7 @@ export default function UsersPage() {
         setError(data.error || 'Failed to send invite.')
       } else {
         setSuccess(`Invite sent to ${form.email}`)
-        setForm({ full_name: '', email: '', phone: '', role: 'salesperson' })
+        setForm({ full_name: '', email: '', phone: '', role: 'sales' })
         setShowInvite(false)
         fetchUsers()
       }
@@ -104,16 +104,13 @@ export default function UsersPage() {
       body: JSON.stringify({ user_id: user.id }),
     })
 
-    if (res.ok) {
-      fetchUsers()
-    }
+    if (res.ok) fetchUsers()
   }
 
   const atUserLimit = users.length >= 3
 
   return (
     <div className="p-6 max-w-3xl mx-auto">
-      {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-xl font-semibold text-gray-900">Team Members</h1>
@@ -121,7 +118,7 @@ export default function UsersPage() {
             {users.length}/3 users · Manage who has access to the Command Center
           </p>
         </div>
-        {!atUserLimit && (
+        {!atUserLimit ? (
           <button
             onClick={() => { setShowInvite(true); setError(''); setSuccess('') }}
             className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 transition"
@@ -129,15 +126,13 @@ export default function UsersPage() {
             <UserPlus size={15} />
             Invite User
           </button>
-        )}
-        {atUserLimit && (
+        ) : (
           <span className="text-xs text-gray-400 bg-gray-100 px-3 py-2 rounded-lg">
             User limit reached (3/3)
           </span>
         )}
       </div>
 
-      {/* Success / Error */}
       {success && (
         <div className="mb-4 px-4 py-3 bg-green-50 border border-green-200 text-green-700 rounded-lg text-sm">
           {success}
@@ -149,7 +144,6 @@ export default function UsersPage() {
         </div>
       )}
 
-      {/* Invite Form */}
       {showInvite && (
         <div className="mb-6 p-5 border border-blue-200 bg-blue-50 rounded-xl">
           <h2 className="text-sm font-semibold text-blue-800 mb-4">New Invite</h2>
@@ -191,8 +185,8 @@ export default function UsersPage() {
                 onChange={e => setForm({ ...form, role: e.target.value })}
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
               >
-                <option value="salesperson">Salesperson</option>
-                <option value="va">VA</option>
+                <option value="sales">Salesperson</option>
+                <option value="staff">VA</option>
                 <option value="admin">Admin</option>
               </select>
             </div>
@@ -215,7 +209,6 @@ export default function UsersPage() {
         </div>
       )}
 
-      {/* Users List */}
       {loading ? (
         <div className="text-sm text-gray-400 py-8 text-center">Loading users...</div>
       ) : (
@@ -223,10 +216,7 @@ export default function UsersPage() {
           {users.map((user) => {
             const RoleIcon = ROLE_ICONS[user.role] || User
             return (
-              <div
-                key={user.id}
-                className="flex items-center justify-between p-4 bg-white border border-gray-200 rounded-xl"
-              >
+              <div key={user.id} className="flex items-center justify-between p-4 bg-white border border-gray-200 rounded-xl">
                 <div className="flex items-center gap-3">
                   <div className="w-9 h-9 rounded-full bg-gray-100 flex items-center justify-center text-sm font-semibold text-gray-600">
                     {user.full_name?.charAt(0).toUpperCase()}
@@ -256,7 +246,6 @@ export default function UsersPage() {
         </div>
       )}
 
-      {/* Info note */}
       <p className="text-xs text-gray-400 mt-6">
         Invited users will receive an email to set their password and log in at{' '}
         <span className="font-medium text-gray-500">elite-crm-ui.vercel.app/login</span>
