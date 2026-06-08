@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { Lead } from "@/types";
 import { supabase } from "@/lib/supabaseClient";
+import { useRole } from "@/lib/useRole";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
 } from "@/components/ui/dialog";
@@ -46,11 +47,9 @@ function toLocalDate(iso: string | null): string {
   return new Date(iso).toISOString().split("T")[0];
 }
 
-// ✅ Smart name parser — doesn't split phone numbers into first/last name
 function parseLeadName(leadName: string): { first: string; last: string } {
   const trimmed = (leadName || "").trim();
   if (!trimmed) return { first: "", last: "" };
-  // If it looks like a phone number (mostly digits, parens, dashes, spaces), don't parse
   const stripped = trimmed.replace(/[\s\-\(\)\+\.]/g, "");
   if (/^\d{7,}$/.test(stripped)) return { first: "", last: "" };
   const parts = trimmed.split(" ");
@@ -69,6 +68,8 @@ interface LeadDetailDialogProps {
 }
 
 export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChange, onLeadUpdated, onLeadDeleted }: LeadDetailDialogProps) {
+  const { deleteLead, archiveLead, isAdmin, isManager } = useRole();
+
   const [estimatedAmount,              setEstimatedAmount]              = useState("");
   const [contractValue,                setContractValue]                = useState("");
   const [initialContractDescription,   setInitialContractDescription]   = useState("");
@@ -153,12 +154,7 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
       const l = lead as any;
       const jobType  = l.metadata?.job_type || "";
       const isCustom = jobType && !STANDARD_JOB_TYPES.includes(jobType);
-
-      // ✅ FIX: Use GENERATED first_name/last_name columns from Supabase first.
-      // Fall back to parsing lead_name only if those are missing.
-      // parseLeadName() skips parsing when lead_name is a phone number.
       const parsed = parseLeadName(l.lead_name || "");
-
       setEditFields({
         first_name:         l.first_name || parsed.first,
         last_name:          l.last_name  || parsed.last,
@@ -430,18 +426,25 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
               </div>
             </div>
             <div className="flex items-center gap-2 mr-6">
+              {/* Edit — always visible */}
               <button onClick={() => setEditMode(!editMode)}
                 className={`flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-md border transition-colors ${editMode ? "bg-primary text-primary-foreground border-primary" : "border-border hover:bg-muted"}`}>
                 <Pencil className="h-3 w-3" />{editMode ? "Editing" : "Edit"}
               </button>
-              <button onClick={handleArchive} disabled={archiving}
-                className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-md border border-border hover:bg-red-50 hover:text-red-600 hover:border-red-300 transition-colors disabled:opacity-40">
-                <Archive className="h-3 w-3" />{archiving ? "..." : "Archive"}
-              </button>
-              <button onClick={handleDelete} disabled={deleting}
-                className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-md border border-border hover:bg-red-100 hover:text-red-700 hover:border-red-400 transition-colors disabled:opacity-40">
-                <Trash2 className="h-3 w-3" />{deleting ? "..." : "Delete"}
-              </button>
+              {/* Archive — managers/admins only */}
+              {archiveLead && (
+                <button onClick={handleArchive} disabled={archiving}
+                  className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-md border border-border hover:bg-red-50 hover:text-red-600 hover:border-red-300 transition-colors disabled:opacity-40">
+                  <Archive className="h-3 w-3" />{archiving ? "..." : "Archive"}
+                </button>
+              )}
+              {/* Delete — admins only */}
+              {deleteLead && (
+                <button onClick={handleDelete} disabled={deleting}
+                  className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-md border border-border hover:bg-red-100 hover:text-red-700 hover:border-red-400 transition-colors disabled:opacity-40">
+                  <Trash2 className="h-3 w-3" />{deleting ? "..." : "Delete"}
+                </button>
+              )}
             </div>
           </div>
         </DialogHeader>
@@ -642,7 +645,9 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
                           <div className="flex items-center gap-2"><span className="text-sm font-bold text-emerald-600">${Number(payment.amount).toLocaleString()}</span><span className="text-xs px-1.5 py-0.5 rounded bg-secondary text-secondary-foreground">{payment.payment_type}</span><span className={`text-xs px-1.5 py-0.5 rounded ${payment.payment_method === "Sunlight Financial" || payment.payment_method === "Upgrade" ? "bg-orange-100 text-orange-700" : "bg-secondary text-secondary-foreground"}`}>{payment.payment_method}</span></div>
                           <p className="text-xs text-muted-foreground mt-0.5">{new Date(payment.paid_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}{payment.notes && ` · ${payment.notes}`}</p>
                         </div>
-                        <button onClick={() => handleDeletePayment(payment.id, Number(payment.amount))} className="text-muted-foreground hover:text-red-500 transition-colors ml-2"><X className="h-3.5 w-3.5" /></button>
+                        {isManager && (
+                          <button onClick={() => handleDeletePayment(payment.id, Number(payment.amount))} className="text-muted-foreground hover:text-red-500 transition-colors ml-2"><X className="h-3.5 w-3.5" /></button>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -711,7 +716,9 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
                                   <div className="flex items-center gap-2"><span className="text-sm font-bold text-emerald-600">${Number(p.amount).toLocaleString()}</span><span className="text-xs px-1.5 py-0.5 rounded bg-secondary text-secondary-foreground">{p.payment_type}</span><span className="text-xs px-1.5 py-0.5 rounded bg-secondary text-secondary-foreground">{p.payment_method}</span></div>
                                   <p className="text-xs text-muted-foreground mt-0.5">{new Date(p.paid_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}{p.notes && ` · ${p.notes}`}</p>
                                 </div>
-                                <button onClick={() => handleDeleteCOPayment(p.id)} className="text-muted-foreground hover:text-red-500 transition-colors ml-2"><X className="h-3.5 w-3.5" /></button>
+                                {isManager && (
+                                  <button onClick={() => handleDeleteCOPayment(p.id)} className="text-muted-foreground hover:text-red-500 transition-colors ml-2"><X className="h-3.5 w-3.5" /></button>
+                                )}
                               </div>
                             ))}
                           </div>
@@ -749,6 +756,25 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
               <button onClick={handleSaveReasonLost} disabled={savingReasonLost || !reasonLost} className="w-full flex items-center justify-center gap-2 rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
                 <Save className="h-4 w-4" />{savingReasonLost ? "Saving..." : savedReasonLost ? "Saved ✓" : "Save Reason"}
               </button>
+            </div>
+          )}
+
+          {/* ── JN SYNC STATUS ── */}
+          {!editMode && (
+            <div className="flex items-center gap-2 pb-1">
+              {l.jn_contact_id ? (
+                <span className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-600 bg-emerald-50 border border-emerald-200 rounded-full px-3 py-1">
+                  ✓ Synced to JobNimbus
+                </span>
+              ) : l.jn_sync_status === 'error' ? (
+                <span className="inline-flex items-center gap-1.5 text-xs font-medium text-red-600 bg-red-50 border border-red-200 rounded-full px-3 py-1">
+                  ✕ JN Sync Failed
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1.5 text-xs font-medium text-gray-400 bg-gray-50 border border-gray-200 rounded-full px-3 py-1">
+                  ○ Not Synced to JN
+                </span>
+              )}
             </div>
           )}
 
