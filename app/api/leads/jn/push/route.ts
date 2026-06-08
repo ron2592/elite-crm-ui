@@ -32,11 +32,13 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'lead_id required' }, { status: 400 })
     }
 
+    // ── Auto-cleanup old HTTP response logs to prevent Disk IO buildup ────────
+    try {
+      await supabase.rpc('cleanup_http_response_logs')
+    } catch (_) {}
+
     // ── DELETE ────────────────────────────────────────────────────────────────
     if (operation === 'DELETE') {
-      // We need the jn_contact_id — but the row is already deleted.
-      // We can't fetch it. Skip JN delete for now unless jn_contact_id
-      // is passed in the payload. Log and return success.
       console.log('[JN] DELETE operation — lead removed from ComCenter:', lead_id)
       return NextResponse.json({ success: true, action: 'delete_noted', lead_id })
     }
