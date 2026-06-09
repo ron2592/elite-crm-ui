@@ -300,7 +300,7 @@ export default function LeadsPage() {
 
   // ✅ handleStageChange works for ALL stages (string, not just LeadStatus)
   const handleStageChange = async (leadId: string, newStatus: string) => {
-    setAllLeads(prev => prev.map(l => (l as any).id === leadId ? { ...l, status: newStatus } : l));
+    setAllLeads(prev => prev.map(l => (l as any).id === leadId ? { ...l, status: newStatus as any } : l));
     await supabase.from("leads").update({ status: newStatus }).eq("id", leadId);
   };
 
