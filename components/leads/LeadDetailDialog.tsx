@@ -574,6 +574,7 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
                 <div><label className="text-xs text-muted-foreground block mb-1">Date &amp; Time</label><input type="datetime-local" value={appointmentAt} onChange={(e) => setAppointmentAt(e.target.value)} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400/40" /></div>
                 <div><label className="text-xs text-muted-foreground block mb-1">Notes</label><input type="text" placeholder="e.g. Meet at front door" value={appointmentNotes} onChange={(e) => setAppointmentNotes(e.target.value)} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400/40" /></div>
               </div>
+              <ContactTypeToggle />
               <button onClick={handleSaveAppointment} disabled={savingAppointment || !appointmentAt} className="w-full flex items-center justify-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
                 <Save className="h-4 w-4" />{savingAppointment ? "Saving..." : savedAppointment ? "Saved ✓" : "Save Appointment"}
               </button>
