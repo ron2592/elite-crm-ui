@@ -13,6 +13,10 @@ import {
   Palette,
   ChevronRight,
   Users,
+  Calendar,
+  CheckCircle2,
+  AlertCircle,
+  Loader2,
 } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
 
@@ -30,7 +34,6 @@ const settingsGroups = [
       { icon: Users, label: "Team Members", description: "Invite and manage users (max 3)", href: "/settings/users" },
       { icon: Bell, label: "Notifications", description: "Configure how you receive alerts", href: null },
       { icon: Palette, label: "Appearance", description: "Theme, density, and display preferences", href: null },
-      { icon: Plug, label: "Integrations", description: "Connect to Twilio, Gmail, and more", href: null },
     ],
   },
   {
@@ -49,8 +52,17 @@ interface ProfileData {
   logo_url: string | null;
 }
 
+interface GoogleStatus {
+  connected: boolean;
+  google_email?: string;
+  last_synced?: string;
+}
+
 export default function SettingsPage() {
   const [profile, setProfile] = useState<ProfileData | null>(null);
+  const [googleStatus, setGoogleStatus] = useState<GoogleStatus | null>(null);
+  const [googleLoading, setGoogleLoading] = useState(true);
+  const [syncing, setSyncing] = useState(false);
 
   useEffect(() => {
     const load = async () => {
@@ -62,9 +74,56 @@ export default function SettingsPage() {
         .eq('id', user.id)
         .single();
       if (data) setProfile(data);
+
+      // Check Google Calendar connection status
+      if (data?.email) {
+        try {
+          const res = await fetch(`/api/calendar/sync?google_email=${encodeURIComponent(data.email)}`);
+          const status = await res.json();
+          setGoogleStatus(status);
+        } catch {
+          setGoogleStatus({ connected: false });
+        }
+      }
+      setGoogleLoading(false);
     };
+
+    // Check for OAuth result in URL params
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('google_connected') === 'true') {
+      setGoogleStatus({ connected: true });
+      window.history.replaceState({}, '', '/settings');
+    } else if (params.get('google_error')) {
+      setGoogleStatus({ connected: false });
+      window.history.replaceState({}, '', '/settings');
+    }
+
     load();
   }, []);
+
+  const handleGoogleConnect = () => {
+    window.location.href = '/api/auth/google';
+  };
+
+  const handleManualSync = async () => {
+    if (!profile?.email || !googleStatus?.connected) return;
+    setSyncing(true);
+    try {
+      await fetch('/api/calendar/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          google_email: profile.email,
+          direction: 'both',
+        }),
+      });
+      setGoogleStatus(prev => prev ? { ...prev, last_synced: new Date().toISOString() } : prev);
+    } catch (err) {
+      console.error('Sync failed:', err);
+    } finally {
+      setSyncing(false);
+    }
+  };
 
   const displayName = profile?.company_name || profile?.full_name || 'Elite Work';
   const email = profile?.email || '';
@@ -132,6 +191,68 @@ export default function SettingsPage() {
           </Card>
         </div>
       ))}
+
+      {/* Integrations */}
+      <div>
+        <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground mb-2 px-1">
+          Integrations
+        </p>
+        <Card>
+          <CardContent className="p-0">
+            <div className="flex items-center gap-4 px-5 py-4">
+              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-secondary">
+                <Calendar className="h-4 w-4 text-muted-foreground" />
+              </div>
+              <div className="flex-1">
+                <p className="text-sm font-medium">Google Calendar</p>
+                {googleLoading ? (
+                  <p className="text-xs text-muted-foreground">Checking connection...</p>
+                ) : googleStatus?.connected ? (
+                  <div className="flex items-center gap-1 mt-0.5">
+                    <CheckCircle2 className="h-3 w-3 text-green-500" />
+                    <p className="text-xs text-green-600">
+                      Connected
+                      {googleStatus.google_email ? ` · ${googleStatus.google_email}` : ''}
+                    </p>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-1 mt-0.5">
+                    <AlertCircle className="h-3 w-3 text-muted-foreground" />
+                    <p className="text-xs text-muted-foreground">Not connected</p>
+                  </div>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                {googleStatus?.connected && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleManualSync}
+                    disabled={syncing}
+                  >
+                    {syncing ? (
+                      <>
+                        <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                        Syncing...
+                      </>
+                    ) : (
+                      'Sync Now'
+                    )}
+                  </Button>
+                )}
+                <Button
+                  variant={googleStatus?.connected ? "outline" : "default"}
+                  size="sm"
+                  onClick={handleGoogleConnect}
+                  disabled={googleLoading}
+                >
+                  {googleStatus?.connected ? 'Reconnect' : 'Connect'}
+                </Button>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
 
       {/* Danger Zone */}
       <div>
