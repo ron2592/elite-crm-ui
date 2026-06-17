@@ -6,6 +6,8 @@ const supabaseAdmin = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 )
 
+const BASE_URL = process.env.GOOGLE_REDIRECT_URI?.replace('/api/auth/google/callback', '') || 'https://elite-crm-ui.vercel.app'
+
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url)
   const code = searchParams.get('code')
@@ -13,15 +15,11 @@ export async function GET(request: NextRequest) {
 
   if (error) {
     console.error('Google OAuth error:', error)
-    return NextResponse.redirect(
-      `${process.env.GOOGLE_REDIRECT_URI?.replace('/api/auth/google/callback', '')}/settings?google_error=${error}`
-    )
+    return NextResponse.redirect(`${BASE_URL}/settings?google_error=${error}`)
   }
 
   if (!code) {
-    return NextResponse.redirect(
-      `${process.env.GOOGLE_REDIRECT_URI?.replace('/api/auth/google/callback', '')}/settings?google_error=no_code`
-    )
+    return NextResponse.redirect(`${BASE_URL}/settings?google_error=no_code`)
   }
 
   try {
@@ -42,19 +40,18 @@ export async function GET(request: NextRequest) {
 
     if (!tokenResponse.ok || !tokens.access_token) {
       console.error('Token exchange failed:', tokens)
-      return NextResponse.redirect(
-        `${process.env.GOOGLE_REDIRECT_URI?.replace('/api/auth/google/callback', '')}/settings?google_error=token_failed`
-      )
+      return NextResponse.redirect(`${BASE_URL}/settings?google_error=token_failed`)
     }
 
-    // Get Google user info to match with our user
-    const userInfoResponse = await fetch(
-      'https://www.googleapis.com/oauth2/v2/userinfo',
-      {
-        headers: { Authorization: `Bearer ${tokens.access_token}` },
-      }
-    )
+    // Get Google user info
+    const userInfoResponse = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
+      headers: { Authorization: `Bearer ${tokens.access_token}` },
+    })
     const googleUser = await userInfoResponse.json()
+
+    if (!googleUser.email) {
+      return NextResponse.redirect(`${BASE_URL}/settings?google_error=no_email`)
+    }
 
     // Store tokens in google_calendar_sync table
     const { error: upsertError } = await supabaseAdmin
@@ -62,11 +59,10 @@ export async function GET(request: NextRequest) {
       .upsert(
         {
           google_email: googleUser.email,
+          user_email: googleUser.email,
           access_token: tokens.access_token,
-          refresh_token: tokens.refresh_token,
-          token_expiry: new Date(
-            Date.now() + tokens.expires_in * 1000
-          ).toISOString(),
+          refresh_token: tokens.refresh_token || null,
+          token_expiry: new Date(Date.now() + (tokens.expires_in || 3600) * 1000).toISOString(),
           is_active: true,
           updated_at: new Date().toISOString(),
         },
@@ -75,19 +71,12 @@ export async function GET(request: NextRequest) {
 
     if (upsertError) {
       console.error('Failed to store tokens:', upsertError)
-      return NextResponse.redirect(
-        `${process.env.GOOGLE_REDIRECT_URI?.replace('/api/auth/google/callback', '')}/settings?google_error=db_failed`
-      )
+      return NextResponse.redirect(`${BASE_URL}/settings?google_error=db_failed`)
     }
 
-    // Success — redirect to settings with success message
-    return NextResponse.redirect(
-      `${process.env.GOOGLE_REDIRECT_URI?.replace('/api/auth/google/callback', '')}/settings?google_connected=true`
-    )
+    return NextResponse.redirect(`${BASE_URL}/settings?google_connected=true`)
   } catch (err) {
     console.error('OAuth callback error:', err)
-    return NextResponse.redirect(
-      `${process.env.GOOGLE_REDIRECT_URI?.replace('/api/auth/google/callback', '')}/settings?google_error=unknown`
-    )
+    return NextResponse.redirect(`${BASE_URL}/settings?google_error=unknown`)
   }
 }
