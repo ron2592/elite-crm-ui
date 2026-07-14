@@ -125,6 +125,7 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
   const [jnContactId,                  setJnContactId]                  = useState<string | null>(null);
   const [matchSuggestion,              setMatchSuggestion]              = useState<{ id: string; match_reason: string; suggested_name: string; suggested_phone: string | null } | null>(null);
   const [resolvingMatch,               setResolvingMatch]               = useState(false);
+  const [savingCODate,                 setSavingCODate]                 = useState<string | null>(null);
 
   const leadId = (lead as any)?.id;
   const inlineJobTypeDropdownVal = STANDARD_JOB_TYPES.includes(inlineJobType) ? inlineJobType : inlineJobType ? "Other" : "";
@@ -427,12 +428,32 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
     await fetchChangeOrders();
   };
   const handleUpdateCOStatus = async (coId: string, newStatus: "pending" | "won" | "lost") => {
-    await supabase.from("change_orders").update({ status: newStatus, signed_at: newStatus === "won" ? new Date().toISOString() : null }).eq("id", coId);
+    // Revenue reporting (revenue_events) is dated by signed_at first, falling back to date_added.
+    // If someone already backdated "Added" to the real date this was agreed, honor that instead of
+    // stamping signed_at with right-now — otherwise flipping status to Won always overrides the
+    // corrected date with today, and the KPI dashboard silently ignores the edit.
+    const co = changeOrders.find(c => c.id === coId);
+    const baseDate = co?.date_added ? co.date_added.slice(0, 10) : new Date().toISOString().slice(0, 10);
+    const signedAt = newStatus === "won" ? new Date(baseDate + "T12:00:00").toISOString() : null;
+    await supabase.from("change_orders").update({ status: newStatus, signed_at: signedAt }).eq("id", coId);
     await fetchChangeOrders();
   };
   const handleUpdateCODate = async (coId: string, newDate: string) => {
     if (!newDate) return;
-    await supabase.from("change_orders").update({ date_added: newDate }).eq("id", coId);
+    setSavingCODate(coId);
+    const co = changeOrders.find(c => c.id === coId);
+    const updates: any = { date_added: newDate };
+    // Same reasoning as handleUpdateCOStatus: signed_at wins over date_added when computing which
+    // month this revenue counts toward. If this change order is already Won, keep signed_at in
+    // sync with the corrected date — otherwise editing "Added" here has zero visible effect on the
+    // KPI dashboard, which is exactly the confusing behavior this fixes.
+    if (co?.status === "won") {
+      updates.signed_at = new Date(newDate + "T12:00:00").toISOString();
+    }
+    const { data, error } = await supabase.from("change_orders").update(updates).eq("id", coId).select("id");
+    setSavingCODate(null);
+    if (error) { alert("Failed to update date: " + error.message); return; }
+    if (!data || data.length === 0) { alert("Date update was blocked (no rows changed) — you may need to re-log in and try again."); return; }
     await fetchChangeOrders();
   };
   const handleDeleteChangeOrder = async (coId: string) => {
@@ -811,7 +832,8 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
                       {co.description && <span className="text-xs text-muted-foreground">{co.description}</span>}
                       <div className="flex items-center gap-1">
                         <span className="text-xs text-muted-foreground">Added</span>
-                        <input type="date" value={co.date_added ? co.date_added.slice(0, 10) : ""} onChange={(e) => handleUpdateCODate(co.id, e.target.value)} title="Date this change order was added" className="text-xs rounded-md border border-border bg-background px-1.5 py-1 focus:outline-none focus:ring-2 focus:ring-primary/40" />
+                        <input type="date" value={co.date_added ? co.date_added.slice(0, 10) : ""} onChange={(e) => handleUpdateCODate(co.id, e.target.value)} disabled={savingCODate === co.id} title="Date this change order was added" className="text-xs rounded-md border border-border bg-background px-1.5 py-1 focus:outline-none focus:ring-2 focus:ring-primary/40 disabled:opacity-50" />
+                        {savingCODate === co.id && <span className="text-xs text-blue-400">saving...</span>}
                       </div>
                       <span className="text-sm font-bold ml-auto">${Number(co.amount).toLocaleString()}</span>
                     </div>

@@ -194,6 +194,11 @@ export default function KPIPage() {
   const [revenueEvents, setRevenueEvents] = useState<{ lead_id: string; source_id: string | null; event_type: 'initial_contract' | 'change_order'; event_date: string; amount: number; record_type: 'change_order' | 'repeat_job' | null; contact_id: string | null; is_repeat_business: boolean }[]>([])
   const [spend,        setSpend]        = useState<SpendRow[]>([])
   const [sources,      setSources]      = useState<LeadSource[]>([])
+  // All-time (not date-range-scoped) set of source_ids that have EVER had marketing spend logged.
+  // This is what separates "Marketing Performance" (paid channels, where CAC/ROI mean something)
+  // from organic/repeat revenue (referrals, repeat clients — see the Organic & Repeat Revenue tab),
+  // which has no spend to divide by and shouldn't be judged by the same yardstick.
+  const [paidSourceIds, setPaidSourceIds] = useState<Set<string>>(new Set())
   const [trend,        setTrend]        = useState<{ label: string; contracted: number; actual: number; leads: number }[]>([])
   const [loading,      setLoading]      = useState(true)
   const [ytd,          setYtd]          = useState<YTDData | null>(null)
@@ -246,6 +251,11 @@ export default function KPIPage() {
 
   useEffect(() => { fetchAll() }, [rangeStart, rangeEnd])
   useEffect(() => { fetchYtd(ytdYear) }, [ytdYear])
+  useEffect(() => {
+    supabase.from('marketing_spend').select('source_id').then(({ data }) => {
+      setPaidSourceIds(new Set((data || []).map((r: any) => r.source_id).filter(Boolean)))
+    })
+  }, [])
 
   async function fetchAll() {
     setLoading(true)
@@ -419,11 +429,11 @@ export default function KPIPage() {
     const totalSpend    = spend.filter(s => !filterSrc || s.source_id === filterSrc).reduce((s, r) => s + Number(r.amount_spent || 0), 0)
     const apptAcqCost   = inPerson > 0 && totalSpend > 0 ? totalSpend / inPerson : 0
     const projAcqCost   = wonCount > 0 && totalSpend > 0 ? totalSpend / wonCount : 0
-    const bySrc: Record<string, { name: string; total: number; inPerson: number; phoneQ: number; won: number; contracted: number; lsaCharged: number }> = {}
+    const bySrc: Record<string, { id: string; name: string; total: number; inPerson: number; phoneQ: number; won: number; contracted: number; lsaCharged: number }> = {}
     filtered.forEach(l => {
       const key  = l.source_id || 'unknown'
       const name = (l.lead_sources as any)?.name || 'Unknown'
-      if (!bySrc[key]) bySrc[key] = { name, total: 0, inPerson: 0, phoneQ: 0, won: 0, contracted: 0, lsaCharged: 0 }
+      if (!bySrc[key]) bySrc[key] = { id: key, name, total: 0, inPerson: 0, phoneQ: 0, won: 0, contracted: 0, lsaCharged: 0 }
       bySrc[key].total++
       if (l.contact_type === 'in_person')   bySrc[key].inPerson++
       if (l.contact_type === 'phone_quote') bySrc[key].phoneQ++
@@ -437,7 +447,7 @@ export default function KPIPage() {
       const key = e.source_id || 'unknown'
       if (!bySrc[key]) {
         const name = sources.find(s => s.id === e.source_id)?.name || 'Unknown'
-        bySrc[key] = { name, total: 0, inPerson: 0, phoneQ: 0, won: 0, contracted: 0, lsaCharged: 0 }
+        bySrc[key] = { id: key, name, total: 0, inPerson: 0, phoneQ: 0, won: 0, contracted: 0, lsaCharged: 0 }
       }
       bySrc[key].contracted += Number(e.amount || 0)
     })
@@ -484,17 +494,31 @@ export default function KPIPage() {
   }, [spend])
 
   const srcList = Object.values(kpi.bySrc).sort((a, b) => b.total - a.total)
+  // Marketing Performance (this page) only makes sense for channels with actual spend behind them —
+  // CAC/ROI comparisons are meaningless for referrals or repeat clients, which cost nothing to
+  // reacquire. Those live in their own tab now (KPI Views → Organic & Repeat Revenue).
+  const paidSrcList = srcList.filter(s => paidSourceIds.has(s.id))
+  // Totals for the paid-only table below — computed from paidSrcList itself so the bottom "Total"
+  // row always matches the sum of the visible rows above it (not the whole business, which would
+  // silently include organic/repeat revenue again and reintroduce the same mismatch bug as before).
+  const paidTotals = paidSrcList.reduce((acc, s) => ({
+    total: acc.total + s.total, lsaCharged: acc.lsaCharged + s.lsaCharged,
+    inPerson: acc.inPerson + s.inPerson, phoneQ: acc.phoneQ + s.phoneQ,
+    won: acc.won + s.won, contracted: acc.contracted + s.contracted,
+  }), { total: 0, lsaCharged: 0, inPerson: 0, phoneQ: 0, won: 0, contracted: 0 })
+  const paidApptAcqCost = paidTotals.inPerson > 0 && kpi.totalSpend > 0 ? kpi.totalSpend / paidTotals.inPerson : 0
+  const paidProjAcqCost = paidTotals.won > 0 && kpi.totalSpend > 0 ? kpi.totalSpend / paidTotals.won : 0
 
   const insightsData: InsightData = useMemo(() => ({
-    totalLeads: kpi.total, totalAppts: kpi.inPerson, totalPhoneQ: kpi.phoneQ,
-    totalWon: kpi.wonCount, totalContracted: kpi.totalRev,
+    totalLeads: paidTotals.total, totalAppts: paidTotals.inPerson, totalPhoneQ: paidTotals.phoneQ,
+    totalWon: paidTotals.won, totalContracted: paidTotals.contracted,
     totalSpend: kpi.totalSpend, period: periodLabel, viewMode: 'weekly',
-    sources: srcList.map(src => {
-      const srcSpendRow = spendBySrc.find(s => { const key = Object.keys(kpi.bySrc).find(k => kpi.bySrc[k] === src); return s.source_id === key })
+    sources: paidSrcList.map(src => {
+      const srcSpendRow = spendBySrc.find(s => s.source_id === src.id)
       return { name: src.name, leads: src.total, inPerson: src.inPerson, won: src.won, contracted: src.contracted, spend: srcSpendRow?.amount || 0 }
     }),
     trend: trend.map(t => ({ label: t.label, contracted: t.contracted, leads: t.leads })),
-  }), [kpi, periodLabel, srcList, spendBySrc, trend])
+  }), [kpi, periodLabel, paidSrcList, paidTotals, spendBySrc, trend])
 
   const spendGrouped = useMemo(() => {
     const grouped: Record<string, any> = {}
@@ -513,7 +537,7 @@ export default function KPIPage() {
   }, [spend, filterSrc, kpi.bySrc])
 
   const grandTotalSpend = spendGrouped.reduce((s: number, g: any) => s + g.total, 0)
-  const maxRev = Math.max(...srcList.map(s => s.contracted), 1)
+  const maxRev = Math.max(...paidSrcList.map(s => s.contracted), 1)
 
   async function handleAddSpend() {
     if (!spendForm.amount || Number(spendForm.amount) <= 0) return
@@ -569,10 +593,14 @@ export default function KPIPage() {
               KPI Views <ChevronDown className="h-3.5 w-3.5" />
             </button>
             {kpiDropdownOpen && (
-              <div className="absolute right-0 top-full mt-1 w-48 rounded-lg border border-border bg-background shadow-lg z-50 overflow-hidden">
+              <div className="absolute right-0 top-full mt-1 w-56 rounded-lg border border-border bg-background shadow-lg z-50 overflow-hidden">
                 <button onClick={() => { router.push('/kpi/salesperson'); setKpiDropdownOpen(false) }}
                   className="w-full text-left px-4 py-2.5 text-sm hover:bg-muted text-muted-foreground">
                   Salesperson KPI
+                </button>
+                <button onClick={() => { router.push('/kpi/organic'); setKpiDropdownOpen(false) }}
+                  className="w-full text-left px-4 py-2.5 text-sm hover:bg-muted text-muted-foreground">
+                  Organic & Repeat Revenue
                 </button>
               </div>
             )}
@@ -791,10 +819,12 @@ export default function KPIPage() {
           {/* 3. YTD BLOCK */}
           <YTDBlock ytd={ytd} year={ytdYear} yearOptions={ytdYearOptions} onYearChange={setYtdYear} isCurrentYear={ytdYear === today.getFullYear()} />
 
-          {/* 4. SOURCE PERFORMANCE */}
-          <Section title="Lead Source Performance" badge={`${srcList.length} sources`} defaultOpen>
-            {srcList.length === 0 ? (
-              <p className="text-sm text-muted-foreground text-center py-4">No leads for this period.</p>
+          {/* 4. SOURCE PERFORMANCE — paid/marketing channels only. Referrals and repeat clients
+              don't belong in a CAC/ROI table since there's no spend behind them to measure —
+              see the Organic & Repeat Revenue tab (KPI Views ▾) for those. */}
+          <Section title="Marketing Performance" badge={`${paidSrcList.length} paid sources`} defaultOpen>
+            {paidSrcList.length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center py-4">No paid-source leads for this period.</p>
             ) : (
               <>
                 <div className="flex items-center gap-3 mb-4 flex-wrap">
@@ -833,8 +863,8 @@ export default function KPIPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {srcList.map((src, i) => {
-                        const srcKey   = Object.keys(kpi.bySrc).find(k => kpi.bySrc[k] === src) || ''
+                      {paidSrcList.map((src, i) => {
+                        const srcKey   = src.id
                         const srcSpend = spendBySrc.filter(s => s.source_id === srcKey).reduce((sum, s) => sum + s.amount, 0)
                         const apptCost = src.inPerson > 0 && srcSpend > 0 ? srcSpend / src.inPerson : 0
                         const projCost = src.won > 0 && srcSpend > 0 ? srcSpend / src.won : 0
@@ -876,20 +906,20 @@ export default function KPIPage() {
                       })}
                       <tr className="bg-muted/30 font-bold border-t-2 border-border">
                         <td className="py-2.5 pr-3 text-xs uppercase text-muted-foreground tracking-wide">Total</td>
-                        <td className="py-2.5 pr-3">{kpi.total}</td>
-                        <td className="py-2.5 pr-3">{kpi.lsaCharged}</td>
-                        <td className="py-2.5 pr-3">{kpi.inPerson}</td>
-                        <td className="py-2.5 pr-3">{kpi.phoneQ}</td>
-                        <td className="py-2.5 pr-3">{kpi.wonCount}</td>
-                        <td className="py-2.5 pr-3">{closeRatePct(kpi.wonCount, kpi.totalAppts)}</td>
-                        <td className="py-2.5 pr-3 text-emerald-600">{fmt$(kpi.totalRev)}</td>
+                        <td className="py-2.5 pr-3">{paidTotals.total}</td>
+                        <td className="py-2.5 pr-3">{paidTotals.lsaCharged}</td>
+                        <td className="py-2.5 pr-3">{paidTotals.inPerson}</td>
+                        <td className="py-2.5 pr-3">{paidTotals.phoneQ}</td>
+                        <td className="py-2.5 pr-3">{paidTotals.won}</td>
+                        <td className="py-2.5 pr-3">{closeRatePct(paidTotals.won, paidTotals.inPerson + paidTotals.phoneQ)}</td>
+                        <td className="py-2.5 pr-3 text-emerald-600">{fmt$(paidTotals.contracted)}</td>
                         <td className="py-2.5 pr-3">{fmt$(kpi.totalSpend)}</td>
-                        <td className="py-2.5 pr-3">{kpi.apptAcqCost > 0 ? fmt$(kpi.apptAcqCost) : '—'}</td>
-                        <td className="py-2.5 pr-3">{kpi.projAcqCost > 0 ? fmt$(kpi.projAcqCost) : '—'}</td>
+                        <td className="py-2.5 pr-3">{paidApptAcqCost > 0 ? fmt$(paidApptAcqCost) : '—'}</td>
+                        <td className="py-2.5 pr-3">{paidProjAcqCost > 0 ? fmt$(paidProjAcqCost) : '—'}</td>
                         {compareMonth !== null && (
                           <td className="py-2.5 pr-3 border-l border-primary/20 pl-3">
-                            <span className={`text-xs font-semibold ${kpi.total > compareLeads.length ? 'text-emerald-600' : 'text-red-500'}`}>
-                              {kpi.total > compareLeads.length ? '+' : ''}{kpi.total - compareLeads.length} total
+                            <span className={`text-xs font-semibold ${paidTotals.total > compareLeads.length ? 'text-emerald-600' : 'text-red-500'}`}>
+                              {paidTotals.total > compareLeads.length ? '+' : ''}{paidTotals.total - compareLeads.length} total
                             </span>
                           </td>
                         )}
@@ -897,11 +927,11 @@ export default function KPIPage() {
                     </tbody>
                   </table>
                 </div>
-                {srcList.some(s => s.contracted > 0) && (
+                {paidSrcList.some(s => s.contracted > 0) && (
                   <div className="mt-4 pt-4 border-t border-border">
                     <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Revenue by source</p>
                     <div className="space-y-2">
-                      {srcList.filter(s => s.contracted > 0).map((src, i) => (
+                      {paidSrcList.filter(s => s.contracted > 0).map((src, i) => (
                         <div key={src.name} className="flex items-center gap-3">
                           <span className="text-xs text-muted-foreground w-28 truncate shrink-0">{src.name}</span>
                           <div className="flex-1 h-2 bg-muted rounded-full overflow-hidden">
