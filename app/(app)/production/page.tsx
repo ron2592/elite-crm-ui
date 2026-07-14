@@ -34,6 +34,7 @@ interface JobRow {
   id: string;
   type: "lead" | "change_order";
   leadId: string;
+  contactId: string | null;
   clientName: string;
   address: string;
   jobType: string | null;
@@ -95,7 +96,7 @@ export default function ProductionPage() {
   async function fetchJobs() {
     const { data: leads, error } = await supabase
       .from("leads")
-      .select("id, lead_name, initial_contract_value, closed_amount, estimated_amount, production_stage, production_stage_updated_at, production_notes, address_line_1, city, state, metadata, source_id, lead_sources(id, name), status, phone, email, client_address, client_city, client_state, client_zip, lsa_status, contact_type, created_at, archived")
+      .select("id, contact_id, lead_name, initial_contract_value, closed_amount, estimated_amount, production_stage, production_stage_updated_at, production_notes, address_line_1, city, state, metadata, source_id, lead_sources(id, name), status, phone, email, client_address, client_city, client_state, client_zip, lsa_status, contact_type, created_at, archived")
       // ✅ Include job_cancelled so cancelled jobs still appear in Production
       .in("status", ["closed_won", "completed", "job_cancelled"])
       .order("created_at", { ascending: false });
@@ -154,6 +155,7 @@ export default function ProductionPage() {
       id:                          job.id,
       type:                        "lead",
       leadId:                      job.id,
+      contactId:                   job.contact_id || null,
       clientName:                  job.lead_name || "Unnamed",
       address:                     job.client_address
                                      ? `${job.client_address}${job.client_city ? ", " + job.client_city : ""}`
@@ -179,6 +181,7 @@ export default function ProductionPage() {
         id:                          co.id,
         type:                        "change_order",
         leadId:                      co.lead_id,
+        contactId:                   parentLead?.contact_id || null,
         clientName:                  parentLead?.lead_name || "Unnamed",
         address:                     parentLead?.client_address
                                        ? `${parentLead.client_address}${parentLead.client_city ? ", " + parentLead.client_city : ""}`
@@ -357,16 +360,26 @@ export default function ProductionPage() {
   const totalRefunded  = filteredJobs.reduce((s, j) => s + j.totalRefunded, 0);
   const totalBalance   = totalContract - totalCollected;
 
-  // ── Group jobs by client (leadId) so a repeat client's original job + all their change
-  // orders collapse into one row instead of being scattered through the table ─────────────
+  // ── Group jobs by CLIENT (contact_id), not by lead ────────────────────────────────────────
+  // A repeat client's original job + all their change orders + any brand-new lead they later
+  // create at a totally different address (linked via contact_id, matched by phone) all collapse
+  // into one row instead of being scattered through the table under separate identities.
   const clientGroups = (() => {
     const map = new Map<string, JobRow[]>();
     filteredJobs.forEach(j => {
-      if (!map.has(j.leadId)) map.set(j.leadId, []);
-      map.get(j.leadId)!.push(j);
+      const key = j.contactId || j.leadId;
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(j);
     });
-    return Array.from(map.entries()).map(([leadId, rows]) => {
+    return Array.from(map.entries()).map(([groupKey, rows]) => {
+      // Group nested rows by their underlying lead (in order of first appearance — a contact can
+      // have more than one lead, e.g. a different property address), then within each lead: the
+      // lead row itself first, followed by its change orders in order.
+      const leadOrder = new Map<string, number>();
+      rows.forEach(r => { if (!leadOrder.has(r.leadId)) leadOrder.set(r.leadId, leadOrder.size); });
       const sortedRows = [...rows].sort((a, b) => {
+        const orderDiff = leadOrder.get(a.leadId)! - leadOrder.get(b.leadId)!;
+        if (orderDiff !== 0) return orderDiff;
         if (a.type !== b.type) return a.type === "lead" ? -1 : 1;
         return (a.orderNumber || 0) - (b.orderNumber || 0);
       });
@@ -377,14 +390,16 @@ export default function ProductionPage() {
       const pendingN   = rows.filter(r => isPending(r.production_stage)).length;
       const completedN = rows.filter(r => r.production_stage?.startsWith("Completed")).length;
       const cancelledN = rows.filter(r => r.leadStatus === "job_cancelled" || r.production_stage?.startsWith("Cancelled")).length;
+      const distinctAddresses = Array.from(new Set(rows.map(r => r.address))).length;
       const latestStageDate = rows.reduce((latest: string | null, r) => {
         if (!r.production_stage_updated_at) return latest;
         if (!latest || new Date(r.production_stage_updated_at) > new Date(latest)) return r.production_stage_updated_at;
         return latest;
       }, null as string | null);
       return {
-        leadId, rows: sortedRows,
+        groupKey, rows: sortedRows,
         clientName: sortedRows[0].clientName, address: sortedRows[0].address,
+        multipleAddresses: distinctAddresses > 1,
         sourceName: sortedRows[0].sourceName, salesperson: sortedRows[0].salesperson,
         contract, collected, refunded, balance: contract - collected,
         activeN, pendingN, completedN, cancelledN, latestStageDate,
@@ -396,8 +411,8 @@ export default function ProductionPage() {
     });
   })();
 
-  const toggleClientExpand = (leadId: string) => {
-    setExpandedClients(prev => { const next = new Set(prev); next.has(leadId) ? next.delete(leadId) : next.add(leadId); return next; });
+  const toggleClientExpand = (groupKey: string) => {
+    setExpandedClients(prev => { const next = new Set(prev); next.has(groupKey) ? next.delete(groupKey) : next.add(groupKey); return next; });
   };
 
   // ── Single job row (used both standalone and nested inside an expanded client group) ────
@@ -435,7 +450,7 @@ export default function ProductionPage() {
                 className="font-medium text-left hover:text-primary hover:underline transition-colors">
                 {job.clientName}
               </button>
-              {!nested && <p className="text-xs text-muted-foreground">{job.address}</p>}
+              <p className="text-xs text-muted-foreground">{job.address}</p>
               <div className="flex items-center gap-1.5 mt-0.5">
                 {job.jobType    && <span className="text-xs text-primary">{job.jobType}</span>}
                 {job.description && <span className="text-xs text-muted-foreground">· {job.description}</span>}
@@ -597,7 +612,7 @@ export default function ProductionPage() {
 
   // ── Collapsed summary row for a client with more than one job ───────────────────────────
   const renderClientGroupRow = (group: (typeof clientGroups)[number]) => {
-    const isExpanded = expandedClients.has(group.leadId);
+    const isExpanded = expandedClients.has(group.groupKey);
     const statusChips: { label: string; classes: string }[] = [];
     if (group.activeN)    statusChips.push({ label: `${group.activeN} Active`,    classes: "bg-orange-100 text-orange-700" });
     if (group.completedN) statusChips.push({ label: `${group.completedN} Completed`, classes: "bg-green-100 text-green-700" });
@@ -606,13 +621,13 @@ export default function ProductionPage() {
 
     return (
       <>
-        <tr key={group.leadId} className="border-b hover:bg-muted/30 transition-colors bg-muted/5 cursor-pointer" onClick={() => toggleClientExpand(group.leadId)}>
+        <tr key={group.groupKey} className="border-b hover:bg-muted/30 transition-colors bg-muted/5 cursor-pointer" onClick={() => toggleClientExpand(group.groupKey)}>
           <td className="px-4 py-3">
             <div className="flex items-center gap-2">
               <span className="text-muted-foreground">{isExpanded ? "▾" : "▸"}</span>
               <div>
                 <p className="font-semibold">{group.clientName} <span className="text-xs font-normal text-muted-foreground">· {group.rows.length} jobs</span></p>
-                <p className="text-xs text-muted-foreground">{group.address}</p>
+                <p className="text-xs text-muted-foreground">{group.multipleAddresses ? "Multiple addresses — expand for details" : group.address}</p>
               </div>
             </div>
           </td>
@@ -642,7 +657,7 @@ export default function ProductionPage() {
           </td>
           <td className="px-3 py-3 min-w-[130px] text-xs text-muted-foreground">—</td>
           <td className="px-4 py-3">
-            <button onClick={(e) => { e.stopPropagation(); toggleClientExpand(group.leadId); }}
+            <button onClick={(e) => { e.stopPropagation(); toggleClientExpand(group.groupKey); }}
               className="text-xs px-2 py-1 rounded border border-border hover:bg-muted transition-colors text-muted-foreground whitespace-nowrap">
               {isExpanded ? "Collapse" : "Expand"}
             </button>
