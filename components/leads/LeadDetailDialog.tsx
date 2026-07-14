@@ -57,7 +57,7 @@ function parseLeadName(leadName: string): { first: string; last: string } {
 }
 
 interface Payment { id: string; amount: number; payment_type: string; payment_method: string; paid_at: string; notes: string; }
-interface ChangeOrder { id: string; order_number: number; description: string; job_type: string; amount: number; status: "pending" | "won" | "lost"; signed_at: string | null; payments: ChangeOrderPayment[]; }
+interface ChangeOrder { id: string; order_number: number; description: string; job_type: string; amount: number; status: "pending" | "won" | "lost"; signed_at: string | null; date_added: string; payments: ChangeOrderPayment[]; }
 interface ChangeOrderPayment { id: string; amount: number; payment_type: string; payment_method: string; paid_at: string; notes: string; }
 interface LeadDetailDialogProps {
   lead: Lead | null; open: boolean;
@@ -188,7 +188,7 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
     setLeadSources(data || []);
   }
   async function fetchChangeOrders() {
-    const { data: orders } = await supabase.from("change_orders").select("*").eq("lead_id", leadId).order("order_number", { ascending: true });
+    const { data: orders } = await supabase.from("change_orders").select("*").eq("lead_id", leadId).is("deleted_at", null).order("order_number", { ascending: true });
     if (!orders) { setChangeOrders([]); return; }
     const ordersWithPayments = await Promise.all(orders.map(async (order) => {
       const { data: coPayments } = await supabase.from("change_order_payments").select("*").eq("change_order_id", order.id).order("paid_at", { ascending: false });
@@ -372,6 +372,17 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
   };
   const handleUpdateCOStatus = async (coId: string, newStatus: "pending" | "won" | "lost") => {
     await supabase.from("change_orders").update({ status: newStatus, signed_at: newStatus === "won" ? new Date().toISOString() : null }).eq("id", coId);
+    await fetchChangeOrders();
+  };
+  const handleUpdateCODate = async (coId: string, newDate: string) => {
+    if (!newDate) return;
+    await supabase.from("change_orders").update({ date_added: newDate }).eq("id", coId);
+    await fetchChangeOrders();
+  };
+  const handleDeleteChangeOrder = async (coId: string) => {
+    if (!confirm("Delete this change order? Its payment history stays intact for records, but it will no longer appear on this lead or in revenue reporting.")) return;
+    const { error } = await supabase.rpc("delete_change_order", { p_change_order_id: coId });
+    if (error) { alert("Failed to delete: " + error.message); return; }
     await fetchChangeOrders();
   };
   const handleAddCOPayment = async (coId: string) => {
@@ -703,11 +714,18 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
                       <div className="flex items-center gap-2">
                         <select value={co.status} onChange={(e) => handleUpdateCOStatus(co.id, e.target.value as any)} className="text-xs rounded-md border border-border bg-background px-2 py-1 focus:outline-none focus:ring-2 focus:ring-primary/40"><option value="pending">Pending</option><option value="won">Won</option><option value="lost">Lost</option></select>
                         <button onClick={() => toggleCOExpand(co.id)} className="text-muted-foreground hover:text-foreground transition-colors">{isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}</button>
+                        {isManager && (
+                          <button onClick={() => handleDeleteChangeOrder(co.id)} title="Delete change order" className="text-muted-foreground hover:text-red-500 transition-colors"><Trash2 className="h-3.5 w-3.5" /></button>
+                        )}
                       </div>
                     </div>
                     <div className="flex items-center gap-3 flex-wrap">
                       {co.job_type && <span className="text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 font-medium">{co.job_type}</span>}
                       {co.description && <span className="text-xs text-muted-foreground">{co.description}</span>}
+                      <div className="flex items-center gap-1">
+                        <span className="text-xs text-muted-foreground">Added</span>
+                        <input type="date" value={co.date_added ? co.date_added.slice(0, 10) : ""} onChange={(e) => handleUpdateCODate(co.id, e.target.value)} title="Date this change order was added" className="text-xs rounded-md border border-border bg-background px-1.5 py-1 focus:outline-none focus:ring-2 focus:ring-primary/40" />
+                      </div>
                       <span className="text-sm font-bold ml-auto">${Number(co.amount).toLocaleString()}</span>
                     </div>
                     {isExpanded && (

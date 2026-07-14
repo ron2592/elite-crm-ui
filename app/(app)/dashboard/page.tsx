@@ -39,11 +39,17 @@ export default function DashboardPage() {
 
   useEffect(() => {
     async function fetchStats() {
-      // ✅ Server-side filter by created_at — same field KPI page and pipeline use
-      // created_at = lead received date (saved via Add Lead form)
-      // Do NOT use lead_received_at — that field was set at import time, not actual received date
+      // Lead-volume metrics (total leads, appointments, close rate) stay anchored to created_at —
+      // that's correct for CAC / lead-volume reporting, a lead only "arrives" once.
       const monthStart = new Date(selectedYear, selectedMonth, 1).toISOString();
       const monthEnd   = new Date(selectedYear, selectedMonth + 1, 1).toISOString();
+      const monthStartMs = new Date(monthStart).getTime();
+      const monthEndMs   = new Date(monthEnd).getTime();
+      const inMonth = (iso: string | null | undefined) => {
+        if (!iso) return false;
+        const t = new Date(iso).getTime();
+        return t >= monthStartMs && t < monthEndMs;
+      };
 
       const { data: leads } = await supabase
         .from("leads")
@@ -54,32 +60,39 @@ export default function DashboardPage() {
 
       if (!leads) return;
 
-      const leadIds = leads.map((l: any) => l.id);
-      const won     = leads.filter((l: any) => l.status === "closed_won" || l.status === "won");
-      const wonIds  = won.map((l: any) => l.id);
-
-      const [paymentsRes, allPaymentsRes, changeOrdersRes] = await Promise.all([
-        leadIds.length > 0
-          ? supabase.from("payments").select("amount").in("lead_id", leadIds)
-          : Promise.resolve({ data: [] }),
-        supabase.from("payments").select("amount"),
-        wonIds.length > 0
-          ? supabase.from("change_orders").select("amount").eq("status", "won").in("lead_id", wonIds)
-          : Promise.resolve({ data: [] }),
-      ]);
-
       const total  = leads.length;
       const appts  = leads.filter((l: any) => l.appointment_set === true || l.status === "appointment_set").length;
+      const won    = leads.filter((l: any) => l.status === "closed_won" || l.status === "won");
       const rate   = total > 0 ? Math.round((won.length / total) * 100) : 0;
 
-      const actualRevenue = (paymentsRes.data || []).reduce(
-        (s: number, p: any) => s + Number(p.amount || 0), 0);
-      const actualRevenueAllTime = (allPaymentsRes.data || []).reduce(
-        (s: number, p: any) => s + Number(p.amount || 0), 0);
-      const initialVolume = won.reduce(
-        (s: number, l: any) => s + Number(l.initial_contract_value || l.closed_amount || 0), 0);
-      const changeOrderVolume = (changeOrdersRes.data || []).reduce(
-        (s: number, co: any) => s + Number(co.amount || 0), 0);
+      // Revenue metrics: bucket by when the money was actually won/collected, NOT by when the
+      // original lead came in. Without this, a change order signed this month on an old repeat
+      // client lead (e.g. JCC Bayone, lead from 2024) never counts toward this month's revenue —
+      // it silently falls into whatever month the original lead happened to arrive.
+      const [allWonLeadsRes, allChangeOrdersRes, allPaymentsRes, allCOPaymentsRes] = await Promise.all([
+        supabase.from("leads").select("initial_contract_value, closed_at, lead_received_at, status").in("status", ["closed_won", "won", "completed", "completed_with_balance"]),
+        supabase.from("change_orders").select("amount, signed_at, date_added").eq("status", "won").is("deleted_at", null),
+        supabase.from("payments").select("amount, paid_at"),
+        supabase.from("change_order_payments").select("amount, paid_at"),
+      ]);
+
+      const initialVolume = (allWonLeadsRes.data || [])
+        .filter((l: any) => inMonth(l.closed_at || l.lead_received_at))
+        .reduce((s: number, l: any) => s + Number(l.initial_contract_value || 0), 0);
+
+      const changeOrderVolume = (allChangeOrdersRes.data || [])
+        .filter((co: any) => inMonth(co.signed_at || co.date_added))
+        .reduce((s: number, co: any) => s + Number(co.amount || 0), 0);
+
+      // Actual revenue (cash collected) now includes change_order_payments — previously this
+      // table was never queried here, so every dollar collected against a change order was
+      // silently excluded from both "this month" and "all-time" actual revenue.
+      const actualRevenue =
+        (allPaymentsRes.data || []).filter((p: any) => inMonth(p.paid_at)).reduce((s: number, p: any) => s + Number(p.amount || 0), 0) +
+        (allCOPaymentsRes.data || []).filter((p: any) => inMonth(p.paid_at)).reduce((s: number, p: any) => s + Number(p.amount || 0), 0);
+      const actualRevenueAllTime =
+        (allPaymentsRes.data || []).reduce((s: number, p: any) => s + Number(p.amount || 0), 0) +
+        (allCOPaymentsRes.data || []).reduce((s: number, p: any) => s + Number(p.amount || 0), 0);
 
       setStats({
         totalLeads: total, appointments: appts, closeRate: rate,

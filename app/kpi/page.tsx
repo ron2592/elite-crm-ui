@@ -184,7 +184,11 @@ export default function KPIPage() {
 
   const [leads,        setLeads]        = useState<LeadRow[]>([])
   const [payments,     setPayments]     = useState<PaymentRow[]>([])
-  const [changeOrders, setChangeOrders] = useState<{ amount: number; lead_id: string }[]>([])
+  const [coPayments,   setCoPayments]   = useState<PaymentRow[]>([])
+  // Revenue events = initial contracts + won change orders, each dated by when it was actually
+  // won (event_date) rather than by the parent lead's created_at. Source of truth for all
+  // revenue figures below — replaces the old changeOrders-only state.
+  const [revenueEvents, setRevenueEvents] = useState<{ lead_id: string; source_id: string | null; event_type: 'initial_contract' | 'change_order'; event_date: string; amount: number }[]>([])
   const [spend,        setSpend]        = useState<SpendRow[]>([])
   const [sources,      setSources]      = useState<LeadSource[]>([])
   const [trend,        setTrend]        = useState<{ label: string; contracted: number; actual: number; leads: number }[]>([])
@@ -195,6 +199,7 @@ export default function KPIPage() {
   const [compareYear,  setCompareYear]  = useState<number>(today.getFullYear())
   const [compareLeads, setCompareLeads] = useState<LeadRow[]>([])
   const [compareSpend, setCompareSpend] = useState<SpendRow[]>([])
+  const [compareRevEvents, setCompareRevEvents] = useState<{ lead_id: string; source_id: string | null; event_type: 'initial_contract' | 'change_order'; event_date: string; amount: number }[]>([])
 
   const [showSpendForm,    setShowSpendForm]    = useState(false)
   const [spendForm,        setSpendForm]        = useState({ source_id: '', amount: '', period_start: todayStr(), period_end: todayStr() })
@@ -238,30 +243,38 @@ export default function KPIPage() {
     const spendStart = dateFrom
     const spendEnd   = dateTo
 
-    const [leadsRes, paymentsRes, spendRes, srcRes] = await Promise.all([
+    const [leadsRes, paymentsRes, coPaymentsRes, spendRes, srcRes, revEventsRes] = await Promise.all([
       supabase.from('leads')
         .select('id,first_name,last_name,phone,status,contact_type,lsa_status,initial_contract_value,created_at,source_id,metadata,lead_sources(name)')
         .gte('created_at', rangeStart).lte('created_at', rangeEnd).eq('archived', false),
       supabase.from('payments').select('amount,paid_at,lead_id')
         .gte('paid_at', rangeStart).lte('paid_at', rangeEnd),
+      supabase.from('change_order_payments').select('amount,paid_at,lead_id')
+        .gte('paid_at', rangeStart).lte('paid_at', rangeEnd),
       supabase.from('marketing_spend')
         .select('id,period_start,period_end,source_name,source_id,amount_spent,lead_sources(name)')
         .gte('period_start', spendStart).lte('period_start', spendEnd),
       supabase.from('lead_sources').select('id,name').order('name'),
+      // Revenue events dated by when they were actually won, not by the parent lead's created_at.
+      // This is what lets a change order won this period on an old repeat-client lead (e.g. JCC
+      // Bayone, lead from 2024) show up here instead of being buried under the lead's intake date.
+      supabase.from('revenue_events').select('lead_id,source_id,event_type,event_date,amount')
+        .gte('event_date', dateFrom).lte('event_date', dateTo),
     ])
 
-    const wonIds = (leadsRes.data || []).filter((l: any) => WON_STAGES.includes(l.status)).map((l: any) => l.id)
-    let coData: any[] = []
-    if (wonIds.length > 0) {
-      const { data } = await supabase.from('change_orders').select('amount,lead_id').eq('status','won').in('lead_id', wonIds)
-      coData = data || []
-    }
-
-    const endDate    = new Date(dateTo + 'T00:00:00')
-    const trendStart = new Date(endDate.getFullYear(), endDate.getMonth() - 5, 1).toISOString()
-    const [tLeads, tPay] = await Promise.all([
-      supabase.from('leads').select('status,initial_contract_value,created_at').gte('created_at', trendStart).lte('created_at', rangeEnd).eq('archived', false),
+    const endDate         = new Date(dateTo + 'T00:00:00')
+    const trendStartDate  = new Date(endDate.getFullYear(), endDate.getMonth() - 5, 1)
+    const trendStart      = trendStartDate.toISOString()
+    const trendStartStr   = trendStartDate.toISOString().split('T')[0]
+    // Lead counts still bucket by created_at (a lead only "arrives" once). Revenue ("contracted")
+    // and cash collected ("actual") now bucket by their own event/payment date instead, via
+    // revenue_events and change_order_payments — so a change order won in, say, month 5 of this
+    // trend on an old repeat-client lead shows up in month 5, not wherever the lead first landed.
+    const [tLeads, tRevEvents, tPay, tCoPay] = await Promise.all([
+      supabase.from('leads').select('created_at').gte('created_at', trendStart).lte('created_at', rangeEnd).eq('archived', false),
+      supabase.from('revenue_events').select('event_type,event_date,amount').gte('event_date', trendStartStr).lte('event_date', dateTo),
       supabase.from('payments').select('amount,paid_at').gte('paid_at', trendStart).lte('paid_at', rangeEnd),
+      supabase.from('change_order_payments').select('amount,paid_at').gte('paid_at', trendStart).lte('paid_at', rangeEnd),
     ])
     const tMap: Record<string, { contracted: number; actual: number; leads: number }> = {}
     for (let i = 5; i >= 0; i--) {
@@ -271,9 +284,14 @@ export default function KPIPage() {
     ;(tLeads.data || []).forEach((l: any) => {
       const d = new Date(l.created_at)
       const k = `${MONTHS[d.getMonth()]} ${String(d.getFullYear()).slice(2)}`
-      if (tMap[k]) { tMap[k].leads++; if (WON_STAGES.includes(l.status)) tMap[k].contracted += Number(l.initial_contract_value || 0) }
+      if (tMap[k]) tMap[k].leads++
     })
-    ;(tPay.data || []).forEach((p: any) => {
+    ;(tRevEvents.data || []).forEach((e: any) => {
+      const d = new Date(e.event_date + 'T00:00:00')
+      const k = `${MONTHS[d.getMonth()]} ${String(d.getFullYear()).slice(2)}`
+      if (tMap[k]) tMap[k].contracted += Number(e.amount || 0)
+    })
+    ;[...(tPay.data || []), ...(tCoPay.data || [])].forEach((p: any) => {
       const d = new Date(p.paid_at)
       const k = `${MONTHS[d.getMonth()]} ${String(d.getFullYear()).slice(2)}`
       if (tMap[k]) tMap[k].actual += Number(p.amount || 0)
@@ -284,18 +302,23 @@ export default function KPIPage() {
     const ytdEnd      = new Date().toISOString()
     const ytdSpendEnd = todayStr()
 
-    const [ytdLeadsRes, ytdSpendRes, ytdPayRes] = await Promise.all([
+    const [ytdLeadsRes, ytdSpendRes, ytdPayRes, ytdCoPayRes] = await Promise.all([
       supabase.from('leads').select('id,status,contact_type,initial_contract_value')
         .gte('created_at', ytdStart).lt('created_at', ytdEnd).eq('archived', false),
       supabase.from('marketing_spend').select('amount_spent')
         .gte('period_start', `${selectedYear}-01-01`).lte('period_start', ytdSpendEnd),
       supabase.from('payments').select('amount')
         .gte('paid_at', ytdStart).lt('paid_at', ytdEnd).gt('amount', 0),
+      // YTD revenue = cash actually collected, so it needs change_order_payments too — previously
+      // this only queried payments, silently excluding every dollar ever collected on a change order.
+      supabase.from('change_order_payments').select('amount')
+        .gte('paid_at', ytdStart).lt('paid_at', ytdEnd).gt('amount', 0),
     ])
 
     const ytdLeads    = (ytdLeadsRes.data || []) as any[]
     const ytdSpendAmt = (ytdSpendRes.data || []).reduce((s: number, r: any) => s + Number(r.amount_spent || 0), 0)
     const ytdRevenue  = (ytdPayRes.data  || []).reduce((s: number, r: any) => s + Number(r.amount || 0), 0)
+                      + (ytdCoPayRes.data || []).reduce((s: number, r: any) => s + Number(r.amount || 0), 0)
     const ytdIP       = ytdLeads.filter((l: any) => l.contact_type === 'in_person').length
     const ytdWon      = ytdLeads.filter((l: any) => WON_STAGES.includes(l.status)).length
 
@@ -311,24 +334,31 @@ export default function KPIPage() {
 
     setLeads((leadsRes.data as any[]) || [])
     setPayments(paymentsRes.data || [])
-    setChangeOrders(coData)
+    setCoPayments(coPaymentsRes.data || [])
+    setRevenueEvents((revEventsRes.data as any[]) || [])
     setSpend((spendRes.data as any[]) || [])
     setSources(srcRes.data || [])
     setLoading(false)
   }
 
   useEffect(() => {
-    if (compareMonth === null) { setCompareLeads([]); setCompareSpend([]); return; }
+    if (compareMonth === null) { setCompareLeads([]); setCompareSpend([]); setCompareRevEvents([]); return; }
     const start   = new Date(compareYear, compareMonth, 1).toISOString()
     const end     = new Date(compareYear, compareMonth + 1, 1).toISOString()
     const spStart = start.split('T')[0]
     const spEnd   = new Date(compareYear, compareMonth + 1, 1).toISOString().split('T')[0]
+    const revStart = new Date(compareYear, compareMonth, 1).toISOString().split('T')[0]
+    const revEnd   = new Date(compareYear, compareMonth + 1, 0).toISOString().split('T')[0]
     Promise.all([
       supabase.from('leads').select('id,status,contact_type,initial_contract_value,source_id,lead_sources(name)').gte('created_at', start).lt('created_at', end).eq('archived', false),
       supabase.from('marketing_spend').select('id,source_id,amount_spent,lead_sources(name)').gte('period_start', spStart).lt('period_start', spEnd),
-    ]).then(([lr, sr]) => {
+      // Same fix as the main period: revenue for the comparison month comes from revenue_events
+      // (dated by when it was won), not from leads created that month.
+      supabase.from('revenue_events').select('lead_id,source_id,event_type,event_date,amount').gte('event_date', revStart).lte('event_date', revEnd),
+    ]).then(([lr, sr, rr]) => {
       setCompareLeads((lr.data as any[]) || [])
       setCompareSpend((sr.data as any[]) || [])
+      setCompareRevEvents((rr.data as any[]) || [])
     })
   }, [compareMonth, compareYear])
 
@@ -341,10 +371,16 @@ export default function KPIPage() {
     const totalAppts    = inPerson + phoneQ
     const won           = filtered.filter(l => WON_STAGES.includes(l.status))
     const wonCount      = won.length
-    const contracted    = won.reduce((s, l) => s + Number(l.initial_contract_value || 0), 0)
-    const coVolume      = changeOrders.reduce((s, co) => s + Number(co.amount || 0), 0)
-    const totalRev      = contracted + coVolume
-    const actual        = payments.reduce((s, p) => s + Number(p.amount || 0), 0)
+
+    // Revenue is bucketed by revenue_events.event_date (when it was actually won), not by the
+    // parent lead's created_at — so a change order won this period on an old repeat-client lead
+    // shows up here instead of being buried under the lead's original intake date.
+    const revInRange = filterSrc ? revenueEvents.filter(e => e.source_id === filterSrc) : revenueEvents
+    const contracted = revInRange.filter(e => e.event_type === 'initial_contract').reduce((s, e) => s + Number(e.amount || 0), 0)
+    const coVolume    = revInRange.filter(e => e.event_type === 'change_order').reduce((s, e) => s + Number(e.amount || 0), 0)
+    const totalRev    = contracted + coVolume
+
+    const actual        = payments.reduce((s, p) => s + Number(p.amount || 0), 0) + coPayments.reduce((s, p) => s + Number(p.amount || 0), 0)
     const lsaCharged    = filtered.filter(l => l.lsa_status === 'charged' || l.lsa_status === 'submitted').length
     const lsaCredited   = filtered.filter(l => l.lsa_status === 'credited').length
     const lsaNotCharged = filtered.filter(l => l.lsa_status === 'not_charged' || !l.lsa_status).length
@@ -360,14 +396,25 @@ export default function KPIPage() {
       bySrc[key].total++
       if (l.contact_type === 'in_person')   bySrc[key].inPerson++
       if (l.contact_type === 'phone_quote') bySrc[key].phoneQ++
-      if (WON_STAGES.includes(l.status)) { bySrc[key].won++; bySrc[key].contracted += Number(l.initial_contract_value || 0) }
+      if (WON_STAGES.includes(l.status)) bySrc[key].won++
       if (l.lsa_status === 'charged' || l.lsa_status === 'submitted') bySrc[key].lsaCharged++
     })
+    // Revenue per source comes from revenue_events, not the leads-in-range list above — a source
+    // with no new leads this period but a change order won this period on an older lead still
+    // gets a row with its revenue, instead of silently disappearing from the table.
+    revInRange.forEach(e => {
+      const key = e.source_id || 'unknown'
+      if (!bySrc[key]) {
+        const name = sources.find(s => s.id === e.source_id)?.name || 'Unknown'
+        bySrc[key] = { name, total: 0, inPerson: 0, phoneQ: 0, won: 0, contracted: 0, lsaCharged: 0 }
+      }
+      bySrc[key].contracted += Number(e.amount || 0)
+    })
     return { total, inPerson, phoneQ, totalAppts, wonCount, contracted, coVolume, totalRev, actual, lsaCharged, lsaCredited, lsaNotCharged, lsaInReview, totalSpend, apptAcqCost, projAcqCost, bySrc }
-  }, [filtered, payments, spend, changeOrders, filterSrc])
+  }, [filtered, payments, coPayments, spend, revenueEvents, sources, filterSrc])
 
   const compareBySrc = useMemo(() => {
-    if (!compareLeads.length) return {}
+    if (!compareLeads.length && !compareRevEvents.length) return {}
     const bySrc: Record<string, { name: string; total: number; inPerson: number; won: number; contracted: number; spend: number }> = {}
     compareLeads.forEach((l: any) => {
       const key  = l.source_id || 'unknown'
@@ -375,14 +422,24 @@ export default function KPIPage() {
       if (!bySrc[key]) bySrc[key] = { name, total: 0, inPerson: 0, won: 0, contracted: 0, spend: 0 }
       bySrc[key].total++
       if (l.contact_type === 'in_person') bySrc[key].inPerson++
-      if (WON_STAGES.includes(l.status)) { bySrc[key].won++; bySrc[key].contracted += Number(l.initial_contract_value || 0) }
+      if (WON_STAGES.includes(l.status)) bySrc[key].won++
+    })
+    // Revenue comes from revenue_events (dated by when won), same fix as the main period —
+    // a source with a change order won this comparison month on an older lead still shows up.
+    compareRevEvents.forEach((e: any) => {
+      const key = e.source_id || 'unknown'
+      if (!bySrc[key]) {
+        const name = sources.find(s => s.id === e.source_id)?.name || 'Unknown'
+        bySrc[key] = { name, total: 0, inPerson: 0, won: 0, contracted: 0, spend: 0 }
+      }
+      bySrc[key].contracted += Number(e.amount || 0)
     })
     compareSpend.forEach((s: any) => {
       const key = s.source_id || 'unknown'
       if (bySrc[key]) bySrc[key].spend += Number(s.amount_spent || 0)
     })
     return bySrc
-  }, [compareLeads, compareSpend])
+  }, [compareLeads, compareRevEvents, compareSpend, sources])
 
   const spendBySrc = useMemo(() => {
     const map: Record<string, any> = {}
