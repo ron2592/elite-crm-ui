@@ -3,10 +3,14 @@
 
 export async function pushLeadToJN(leadId: string): Promise<void> {
   try {
-    const res = await fetch('/api/jn/push', {
+    // NOTE: this was pointing at /api/jn/push, a route that does not exist anywhere in this
+    // codebase -- every call silently 404'd and was swallowed by the catch below, meaning every
+    // lead created via the Add New Lead modal never auto-synced to JobNimbus at all. The real,
+    // working route (used by the manual "Sync to JN" button) is /api/leads/jn/push.
+    const res = await fetch('/api/leads/jn/push', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ lead_id: leadId }),
+      body: JSON.stringify({ lead_id: leadId, operation: 'INSERT' }),
     })
 
     if (!res.ok) {

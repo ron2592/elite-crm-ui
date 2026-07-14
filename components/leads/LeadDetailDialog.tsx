@@ -99,7 +99,7 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
   const [zipLooking,                   setZipLooking]                   = useState(false);
   const [changeOrders,                 setChangeOrders]                 = useState<ChangeOrder[]>([]);
   const [showAddChangeOrder,           setShowAddChangeOrder]           = useState(false);
-  const [newChangeOrder,               setNewChangeOrder]               = useState({ description: "", job_type: "", amount: "", status: "pending" as "pending" | "won" | "lost", record_type: "change_order" as "change_order" | "repeat_job" });
+  const [newChangeOrder,               setNewChangeOrder]               = useState({ description: "", job_type: "", amount: "", status: "pending" as "pending" | "won" | "lost", record_type: "change_order" as "change_order" | "repeat_job", date_added: new Date().toISOString().slice(0, 10) });
   const [addingChangeOrder,            setAddingChangeOrder]            = useState(false);
   const [expandedChangeOrders,         setExpandedChangeOrders]         = useState<Set<string>>(new Set());
   const [showAddCOPayment,             setShowAddCOPayment]             = useState<string | null>(null);
@@ -128,6 +128,9 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
   const [matchSuggestion,              setMatchSuggestion]              = useState<{ id: string; match_reason: string; suggested_name: string; suggested_phone: string | null } | null>(null);
   const [resolvingMatch,               setResolvingMatch]               = useState(false);
   const [savingCODate,                 setSavingCODate]                 = useState<string | null>(null);
+  const [editingCOId,                  setEditingCOId]                  = useState<string | null>(null);
+  const [editCODraft,                  setEditCODraft]                  = useState({ description: "", job_type: "", amount: "" });
+  const [savingCOEdit,                 setSavingCOEdit]                 = useState(false);
 
   const leadId = (lead as any)?.id;
   const inlineJobTypeDropdownVal = STANDARD_JOB_TYPES.includes(inlineJobType) ? inlineJobType : inlineJobType ? "Other" : "";
@@ -410,8 +413,17 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
   const handleAddChangeOrder = async () => {
     if (!newChangeOrder.amount || Number(newChangeOrder.amount) <= 0) return;
     setAddingChangeOrder(true);
-    const { error } = await supabase.from("change_orders").insert({ lead_id: leadId, order_number: changeOrders.length + 1, description: newChangeOrder.description || null, job_type: newChangeOrder.job_type || null, amount: Number(newChangeOrder.amount), status: newChangeOrder.status, record_type: newChangeOrder.record_type, signed_at: newChangeOrder.status === "won" ? new Date().toISOString() : null });
-    if (!error) { await fetchChangeOrders(); setNewChangeOrder({ description: "", job_type: "", amount: "", status: "pending", record_type: "change_order" }); setShowAddChangeOrder(false); }
+    const dateAdded = newChangeOrder.date_added || new Date().toISOString().slice(0, 10);
+    const { error } = await supabase.from("change_orders").insert({
+      lead_id: leadId, order_number: changeOrders.length + 1,
+      description: newChangeOrder.description || null, job_type: newChangeOrder.job_type || null,
+      amount: Number(newChangeOrder.amount), status: newChangeOrder.status, record_type: newChangeOrder.record_type,
+      date_added: dateAdded,
+      // Same reasoning as elsewhere in this file: signed_at drives which month this shows up in on
+      // the KPI dashboard, so honor the date actually picked instead of always stamping "now".
+      signed_at: newChangeOrder.status === "won" ? new Date(dateAdded + "T12:00:00").toISOString() : null,
+    });
+    if (!error) { await fetchChangeOrders(); setNewChangeOrder({ description: "", job_type: "", amount: "", status: "pending", record_type: "change_order", date_added: new Date().toISOString().slice(0, 10) }); setShowAddChangeOrder(false); }
     setAddingChangeOrder(false);
   };
   // Suggest "Change Order" if there's still active production work on this lead (a genuine
@@ -458,6 +470,23 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
     if (!data || data.length === 0) { alert("Date update was blocked (no rows changed) — you may need to re-log in and try again."); return; }
     await fetchChangeOrders();
   };
+  const handleStartCOEdit = (co: ChangeOrder) => {
+    setEditingCOId(co.id);
+    setEditCODraft({ description: co.description || "", job_type: co.job_type || "", amount: String(co.amount) });
+  };
+  const handleSaveCOEdit = async (coId: string) => {
+    if (!editCODraft.amount || Number(editCODraft.amount) <= 0) return;
+    setSavingCOEdit(true);
+    const { error } = await supabase.from("change_orders").update({
+      description: editCODraft.description || null,
+      job_type: editCODraft.job_type || null,
+      amount: Number(editCODraft.amount),
+    }).eq("id", coId);
+    setSavingCOEdit(false);
+    if (error) { alert("Failed to save: " + error.message); return; }
+    setEditingCOId(null);
+    await fetchChangeOrders();
+  };
   const handleDeleteChangeOrder = async (coId: string) => {
     if (!confirm("Delete this change order? Its payment history stays intact for records, but it will no longer appear on this lead or in revenue reporting.")) return;
     const { error } = await supabase.rpc("delete_change_order", { p_change_order_id: coId });
@@ -502,6 +531,7 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
       setReasonLost(""); setSavedReasonLost(false);
       setLsaStatus("not_charged"); setContactType("");
       setJnSyncResult(null); setMatchSuggestion(null);
+      setEditingCOId(null);
     }
     onOpenChange(val);
   };
@@ -830,21 +860,36 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
                       <div className="flex items-center gap-2">
                         <select value={co.status} onChange={(e) => handleUpdateCOStatus(co.id, e.target.value as any)} className="text-xs rounded-md border border-border bg-background px-2 py-1 focus:outline-none focus:ring-2 focus:ring-primary/40"><option value="pending">Pending</option><option value="won">Won</option><option value="lost">Lost</option></select>
                         <button onClick={() => toggleCOExpand(co.id)} className="text-muted-foreground hover:text-foreground transition-colors">{isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}</button>
+                        <button onClick={() => editingCOId === co.id ? setEditingCOId(null) : handleStartCOEdit(co)} title="Edit job details" className="text-muted-foreground hover:text-primary transition-colors"><Pencil className="h-3.5 w-3.5" /></button>
                         {isManager && (
                           <button onClick={() => handleDeleteChangeOrder(co.id)} title="Delete change order" className="text-muted-foreground hover:text-red-500 transition-colors"><Trash2 className="h-3.5 w-3.5" /></button>
                         )}
                       </div>
                     </div>
-                    <div className="flex items-center gap-3 flex-wrap">
-                      {co.job_type && <span className="text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 font-medium">{co.job_type}</span>}
-                      {co.description && <span className="text-xs text-muted-foreground">{co.description}</span>}
-                      <div className="flex items-center gap-1">
-                        <span className="text-xs text-muted-foreground">Added</span>
-                        <input type="date" value={co.date_added ? co.date_added.slice(0, 10) : ""} onChange={(e) => handleUpdateCODate(co.id, e.target.value)} disabled={savingCODate === co.id} title="Date this change order was added" className="text-xs rounded-md border border-border bg-background px-1.5 py-1 focus:outline-none focus:ring-2 focus:ring-primary/40 disabled:opacity-50" />
-                        {savingCODate === co.id && <span className="text-xs text-blue-400">saving...</span>}
+                    {editingCOId === co.id ? (
+                      <div className="rounded-md border border-primary/30 bg-primary/5 p-3 space-y-2">
+                        <div className="grid grid-cols-2 gap-2">
+                          <div><label className="text-xs text-muted-foreground block mb-1">Job Type</label><select value={editCODraft.job_type} onChange={(e) => setEditCODraft({ ...editCODraft, job_type: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"><option value="">— Select type —</option>{STANDARD_JOB_TYPES.map(t => <option key={t}>{t}</option>)}<option value="Other">Other</option></select></div>
+                          <div><label className="text-xs text-muted-foreground block mb-1">Amount</label><input type="number" placeholder="0" value={editCODraft.amount} onChange={(e) => setEditCODraft({ ...editCODraft, amount: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" /></div>
+                        </div>
+                        <div><label className="text-xs text-muted-foreground block mb-1">Description</label><input type="text" value={editCODraft.description} onChange={(e) => setEditCODraft({ ...editCODraft, description: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" /></div>
+                        <div className="flex gap-2">
+                          <button onClick={() => handleSaveCOEdit(co.id)} disabled={savingCOEdit || !editCODraft.amount} className="flex-1 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-40 transition-colors">{savingCOEdit ? "Saving..." : "Save Changes"}</button>
+                          <button onClick={() => setEditingCOId(null)} className="rounded-md border border-border px-3 py-1.5 text-xs hover:bg-muted transition-colors">Cancel</button>
+                        </div>
                       </div>
-                      <span className="text-sm font-bold ml-auto">${Number(co.amount).toLocaleString()}</span>
-                    </div>
+                    ) : (
+                      <div className="flex items-center gap-3 flex-wrap">
+                        {co.job_type && <span className="text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 font-medium">{co.job_type}</span>}
+                        {co.description && <span className="text-xs text-muted-foreground">{co.description}</span>}
+                        <div className="flex items-center gap-1">
+                          <span className="text-xs text-muted-foreground">Added</span>
+                          <input type="date" value={co.date_added ? co.date_added.slice(0, 10) : ""} onChange={(e) => handleUpdateCODate(co.id, e.target.value)} disabled={savingCODate === co.id} title="Date this change order was added" className="text-xs rounded-md border border-border bg-background px-1.5 py-1 focus:outline-none focus:ring-2 focus:ring-primary/40 disabled:opacity-50" />
+                          {savingCODate === co.id && <span className="text-xs text-blue-400">saving...</span>}
+                        </div>
+                        <span className="text-sm font-bold ml-auto">${Number(co.amount).toLocaleString()}</span>
+                      </div>
+                    )}
                     {isExpanded && (
                       <div className="space-y-2 pt-1">
                         <div className="grid grid-cols-3 gap-2 text-center">
@@ -894,10 +939,10 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
                 );
               })}
               {!showAddChangeOrder ? (
-                <button onClick={() => { setNewChangeOrder(prev => ({ ...prev, record_type: suggestRecordType() })); setShowAddChangeOrder(true); }} className="w-full flex items-center justify-center gap-2 rounded-lg border border-dashed border-border py-2.5 text-xs text-muted-foreground hover:border-primary/40 hover:text-primary transition-colors"><Plus className="h-3.5 w-3.5" /> Add Change Order</button>
+                <button onClick={() => { setNewChangeOrder(prev => ({ ...prev, record_type: suggestRecordType(), date_added: new Date().toISOString().slice(0, 10) })); setShowAddChangeOrder(true); }} className="w-full flex items-center justify-center gap-2 rounded-lg border border-dashed border-border py-2.5 text-xs text-muted-foreground hover:border-primary/40 hover:text-primary transition-colors"><Plus className="h-3.5 w-3.5" /> Add Job</button>
               ) : (
                 <div className="rounded-lg border border-primary/30 bg-primary/5 p-4 space-y-3">
-                  <p className="text-xs font-semibold text-primary uppercase tracking-wide">New Change Order</p>
+                  <p className="text-xs font-semibold text-primary uppercase tracking-wide">New Job</p>
                   <div>
                     <label className="text-xs text-muted-foreground block mb-1">Is this a scope change to an active job, or a separate job the client is coming back for?</label>
                     <div className="flex gap-2">
@@ -915,10 +960,13 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
                     <div><label className="text-xs text-muted-foreground block mb-1">Job Type</label><select value={newChangeOrder.job_type} onChange={(e) => setNewChangeOrder({ ...newChangeOrder, job_type: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"><option value="">— Select type —</option>{STANDARD_JOB_TYPES.map(t => <option key={t}>{t}</option>)}<option value="Other">Other</option></select></div>
                     <div><label className="text-xs text-muted-foreground block mb-1">Amount</label><input type="number" placeholder="0" value={newChangeOrder.amount} onChange={(e) => setNewChangeOrder({ ...newChangeOrder, amount: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" /></div>
                   </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div><label className="text-xs text-muted-foreground block mb-1">Date</label><input type="date" value={newChangeOrder.date_added} onChange={(e) => setNewChangeOrder({ ...newChangeOrder, date_added: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" /></div>
+                    <div><label className="text-xs text-muted-foreground block mb-1">Status</label><select value={newChangeOrder.status} onChange={(e) => setNewChangeOrder({ ...newChangeOrder, status: e.target.value as any })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"><option value="pending">Pending</option><option value="won">Won</option><option value="lost">Lost</option></select></div>
+                  </div>
                   <div><label className="text-xs text-muted-foreground block mb-1">Description</label><input type="text" placeholder="e.g. Add deck, replace gutters..." value={newChangeOrder.description} onChange={(e) => setNewChangeOrder({ ...newChangeOrder, description: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" /></div>
-                  <div><label className="text-xs text-muted-foreground block mb-1">Status</label><select value={newChangeOrder.status} onChange={(e) => setNewChangeOrder({ ...newChangeOrder, status: e.target.value as any })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"><option value="pending">Pending</option><option value="won">Won</option><option value="lost">Lost</option></select></div>
                   <div className="flex gap-2">
-                    <button onClick={handleAddChangeOrder} disabled={addingChangeOrder || !newChangeOrder.amount} className="flex-1 flex items-center justify-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-40 transition-colors"><Save className="h-4 w-4" />{addingChangeOrder ? "Saving..." : "Save Change Order"}</button>
+                    <button onClick={handleAddChangeOrder} disabled={addingChangeOrder || !newChangeOrder.amount} className="flex-1 flex items-center justify-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-40 transition-colors"><Save className="h-4 w-4" />{addingChangeOrder ? "Saving..." : "Save Job"}</button>
                     <button onClick={() => setShowAddChangeOrder(false)} className="rounded-md border border-border px-4 py-2 text-sm hover:bg-muted transition-colors">Cancel</button>
                   </div>
                 </div>
@@ -941,9 +989,19 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
           {!editMode && (
             <div className="flex items-center gap-2 pb-1">
               {isSyncedToJN ? (
-                <span className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-600 bg-emerald-50 border border-emerald-200 rounded-full px-3 py-1">
-                  ✓ Synced to JobNimbus
-                </span>
+                <div className="flex items-center gap-2">
+                  <span className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-600 bg-emerald-50 border border-emerald-200 rounded-full px-3 py-1">
+                    ✓ Synced to JobNimbus
+                  </span>
+                  {/* Editing phone/email/address after the initial sync previously had no way to
+                      push back to JN -- this button re-runs the same sync, which the API route
+                      already treats as an update (not a duplicate) whenever jn_contact_id exists. */}
+                  <button onClick={handleJnSync} disabled={jnSyncing} title="Push latest changes to JobNimbus"
+                    className="inline-flex items-center gap-1 text-xs font-medium px-2.5 py-1 rounded-full border border-border hover:bg-muted text-muted-foreground disabled:opacity-50 transition-colors">
+                    <RefreshCw className={`h-3 w-3 ${jnSyncing ? "animate-spin" : ""}`} />
+                    {jnSyncing ? "Syncing..." : "Update JN"}
+                  </button>
+                </div>
               ) : jnSyncResult === "error" || l.jn_sync_status === "error" ? (
                 <div className="flex items-center gap-2">
                   <span className="inline-flex items-center gap-1.5 text-xs font-medium text-red-600 bg-red-50 border border-red-200 rounded-full px-3 py-1">

@@ -149,7 +149,13 @@ function buildJNPayload(lead: any) {
     last_name:     lastName,
     display_name:  displayName,
     email:         lead.email || '',
-    phone:         lead.phone || '',
+    // JobNimbus's Contact object does not have a plain "phone" field -- it splits phone into
+    // home_phone ("Main Phone" in their UI), mobile_phone, and work_phone. Sending "phone" (as
+    // this used to) matches none of them, so JN silently ignores it and the field stays blank.
+    // We only collect one phone number, so we write it to both Main and Mobile so it shows up
+    // regardless of which tab someone checks in JN.
+    home_phone:    lead.phone || '',
+    mobile_phone:  lead.phone || '',
     address_line1: lead.client_address || '',
     city:          lead.client_city    || '',
     state_text:    lead.client_state   || '',
