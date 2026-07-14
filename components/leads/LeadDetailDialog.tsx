@@ -57,7 +57,7 @@ function parseLeadName(leadName: string): { first: string; last: string } {
 }
 
 interface Payment { id: string; amount: number; payment_type: string; payment_method: string; paid_at: string; notes: string; }
-interface ChangeOrder { id: string; order_number: number; description: string; job_type: string; amount: number; status: "pending" | "won" | "lost"; signed_at: string | null; date_added: string; record_type: "change_order" | "repeat_job"; payments: ChangeOrderPayment[]; }
+interface ChangeOrder { id: string; order_number: number; description: string; job_type: string; amount: number; status: "pending" | "won" | "lost"; signed_at: string | null; date_added: string; record_type: "change_order" | "repeat_job"; production_stage: string | null; production_notes: string | null; production_stage_updated_at: string | null; payments: ChangeOrderPayment[]; }
 
 const CLOSED_PRODUCTION_STAGES = ["Completed", "Completed with Balance", "Cancelled Before Start", "Cancelled Mid-Job"];
 interface ChangeOrderPayment { id: string; amount: number; payment_type: string; payment_method: string; paid_at: string; notes: string; }

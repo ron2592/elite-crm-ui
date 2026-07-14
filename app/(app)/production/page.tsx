@@ -80,6 +80,7 @@ export default function ProductionPage() {
   const [filter,         setFilter]         = useState("active");
   const [filterSourceId, setFilterSourceId] = useState("");
   const [sources,        setSources]        = useState<{ id: string; name: string }[]>([]);
+  const [expandedClients, setExpandedClients] = useState<Set<string>>(new Set());
 
   // ── Refund modal ──────────────────────────────────────────────────────────
   const [refundDraft,    setRefundDraft]    = useState<RefundDraft | null>(null);
@@ -356,6 +357,302 @@ export default function ProductionPage() {
   const totalRefunded  = filteredJobs.reduce((s, j) => s + j.totalRefunded, 0);
   const totalBalance   = totalContract - totalCollected;
 
+  // ── Group jobs by client (leadId) so a repeat client's original job + all their change
+  // orders collapse into one row instead of being scattered through the table ─────────────
+  const clientGroups = (() => {
+    const map = new Map<string, JobRow[]>();
+    filteredJobs.forEach(j => {
+      if (!map.has(j.leadId)) map.set(j.leadId, []);
+      map.get(j.leadId)!.push(j);
+    });
+    return Array.from(map.entries()).map(([leadId, rows]) => {
+      const sortedRows = [...rows].sort((a, b) => {
+        if (a.type !== b.type) return a.type === "lead" ? -1 : 1;
+        return (a.orderNumber || 0) - (b.orderNumber || 0);
+      });
+      const contract   = rows.reduce((s, r) => s + r.contract, 0);
+      const collected  = rows.reduce((s, r) => s + r.totalCollected, 0);
+      const refunded   = rows.reduce((s, r) => s + r.totalRefunded, 0);
+      const activeN    = rows.filter(r => isActive(r.production_stage)).length;
+      const pendingN   = rows.filter(r => isPending(r.production_stage)).length;
+      const completedN = rows.filter(r => r.production_stage?.startsWith("Completed")).length;
+      const cancelledN = rows.filter(r => r.leadStatus === "job_cancelled" || r.production_stage?.startsWith("Cancelled")).length;
+      const latestStageDate = rows.reduce((latest: string | null, r) => {
+        if (!r.production_stage_updated_at) return latest;
+        if (!latest || new Date(r.production_stage_updated_at) > new Date(latest)) return r.production_stage_updated_at;
+        return latest;
+      }, null as string | null);
+      return {
+        leadId, rows: sortedRows,
+        clientName: sortedRows[0].clientName, address: sortedRows[0].address,
+        sourceName: sortedRows[0].sourceName, salesperson: sortedRows[0].salesperson,
+        contract, collected, refunded, balance: contract - collected,
+        activeN, pendingN, completedN, cancelledN, latestStageDate,
+      };
+    }).sort((a, b) => {
+      const aT = a.latestStageDate ? new Date(a.latestStageDate).getTime() : 0;
+      const bT = b.latestStageDate ? new Date(b.latestStageDate).getTime() : 0;
+      return bT - aT;
+    });
+  })();
+
+  const toggleClientExpand = (leadId: string) => {
+    setExpandedClients(prev => { const next = new Set(prev); next.has(leadId) ? next.delete(leadId) : next.add(leadId); return next; });
+  };
+
+  // ── Single job row (used both standalone and nested inside an expanded client group) ────
+  const renderJobRow = (job: JobRow, nested: boolean = false) => {
+    const balance           = job.contract - job.totalCollected;
+    const netKept           = job.totalCollected - job.totalRefunded;
+    const rowKey            = `${job.type}-${job.id}`;
+    const isUpdating        = updating === rowKey;
+    const isEditingNote     = editingNotes === rowKey;
+    const isEditingThisDate = editingDate === rowKey;
+    const isCalendarStage   = CALENDAR_STAGES.includes(job.production_stage || "");
+    const isCancelled       = job.leadStatus === "job_cancelled";
+    const rowBg             = isCancelled
+      ? "bg-red-50/30 dark:bg-red-950/10"
+      : isPending(job.production_stage)
+      ? "bg-slate-50/50 dark:bg-slate-900/20"
+      : job.type === "change_order"
+      ? "bg-blue-50/30 dark:bg-blue-950/10"
+      : "";
+
+    return (
+      <tr key={rowKey} className={`border-b hover:bg-muted/30 transition-colors ${rowBg} ${nested ? "bg-muted/10" : ""}`}>
+
+        {/* Job / Client */}
+        <td className={`px-4 py-3 ${nested ? "pl-9" : ""}`}>
+          <div className="flex items-center gap-2">
+            {job.type === "change_order" && (
+              <span className="text-xs px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 font-medium shrink-0">CO#{job.orderNumber}</span>
+            )}
+            {isCancelled && (
+              <span className="text-xs px-1.5 py-0.5 rounded bg-red-100 text-red-700 font-medium shrink-0">Cancelled</span>
+            )}
+            <div>
+              <button onClick={() => handleEditClient(job)}
+                className="font-medium text-left hover:text-primary hover:underline transition-colors">
+                {job.clientName}
+              </button>
+              {!nested && <p className="text-xs text-muted-foreground">{job.address}</p>}
+              <div className="flex items-center gap-1.5 mt-0.5">
+                {job.jobType    && <span className="text-xs text-primary">{job.jobType}</span>}
+                {job.description && <span className="text-xs text-muted-foreground">· {job.description}</span>}
+              </div>
+            </div>
+          </div>
+        </td>
+
+        {/* Source */}
+        <td className="px-4 py-3 whitespace-nowrap">
+          {job.sourceName
+            ? <span className="text-xs px-2 py-0.5 rounded-full bg-muted font-medium">{job.sourceName}</span>
+            : <span className="text-xs text-muted-foreground/40">—</span>}
+        </td>
+
+        <td className="px-4 py-3 text-muted-foreground whitespace-nowrap">{job.salesperson || "—"}</td>
+
+        {/* Contract */}
+        <td className="px-4 py-3 text-right font-medium whitespace-nowrap">
+          <span className={isCancelled ? "line-through text-muted-foreground" : ""}>
+            ${job.contract.toLocaleString()}
+          </span>
+        </td>
+
+        {/* Collected — shows refund if any */}
+        <td className="px-4 py-3 text-right whitespace-nowrap">
+          <span className="font-medium text-emerald-600">${job.totalCollected.toLocaleString()}</span>
+          {job.totalRefunded > 0 && (
+            <div className="text-xs text-red-500">−${job.totalRefunded.toLocaleString()} refund</div>
+          )}
+          {job.totalRefunded > 0 && (
+            <div className="text-xs font-semibold text-emerald-700">Net: ${netKept.toLocaleString()}</div>
+          )}
+        </td>
+
+        {/* Balance */}
+        <td className="px-4 py-3 text-right whitespace-nowrap">
+          <span className={`font-bold ${balance > 0 ? "text-red-500" : "text-emerald-600"}`}>
+            ${balance.toLocaleString()}
+          </span>
+        </td>
+
+        {/* Production Stage */}
+        <td className="px-4 py-3">
+          <select
+            value={job.production_stage || ""}
+            onChange={e => handleStageUpdate(job, e.target.value)}
+            disabled={isUpdating}
+            className="text-xs rounded-md border border-border bg-background px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-primary/40 disabled:opacity-50 min-w-[145px]">
+            <option value="">— Set Stage —</option>
+            <optgroup label="Pending">
+              <option value="Pending - Check">Pending - Check</option>
+              <option value="Pending - Financing">Pending - Financing</option>
+              <option value="Pending - Deposit">Pending - Deposit</option>
+            </optgroup>
+            <optgroup label="Active">
+              <option value="Deposit Collected">Deposit Collected</option>
+              <option value="Materials Ordered">Materials Ordered</option>
+              <option value="Permit Submitted">Permit Submitted</option>
+              <option value="Permit Approved">Permit Approved</option>
+              <option value="Scheduled to Start">Scheduled to Start</option>
+              <option value="Job In Progress">Job In Progress</option>
+              <option value="Rough Inspection">Rough Inspection</option>
+              <option value="Final Inspection">Final Inspection</option>
+              <option value="Inspection Approved">Inspection Approved</option>
+            </optgroup>
+            <optgroup label="Closed">
+              <option value="Completed">Completed</option>
+              <option value="Completed with Balance">Completed with Balance</option>
+              <option value="Cancelled Before Start">Cancelled Before Start</option>
+              <option value="Cancelled Mid-Job">Cancelled Mid-Job</option>
+            </optgroup>
+          </select>
+          {job.production_stage && (
+            <div className="mt-1 flex items-center gap-1">
+              <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${stageColors[job.production_stage] || "bg-gray-100 text-gray-700"}`}>
+                {job.production_stage}
+              </span>
+              {isCalendarStage && (
+                <span className="text-xs px-1.5 py-0.5 rounded bg-blue-100 text-blue-600 font-medium">📅</span>
+              )}
+            </div>
+          )}
+        </td>
+
+        {/* Stage Date */}
+        <td className="px-3 py-3 min-w-[115px]">
+          {isEditingThisDate ? (
+            <div className="space-y-1">
+              <input type="date" value={dateDraft}
+                onChange={e => setDateDraft(e.target.value)} autoFocus
+                className="w-full rounded-md border border-border bg-background px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-primary/40" />
+              <div className="flex gap-1">
+                <button onClick={() => handleSaveDate(job)} disabled={savingDate || !dateDraft}
+                  className="text-xs px-2 py-0.5 rounded bg-primary text-primary-foreground disabled:opacity-40">
+                  {savingDate ? "..." : "Save"}
+                </button>
+                <button onClick={() => setEditingDate(null)}
+                  className="text-xs px-2 py-0.5 rounded border border-border hover:bg-muted">Cancel</button>
+              </div>
+            </div>
+          ) : (
+            <div onClick={() => { setEditingDate(rowKey); setDateDraft(toLocalDateValue(job.production_stage_updated_at)); }}
+              className="cursor-pointer group">
+              {job.production_stage_updated_at ? (
+                <p className="text-xs group-hover:text-primary transition-colors">
+                  {new Date(job.production_stage_updated_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                </p>
+              ) : (
+                <p className="text-xs text-muted-foreground/50 group-hover:text-primary">+ Set date</p>
+              )}
+            </div>
+          )}
+        </td>
+
+        {/* Notes */}
+        <td className="px-3 py-3 min-w-[130px]">
+          {isEditingNote ? (
+            <div className="space-y-1">
+              <textarea value={noteDraft} onChange={e => setNoteDraft(e.target.value)}
+                rows={2} autoFocus placeholder="Add a note..."
+                className="w-full rounded-md border border-border bg-background px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-primary/40 resize-none" />
+              <div className="flex gap-1">
+                <button onClick={() => handleSaveNote(job)}
+                  className="text-xs px-2 py-0.5 rounded bg-primary text-primary-foreground">Save</button>
+                <button onClick={() => setEditingNotes(null)}
+                  className="text-xs px-2 py-0.5 rounded border border-border hover:bg-muted">Cancel</button>
+              </div>
+            </div>
+          ) : (
+            <div onClick={() => { setEditingNotes(rowKey); setNoteDraft(job.production_notes || ""); }}
+              className="cursor-pointer group">
+              {job.production_notes
+                ? <p className="text-xs group-hover:text-primary transition-colors">{job.production_notes}</p>
+                : <p className="text-xs text-muted-foreground/50 group-hover:text-primary">+ Add note</p>}
+            </div>
+          )}
+        </td>
+
+        {/* Actions */}
+        <td className="px-4 py-3">
+          <div className="flex flex-col gap-1">
+            <button onClick={() => handleEditClient(job)}
+              className="text-xs px-2 py-1 rounded border border-border hover:bg-muted transition-colors text-muted-foreground whitespace-nowrap">
+              Edit
+            </button>
+            {isCancelled && job.totalCollected > 0 && (
+              <button
+                onClick={() => { setRefundDraft({ leadId: job.leadId, clientName: job.clientName, collected: job.totalCollected }); setRefundAmount(""); }}
+                className="text-xs px-2 py-1 rounded border border-red-200 bg-red-50 text-red-600 hover:bg-red-100 transition-colors whitespace-nowrap">
+                Refund
+              </button>
+            )}
+          </div>
+        </td>
+      </tr>
+    );
+  };
+
+  // ── Collapsed summary row for a client with more than one job ───────────────────────────
+  const renderClientGroupRow = (group: (typeof clientGroups)[number]) => {
+    const isExpanded = expandedClients.has(group.leadId);
+    const statusChips: { label: string; classes: string }[] = [];
+    if (group.activeN)    statusChips.push({ label: `${group.activeN} Active`,    classes: "bg-orange-100 text-orange-700" });
+    if (group.completedN) statusChips.push({ label: `${group.completedN} Completed`, classes: "bg-green-100 text-green-700" });
+    if (group.pendingN)   statusChips.push({ label: `${group.pendingN} Pending`,   classes: "bg-slate-100 text-slate-600" });
+    if (group.cancelledN) statusChips.push({ label: `${group.cancelledN} Cancelled`, classes: "bg-red-100 text-red-700" });
+
+    return (
+      <>
+        <tr key={group.leadId} className="border-b hover:bg-muted/30 transition-colors bg-muted/5 cursor-pointer" onClick={() => toggleClientExpand(group.leadId)}>
+          <td className="px-4 py-3">
+            <div className="flex items-center gap-2">
+              <span className="text-muted-foreground">{isExpanded ? "▾" : "▸"}</span>
+              <div>
+                <p className="font-semibold">{group.clientName} <span className="text-xs font-normal text-muted-foreground">· {group.rows.length} jobs</span></p>
+                <p className="text-xs text-muted-foreground">{group.address}</p>
+              </div>
+            </div>
+          </td>
+          <td className="px-4 py-3 whitespace-nowrap">
+            {group.sourceName
+              ? <span className="text-xs px-2 py-0.5 rounded-full bg-muted font-medium">{group.sourceName}</span>
+              : <span className="text-xs text-muted-foreground/40">—</span>}
+          </td>
+          <td className="px-4 py-3 text-muted-foreground whitespace-nowrap">{group.salesperson || "—"}</td>
+          <td className="px-4 py-3 text-right font-medium whitespace-nowrap">${group.contract.toLocaleString()}</td>
+          <td className="px-4 py-3 text-right whitespace-nowrap">
+            <span className="font-medium text-emerald-600">${group.collected.toLocaleString()}</span>
+            {group.refunded > 0 && <div className="text-xs text-red-500">−${group.refunded.toLocaleString()} refund</div>}
+          </td>
+          <td className="px-4 py-3 text-right whitespace-nowrap">
+            <span className={`font-bold ${group.balance > 0 ? "text-red-500" : "text-emerald-600"}`}>${group.balance.toLocaleString()}</span>
+          </td>
+          <td className="px-4 py-3">
+            <div className="flex items-center gap-1 flex-wrap">
+              {statusChips.map(c => (
+                <span key={c.label} className={`text-xs px-2 py-0.5 rounded-full font-medium ${c.classes}`}>{c.label}</span>
+              ))}
+            </div>
+          </td>
+          <td className="px-3 py-3 min-w-[115px] text-xs text-muted-foreground">
+            {group.latestStageDate ? new Date(group.latestStageDate).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "—"}
+          </td>
+          <td className="px-3 py-3 min-w-[130px] text-xs text-muted-foreground">—</td>
+          <td className="px-4 py-3">
+            <button onClick={(e) => { e.stopPropagation(); toggleClientExpand(group.leadId); }}
+              className="text-xs px-2 py-1 rounded border border-border hover:bg-muted transition-colors text-muted-foreground whitespace-nowrap">
+              {isExpanded ? "Collapse" : "Expand"}
+            </button>
+          </td>
+        </tr>
+        {isExpanded && group.rows.map(row => renderJobRow(row, true))}
+      </>
+    );
+  };
+
   return (
     <div className="space-y-6 max-w-full">
 
@@ -488,200 +785,9 @@ export default function ProductionPage() {
                 <tr><td colSpan={10} className="px-4 py-8 text-center text-muted-foreground">
                   {filter === "active" ? "No active jobs. Set a production stage to see jobs here." : "No jobs found."}
                 </td></tr>
-              ) : filteredJobs.map(job => {
-                const balance           = job.contract - job.totalCollected;
-                const netKept           = job.totalCollected - job.totalRefunded;
-                const rowKey            = `${job.type}-${job.id}`;
-                const isUpdating        = updating === rowKey;
-                const isEditingNote     = editingNotes === rowKey;
-                const isEditingThisDate = editingDate === rowKey;
-                const isCalendarStage   = CALENDAR_STAGES.includes(job.production_stage || "");
-                const isCancelled       = job.leadStatus === "job_cancelled";
-                const rowBg             = isCancelled
-                  ? "bg-red-50/30 dark:bg-red-950/10"
-                  : isPending(job.production_stage)
-                  ? "bg-slate-50/50 dark:bg-slate-900/20"
-                  : job.type === "change_order"
-                  ? "bg-blue-50/30 dark:bg-blue-950/10"
-                  : "";
-
-                return (
-                  <tr key={rowKey} className={`border-b hover:bg-muted/30 transition-colors ${rowBg}`}>
-
-                    {/* Job / Client */}
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-2">
-                        {job.type === "change_order" && (
-                          <span className="text-xs px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 font-medium shrink-0">CO#{job.orderNumber}</span>
-                        )}
-                        {isCancelled && (
-                          <span className="text-xs px-1.5 py-0.5 rounded bg-red-100 text-red-700 font-medium shrink-0">Cancelled</span>
-                        )}
-                        <div>
-                          <button onClick={() => handleEditClient(job)}
-                            className="font-medium text-left hover:text-primary hover:underline transition-colors">
-                            {job.clientName}
-                          </button>
-                          <p className="text-xs text-muted-foreground">{job.address}</p>
-                          <div className="flex items-center gap-1.5 mt-0.5">
-                            {job.jobType    && <span className="text-xs text-primary">{job.jobType}</span>}
-                            {job.description && <span className="text-xs text-muted-foreground">· {job.description}</span>}
-                          </div>
-                        </div>
-                      </div>
-                    </td>
-
-                    {/* Source */}
-                    <td className="px-4 py-3 whitespace-nowrap">
-                      {job.sourceName
-                        ? <span className="text-xs px-2 py-0.5 rounded-full bg-muted font-medium">{job.sourceName}</span>
-                        : <span className="text-xs text-muted-foreground/40">—</span>}
-                    </td>
-
-                    <td className="px-4 py-3 text-muted-foreground whitespace-nowrap">{job.salesperson || "—"}</td>
-
-                    {/* Contract */}
-                    <td className="px-4 py-3 text-right font-medium whitespace-nowrap">
-                      <span className={isCancelled ? "line-through text-muted-foreground" : ""}>
-                        ${job.contract.toLocaleString()}
-                      </span>
-                    </td>
-
-                    {/* Collected — shows refund if any */}
-                    <td className="px-4 py-3 text-right whitespace-nowrap">
-                      <span className="font-medium text-emerald-600">${job.totalCollected.toLocaleString()}</span>
-                      {job.totalRefunded > 0 && (
-                        <div className="text-xs text-red-500">−${job.totalRefunded.toLocaleString()} refund</div>
-                      )}
-                      {job.totalRefunded > 0 && (
-                        <div className="text-xs font-semibold text-emerald-700">Net: ${netKept.toLocaleString()}</div>
-                      )}
-                    </td>
-
-                    {/* Balance */}
-                    <td className="px-4 py-3 text-right whitespace-nowrap">
-                      <span className={`font-bold ${balance > 0 ? "text-red-500" : "text-emerald-600"}`}>
-                        ${balance.toLocaleString()}
-                      </span>
-                    </td>
-
-                    {/* Production Stage */}
-                    <td className="px-4 py-3">
-                      <select
-                        value={job.production_stage || ""}
-                        onChange={e => handleStageUpdate(job, e.target.value)}
-                        disabled={isUpdating}
-                        className="text-xs rounded-md border border-border bg-background px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-primary/40 disabled:opacity-50 min-w-[145px]">
-                        <option value="">— Set Stage —</option>
-                        <optgroup label="Pending">
-                          <option value="Pending - Check">Pending - Check</option>
-                          <option value="Pending - Financing">Pending - Financing</option>
-                          <option value="Pending - Deposit">Pending - Deposit</option>
-                        </optgroup>
-                        <optgroup label="Active">
-                          <option value="Deposit Collected">Deposit Collected</option>
-                          <option value="Materials Ordered">Materials Ordered</option>
-                          <option value="Permit Submitted">Permit Submitted</option>
-                          <option value="Permit Approved">Permit Approved</option>
-                          <option value="Scheduled to Start">Scheduled to Start</option>
-                          <option value="Job In Progress">Job In Progress</option>
-                          <option value="Rough Inspection">Rough Inspection</option>
-                          <option value="Final Inspection">Final Inspection</option>
-                          <option value="Inspection Approved">Inspection Approved</option>
-                        </optgroup>
-                        <optgroup label="Closed">
-                          <option value="Completed">Completed</option>
-                          <option value="Completed with Balance">Completed with Balance</option>
-                          <option value="Cancelled Before Start">Cancelled Before Start</option>
-                          <option value="Cancelled Mid-Job">Cancelled Mid-Job</option>
-                        </optgroup>
-                      </select>
-                      {job.production_stage && (
-                        <div className="mt-1 flex items-center gap-1">
-                          <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${stageColors[job.production_stage] || "bg-gray-100 text-gray-700"}`}>
-                            {job.production_stage}
-                          </span>
-                          {isCalendarStage && (
-                            <span className="text-xs px-1.5 py-0.5 rounded bg-blue-100 text-blue-600 font-medium">📅</span>
-                          )}
-                        </div>
-                      )}
-                    </td>
-
-                    {/* Stage Date */}
-                    <td className="px-3 py-3 min-w-[115px]">
-                      {isEditingThisDate ? (
-                        <div className="space-y-1">
-                          <input type="date" value={dateDraft}
-                            onChange={e => setDateDraft(e.target.value)} autoFocus
-                            className="w-full rounded-md border border-border bg-background px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-primary/40" />
-                          <div className="flex gap-1">
-                            <button onClick={() => handleSaveDate(job)} disabled={savingDate || !dateDraft}
-                              className="text-xs px-2 py-0.5 rounded bg-primary text-primary-foreground disabled:opacity-40">
-                              {savingDate ? "..." : "Save"}
-                            </button>
-                            <button onClick={() => setEditingDate(null)}
-                              className="text-xs px-2 py-0.5 rounded border border-border hover:bg-muted">Cancel</button>
-                          </div>
-                        </div>
-                      ) : (
-                        <div onClick={() => { setEditingDate(rowKey); setDateDraft(toLocalDateValue(job.production_stage_updated_at)); }}
-                          className="cursor-pointer group">
-                          {job.production_stage_updated_at ? (
-                            <p className="text-xs group-hover:text-primary transition-colors">
-                              {new Date(job.production_stage_updated_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
-                            </p>
-                          ) : (
-                            <p className="text-xs text-muted-foreground/50 group-hover:text-primary">+ Set date</p>
-                          )}
-                        </div>
-                      )}
-                    </td>
-
-                    {/* Notes */}
-                    <td className="px-3 py-3 min-w-[130px]">
-                      {isEditingNote ? (
-                        <div className="space-y-1">
-                          <textarea value={noteDraft} onChange={e => setNoteDraft(e.target.value)}
-                            rows={2} autoFocus placeholder="Add a note..."
-                            className="w-full rounded-md border border-border bg-background px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-primary/40 resize-none" />
-                          <div className="flex gap-1">
-                            <button onClick={() => handleSaveNote(job)}
-                              className="text-xs px-2 py-0.5 rounded bg-primary text-primary-foreground">Save</button>
-                            <button onClick={() => setEditingNotes(null)}
-                              className="text-xs px-2 py-0.5 rounded border border-border hover:bg-muted">Cancel</button>
-                          </div>
-                        </div>
-                      ) : (
-                        <div onClick={() => { setEditingNotes(rowKey); setNoteDraft(job.production_notes || ""); }}
-                          className="cursor-pointer group">
-                          {job.production_notes
-                            ? <p className="text-xs group-hover:text-primary transition-colors">{job.production_notes}</p>
-                            : <p className="text-xs text-muted-foreground/50 group-hover:text-primary">+ Add note</p>}
-                        </div>
-                      )}
-                    </td>
-
-                    {/* Actions */}
-                    <td className="px-4 py-3">
-                      <div className="flex flex-col gap-1">
-                        <button onClick={() => handleEditClient(job)}
-                          className="text-xs px-2 py-1 rounded border border-border hover:bg-muted transition-colors text-muted-foreground whitespace-nowrap">
-                          Edit
-                        </button>
-                        {/* ✅ Refund button — only for cancelled jobs with collected amount */}
-                        {isCancelled && job.totalCollected > 0 && (
-                          <button
-                            onClick={() => { setRefundDraft({ leadId: job.leadId, clientName: job.clientName, collected: job.totalCollected }); setRefundAmount(""); }}
-                            className="text-xs px-2 py-1 rounded border border-red-200 bg-red-50 text-red-600 hover:bg-red-100 transition-colors whitespace-nowrap">
-                            Refund
-                          </button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
+              ) : clientGroups.map(group =>
+                  group.rows.length > 1 ? renderClientGroupRow(group) : renderJobRow(group.rows[0])
+                )}
             </tbody>
           </table>
         </div>
