@@ -981,4 +981,132 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
                   <div>
                     <label className="text-xs text-muted-foreground block mb-1">Is this a scope change to an active job, or a separate job the client is coming back for?</label>
                     <div className="flex gap-2">
-                      <button type="button" onClick={() => setNewChangeOrder({ ...newChangeO
+                      <button type="button" onClick={() => setNewChangeOrder({ ...newChangeOrder, record_type: "change_order" })}
+                        className={`flex-1 text-xs px-3 py-2 rounded-md border font-medium transition-colors ${newChangeOrder.record_type === "change_order" ? "bg-primary text-primary-foreground border-primary" : "border-border hover:bg-muted text-muted-foreground"}`}>
+                        Change Order <span className="opacity-70">(active job)</span>
+                      </button>
+                      <button type="button" onClick={() => setNewChangeOrder({ ...newChangeOrder, record_type: "repeat_job" })}
+                        className={`flex-1 text-xs px-3 py-2 rounded-md border font-medium transition-colors ${newChangeOrder.record_type === "repeat_job" ? "bg-purple-600 text-white border-purple-600" : "border-border hover:bg-muted text-muted-foreground"}`}>
+                        Repeat Job <span className="opacity-70">(client's back)</span>
+                      </button>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div><label className="text-xs text-muted-foreground block mb-1">Job Type</label><select value={newChangeOrder.job_type} onChange={(e) => setNewChangeOrder({ ...newChangeOrder, job_type: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"><option value="">— Select type —</option>{STANDARD_JOB_TYPES.map(t => <option key={t}>{t}</option>)}<option value="Other">Other</option></select></div>
+                    <div><label className="text-xs text-muted-foreground block mb-1">Amount</label><input type="number" placeholder="0" value={newChangeOrder.amount} onChange={(e) => setNewChangeOrder({ ...newChangeOrder, amount: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" /></div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div><label className="text-xs text-muted-foreground block mb-1">Date</label><input type="date" value={newChangeOrder.date_added} onChange={(e) => setNewChangeOrder({ ...newChangeOrder, date_added: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" /></div>
+                    <div><label className="text-xs text-muted-foreground block mb-1">Status</label><select value={newChangeOrder.status} onChange={(e) => setNewChangeOrder({ ...newChangeOrder, status: e.target.value as any })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"><option value="pending">Pending</option><option value="won">Won</option><option value="lost">Lost</option></select></div>
+                  </div>
+                  <div><label className="text-xs text-muted-foreground block mb-1">Description</label><input type="text" placeholder="e.g. Add deck, replace gutters..." value={newChangeOrder.description} onChange={(e) => setNewChangeOrder({ ...newChangeOrder, description: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" /></div>
+                  <div className="flex gap-2">
+                    <button onClick={handleAddChangeOrder} disabled={addingChangeOrder || !newChangeOrder.amount} className="flex-1 flex items-center justify-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-40 transition-colors"><Save className="h-4 w-4" />{addingChangeOrder ? "Saving..." : "Save Job"}</button>
+                    <button onClick={() => setShowAddChangeOrder(false)} className="rounded-md border border-border px-4 py-2 text-sm hover:bg-muted transition-colors">Cancel</button>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+
+          {/* ── REASON LOST ── */}
+          {!editMode && isLost && (
+            <div className="rounded-lg border border-red-200 bg-red-50/50 dark:bg-red-950/20 p-4 space-y-3">
+              <p className="text-xs font-semibold text-red-600 uppercase tracking-wide">Reason Lost</p>
+              <textarea rows={3} placeholder="e.g. Price too high, went with another contractor..." value={reasonLost} onChange={(e) => setReasonLost(e.target.value)} className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-400/40 resize-none" />
+              <button onClick={handleSaveReasonLost} disabled={savingReasonLost || !reasonLost} className="w-full flex items-center justify-center gap-2 rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+                <Save className="h-4 w-4" />{savingReasonLost ? "Saving..." : savedReasonLost ? "Saved ✓" : "Save Reason"}
+              </button>
+            </div>
+          )}
+
+          {/* ── JN SYNC STATUS ── */}
+          {!editMode && (
+            <div className="flex items-center gap-2 pb-1">
+              {isSyncedToJN ? (
+                <div className="flex items-center gap-2">
+                  <span className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-600 bg-emerald-50 border border-emerald-200 rounded-full px-3 py-1">
+                    ✓ Synced to JobNimbus
+                  </span>
+                  {/* Editing phone/email/address after the initial sync previously had no way to
+                      push back to JN -- this button re-runs the same sync, which the API route
+                      already treats as an update (not a duplicate) whenever jn_contact_id exists. */}
+                  <button onClick={handleJnSync} disabled={jnSyncing} title="Push latest changes to JobNimbus"
+                    className="inline-flex items-center gap-1 text-xs font-medium px-2.5 py-1 rounded-full border border-border hover:bg-muted text-muted-foreground disabled:opacity-50 transition-colors">
+                    <RefreshCw className={`h-3 w-3 ${jnSyncing ? "animate-spin" : ""}`} />
+                    {jnSyncing ? "Syncing..." : "Update JN"}
+                  </button>
+                </div>
+              ) : jnSyncResult === "error" || l.jn_sync_status === "error" || l.jn_sync_status === "failed" ? (
+                <div className="flex flex-col gap-1">
+                  <div className="flex items-center gap-2">
+                    <span className="inline-flex items-center gap-1.5 text-xs font-medium text-red-600 bg-red-50 border border-red-200 rounded-full px-3 py-1">
+                      ✕ JN Sync Failed
+                    </span>
+                    <button onClick={handleJnSync} disabled={jnSyncing}
+                      className="inline-flex items-center gap-1 text-xs font-medium px-3 py-1 rounded-full border border-orange-300 bg-orange-50 text-orange-700 hover:bg-orange-100 disabled:opacity-50 transition-colors">
+                      <RefreshCw className={`h-3 w-3 ${jnSyncing ? "animate-spin" : ""}`} />
+                      {jnSyncing ? "Syncing..." : "Retry Sync"}
+                    </button>
+                  </div>
+                  {(jnSyncErrorMsg || l.jn_sync_error) && (
+                    <span className="text-[11px] text-red-500 max-w-md truncate" title={jnSyncErrorMsg || l.jn_sync_error}>
+                      {jnSyncErrorMsg || l.jn_sync_error}
+                    </span>
+                  )}
+                </div>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <span className="inline-flex items-center gap-1.5 text-xs font-medium text-gray-400 bg-gray-50 border border-gray-200 rounded-full px-3 py-1">
+                    ○ Not Synced to JN
+                  </span>
+                  <button onClick={handleJnSync} disabled={jnSyncing}
+                    className="inline-flex items-center gap-1 text-xs font-medium px-3 py-1 rounded-full border border-blue-300 bg-blue-50 text-blue-700 hover:bg-blue-100 disabled:opacity-50 transition-colors">
+                    <RefreshCw className={`h-3 w-3 ${jnSyncing ? "animate-spin" : ""}`} />
+                    {jnSyncing ? "Syncing..." : "Sync to JN"}
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ── CONTACT INFO ── */}
+          {!editMode && (
+            <div className="space-y-2.5">
+              <div className="flex items-center gap-2.5 text-sm"><Phone className="h-4 w-4 text-muted-foreground" /><span>{phone}</span></div>
+              <div className="flex items-center gap-2.5 text-sm"><Mail className="h-4 w-4 text-muted-foreground" /><span>{email}</span></div>
+              <div className="flex items-center gap-2.5 text-sm"><MapPin className="h-4 w-4 text-muted-foreground" /><span>{address}</span></div>
+              {createdAt && (
+                <div className="flex items-center gap-2.5 text-sm">
+                  <Calendar className="h-4 w-4 text-muted-foreground" />
+                  <span>Lead received {new Date(createdAt).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}</span>
+                </div>
+              )}
+            </div>
+          )}
+          {!editMode && notes && (
+            <div className="rounded-lg bg-muted/50 p-3">
+              <p className="text-xs text-muted-foreground mb-1">Notes</p>
+              <p className="text-sm">{notes}</p>
+            </div>
+          )}
+
+          {/* ── MOVE TO STAGE ── */}
+          {!editMode && (
+            <div>
+              <p className="text-xs text-muted-foreground mb-2">Move to stage</p>
+              <div className="flex flex-wrap gap-2">
+                {["new","contacted","appointment_set","estimate_sent","closed_won","completed","cancelled_appointment","no_opportunity","lost","not_qualified"].map((s) => (
+                  <button key={s} onClick={() => handleStageChange(s)}
+                    className={`text-xs px-3 py-1 rounded-full border transition-colors ${currentStatus === s ? "bg-primary text-primary-foreground border-primary" : "hover:bg-muted border-border"}`}>
+                    {statusLabels[s]}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}

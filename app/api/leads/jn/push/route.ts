@@ -145,11 +145,32 @@ export async function POST(req: NextRequest) {
         .from('leads')
         .update({ jn_sync_status: 'failed', jn_sync_error: `Exception: ${err.message}`.slice(0, 2000) })
         .eq('id', lead_id)
-        .catch?.(() => {})
     }
     return NextResponse.json({ error: err.message }, { status: 500 })
   }
 }
 
 function buildJNPayload(lead: any) {
-  const firstName = lead.first_name || lead.lead_name?.split(' ')[0
+  const firstName = lead.first_name || lead.lead_name?.split(' ')[0] || ''
+  const lastName  = lead.last_name  || lead.lead_name?.split(' ').slice(1).join(' ') || ''
+  const displayName = `${firstName} ${lastName}`.trim() || lead.lead_name || 'Unknown'
+
+  return {
+    first_name:    firstName,
+    last_name:     lastName,
+    display_name:  displayName,
+    email:         lead.email || '',
+    // JobNimbus's Contact object does not have a plain "phone" field -- it splits phone into
+    // home_phone ("Main Phone" in their UI), mobile_phone, and work_phone. Sending "phone" (as
+    // this used to) matches none of them, so JN silently ignores it and the field stays blank.
+    // We only collect one phone number, so we write it to both Main and Mobile so it shows up
+    // regardless of which tab someone checks in JN.
+    home_phone:    lead.phone || '',
+    mobile_phone:  lead.phone || '',
+    address_line1: lead.client_address || '',
+    city:          lead.client_city    || '',
+    state_text:    lead.client_state   || '',
+    zip:           lead.client_zip     || '',
+    tags:          ['com-center'],
+  }
+}
