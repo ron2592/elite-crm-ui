@@ -29,6 +29,13 @@ function fmt$(n: number) {
   return "$" + n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
+function formatPhone(value: string) {
+  const digits = (value || "").replace(/\D/g, "").slice(0, 10);
+  if (digits.length <= 3) return digits;
+  if (digits.length <= 6) return `(${digits.slice(0,3)}) ${digits.slice(3)}`;
+  return `(${digits.slice(0,3)}) ${digits.slice(3,6)}-${digits.slice(6)}`;
+}
+
 export default function ClientProfilePage({ params }: { params: { contactId: string } }) {
   const router = useRouter();
   const contactId = params.contactId;
@@ -111,6 +118,12 @@ export default function ClientProfilePage({ params }: { params: { contactId: str
   const firstJobDate    = leads.length ? new Date(leads[0].created_at) : null;
   const initials = (contact.full_name || "?").split(" ").map((n: string) => n[0]).join("").toUpperCase().slice(0, 2);
 
+  // contacts.email/phone can lag behind the linked leads if the contact row predates the sync
+  // trigger -- fall back to the most recent lead's value so the profile never looks blank.
+  const latestLead = leads.length ? leads[leads.length - 1] : null;
+  const displayEmail = contact.email || latestLead?.email || "";
+  const displayPhone = contact.phone || latestLead?.phone || "";
+
   return (
     <div className="space-y-5">
       <button onClick={() => router.push("/contacts")} className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md border border-border hover:bg-muted text-muted-foreground">
@@ -125,8 +138,8 @@ export default function ClientProfilePage({ params }: { params: { contactId: str
         <div className="flex-1">
           <h1 className="text-xl font-bold">{contact.full_name || "Unnamed Client"}</h1>
           <div className="flex items-center gap-4 mt-1 text-sm text-muted-foreground flex-wrap">
-            {contact.phone && <span className="flex items-center gap-1"><Phone className="h-3.5 w-3.5" /> {contact.phone}</span>}
-            {contact.email && <span className="flex items-center gap-1"><Mail className="h-3.5 w-3.5" /> {contact.email}</span>}
+            {displayPhone && <span className="flex items-center gap-1"><Phone className="h-3.5 w-3.5" /> {formatPhone(displayPhone)}</span>}
+            {displayEmail && <span className="flex items-center gap-1"><Mail className="h-3.5 w-3.5" /> {displayEmail}</span>}
             {jobCount > 1 && <span className="text-purple-600 font-medium flex items-center gap-1"><Briefcase className="h-3.5 w-3.5" /> Repeat client · {jobCount} jobs</span>}
           </div>
         </div>
@@ -165,7 +178,7 @@ export default function ClientProfilePage({ params }: { params: { contactId: str
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border">
-                {["Address", "Source", "Status", "Contract", "Change Orders", "Revenue", "Collected", "Received"].map(h => (
+                {["Address", "Job Type", "Source", "Status", "Contract", "Change Orders", "Revenue", "Collected", "Received"].map(h => (
                   <th key={h} className="text-left text-xs text-muted-foreground font-semibold px-4 py-2.5 whitespace-nowrap">{h}</th>
                 ))}
               </tr>
@@ -179,6 +192,7 @@ export default function ClientProfilePage({ params }: { params: { contactId: str
                 const collected = collectedByLead[l.id] || 0;
                 const coCount   = coCountByLead[l.id] || 0;
                 const received  = new Date(l.created_at).toLocaleDateString("en-US", { month: "2-digit", day: "2-digit", year: "numeric" });
+                const jobType   = l.metadata?.job_type || "—";
                 return (
                   <tr key={l.id} onClick={() => { setSelectedLead(l); setDialogOpen(true); }}
                     className={`border-b border-border/40 cursor-pointer hover:bg-muted/20 ${i % 2 !== 0 ? "bg-muted/5" : ""}`}>
@@ -187,6 +201,9 @@ export default function ClientProfilePage({ params }: { params: { contactId: str
                         <MapPin className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
                         <span className="font-medium">{address}</span>
                       </div>
+                    </td>
+                    <td className="px-4 py-3 text-xs">
+                      <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 font-medium">{jobType}</span>
                     </td>
                     <td className="px-4 py-3 text-muted-foreground text-xs">{(l.lead_sources as any)?.name || "—"}</td>
                     <td className="px-4 py-3">
@@ -203,7 +220,7 @@ export default function ClientProfilePage({ params }: { params: { contactId: str
                 );
               })}
               <tr className="bg-muted/30 font-bold border-t-2 border-border">
-                <td className="px-4 py-2.5 text-xs uppercase text-muted-foreground tracking-wide" colSpan={5}>Total</td>
+                <td className="px-4 py-2.5 text-xs uppercase text-muted-foreground tracking-wide" colSpan={6}>Total</td>
                 <td className="px-4 py-2.5 text-emerald-600">{fmt$(totalRevenue)}</td>
                 <td className="px-4 py-2.5">{fmt$(totalCollected)}</td>
                 <td className="px-4 py-2.5" />

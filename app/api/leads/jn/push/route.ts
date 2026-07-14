@@ -10,11 +10,11 @@ const supabase = createClient(
 )
 
 export async function POST(req: NextRequest) {
+  let lead_id: string | undefined
   try {
     const rawBody = await req.text()
     console.log('[JN] Raw incoming body:', rawBody)
 
-    let lead_id: string | undefined
     let operation: string = 'INSERT'
 
     try {
@@ -77,14 +77,14 @@ export async function POST(req: NextRequest) {
       if (!updateRes.ok) {
         await supabase
           .from('leads')
-          .update({ jn_sync_status: 'failed' })
+          .update({ jn_sync_status: 'failed', jn_sync_error: `[${updateRes.status}] ${updateText}`.slice(0, 2000) })
           .eq('id', lead_id)
         return NextResponse.json({ error: `JN update failed: ${updateText}` }, { status: 500 })
       }
 
       await supabase
         .from('leads')
-        .update({ jn_sync_status: 'synced', jn_synced_at: new Date().toISOString() })
+        .update({ jn_sync_status: 'synced', jn_synced_at: new Date().toISOString(), jn_sync_error: null })
         .eq('id', lead_id)
 
       return NextResponse.json({ success: true, action: 'updated', jn_contact_id: lead.jn_contact_id })
@@ -106,7 +106,7 @@ export async function POST(req: NextRequest) {
     if (!createRes.ok) {
       await supabase
         .from('leads')
-        .update({ jn_sync_status: 'failed' })
+        .update({ jn_sync_status: 'failed', jn_sync_error: `[${createRes.status}] ${createText}`.slice(0, 2000) })
         .eq('id', lead_id)
       return NextResponse.json({ error: `JN create failed: ${createText}` }, { status: 500 })
     }
@@ -116,6 +116,10 @@ export async function POST(req: NextRequest) {
       jnData = JSON.parse(createText)
     } catch (e) {
       console.error('[JN] Failed to parse create response:', createText)
+      await supabase
+        .from('leads')
+        .update({ jn_sync_status: 'failed', jn_sync_error: `Parse error: ${createText}`.slice(0, 2000) })
+        .eq('id', lead_id)
       return NextResponse.json({ error: `JN parse failed: ${createText}` }, { status: 500 })
     }
 
@@ -128,6 +132,7 @@ export async function POST(req: NextRequest) {
         jn_contact_id,
         jn_sync_status: 'synced',
         jn_synced_at: new Date().toISOString(),
+        jn_sync_error: null,
       })
       .eq('id', lead_id)
 
@@ -135,31 +140,16 @@ export async function POST(req: NextRequest) {
 
   } catch (err: any) {
     console.error('[JN] Caught error:', err.message)
+    if (lead_id) {
+      await supabase
+        .from('leads')
+        .update({ jn_sync_status: 'failed', jn_sync_error: `Exception: ${err.message}`.slice(0, 2000) })
+        .eq('id', lead_id)
+        .catch?.(() => {})
+    }
     return NextResponse.json({ error: err.message }, { status: 500 })
   }
 }
 
 function buildJNPayload(lead: any) {
-  const firstName = lead.first_name || lead.lead_name?.split(' ')[0] || ''
-  const lastName  = lead.last_name  || lead.lead_name?.split(' ').slice(1).join(' ') || ''
-  const displayName = `${firstName} ${lastName}`.trim() || lead.lead_name || 'Unknown'
-
-  return {
-    first_name:    firstName,
-    last_name:     lastName,
-    display_name:  displayName,
-    email:         lead.email || '',
-    // JobNimbus's Contact object does not have a plain "phone" field -- it splits phone into
-    // home_phone ("Main Phone" in their UI), mobile_phone, and work_phone. Sending "phone" (as
-    // this used to) matches none of them, so JN silently ignores it and the field stays blank.
-    // We only collect one phone number, so we write it to both Main and Mobile so it shows up
-    // regardless of which tab someone checks in JN.
-    home_phone:    lead.phone || '',
-    mobile_phone:  lead.phone || '',
-    address_line1: lead.client_address || '',
-    city:          lead.client_city    || '',
-    state_text:    lead.client_state   || '',
-    zip:           lead.client_zip     || '',
-    tags:          ['com-center'],
-  }
-}
+  const firstName = lead.first_name || lead.lead_name?.split(' ')[0
