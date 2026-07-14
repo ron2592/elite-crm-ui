@@ -571,7 +571,7 @@ export default function ProductionPage() {
                         value={job.production_stage || ""}
                         onChange={e => handleStageUpdate(job, e.target.value)}
                         disabled={isUpdating}
-                        className="text-xs rounded-md border border-border bg-background px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-primary/40 disabled:opacity-50 min-w-[190px]">
+                        className="text-xs rounded-md border border-border bg-background px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-primary/40 disabled:opacity-50 min-w-[145px]">
                         <option value="">— Set Stage —</option>
                         <optgroup label="Pending">
                           <option value="Pending - Check">Pending - Check</option>
@@ -609,7 +609,7 @@ export default function ProductionPage() {
                     </td>
 
                     {/* Stage Date */}
-                    <td className="px-4 py-3 min-w-[160px]">
+                    <td className="px-3 py-3 min-w-[115px]">
                       {isEditingThisDate ? (
                         <div className="space-y-1">
                           <input type="date" value={dateDraft}
@@ -639,7 +639,7 @@ export default function ProductionPage() {
                     </td>
 
                     {/* Notes */}
-                    <td className="px-4 py-3 min-w-[180px]">
+                    <td className="px-3 py-3 min-w-[130px]">
                       {isEditingNote ? (
                         <div className="space-y-1">
                           <textarea value={noteDraft} onChange={e => setNoteDraft(e.target.value)}

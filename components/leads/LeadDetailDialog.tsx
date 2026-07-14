@@ -57,7 +57,9 @@ function parseLeadName(leadName: string): { first: string; last: string } {
 }
 
 interface Payment { id: string; amount: number; payment_type: string; payment_method: string; paid_at: string; notes: string; }
-interface ChangeOrder { id: string; order_number: number; description: string; job_type: string; amount: number; status: "pending" | "won" | "lost"; signed_at: string | null; date_added: string; payments: ChangeOrderPayment[]; }
+interface ChangeOrder { id: string; order_number: number; description: string; job_type: string; amount: number; status: "pending" | "won" | "lost"; signed_at: string | null; date_added: string; record_type: "change_order" | "repeat_job"; payments: ChangeOrderPayment[]; }
+
+const CLOSED_PRODUCTION_STAGES = ["Completed", "Completed with Balance", "Cancelled Before Start", "Cancelled Mid-Job"];
 interface ChangeOrderPayment { id: string; amount: number; payment_type: string; payment_method: string; paid_at: string; notes: string; }
 interface LeadDetailDialogProps {
   lead: Lead | null; open: boolean;
@@ -95,7 +97,7 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
   const [zipLooking,                   setZipLooking]                   = useState(false);
   const [changeOrders,                 setChangeOrders]                 = useState<ChangeOrder[]>([]);
   const [showAddChangeOrder,           setShowAddChangeOrder]           = useState(false);
-  const [newChangeOrder,               setNewChangeOrder]               = useState({ description: "", job_type: "", amount: "", status: "pending" as "pending" | "won" | "lost" });
+  const [newChangeOrder,               setNewChangeOrder]               = useState({ description: "", job_type: "", amount: "", status: "pending" as "pending" | "won" | "lost", record_type: "change_order" as "change_order" | "repeat_job" });
   const [addingChangeOrder,            setAddingChangeOrder]            = useState(false);
   const [expandedChangeOrders,         setExpandedChangeOrders]         = useState<Set<string>>(new Set());
   const [showAddCOPayment,             setShowAddCOPayment]             = useState<string | null>(null);
@@ -366,9 +368,24 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
   const handleAddChangeOrder = async () => {
     if (!newChangeOrder.amount || Number(newChangeOrder.amount) <= 0) return;
     setAddingChangeOrder(true);
-    const { error } = await supabase.from("change_orders").insert({ lead_id: leadId, order_number: changeOrders.length + 1, description: newChangeOrder.description || null, job_type: newChangeOrder.job_type || null, amount: Number(newChangeOrder.amount), status: newChangeOrder.status, signed_at: newChangeOrder.status === "won" ? new Date().toISOString() : null });
-    if (!error) { await fetchChangeOrders(); setNewChangeOrder({ description: "", job_type: "", amount: "", status: "pending" }); setShowAddChangeOrder(false); }
+    const { error } = await supabase.from("change_orders").insert({ lead_id: leadId, order_number: changeOrders.length + 1, description: newChangeOrder.description || null, job_type: newChangeOrder.job_type || null, amount: Number(newChangeOrder.amount), status: newChangeOrder.status, record_type: newChangeOrder.record_type, signed_at: newChangeOrder.status === "won" ? new Date().toISOString() : null });
+    if (!error) { await fetchChangeOrders(); setNewChangeOrder({ description: "", job_type: "", amount: "", status: "pending", record_type: "change_order" }); setShowAddChangeOrder(false); }
     setAddingChangeOrder(false);
+  };
+  // Suggest "Change Order" if there's still active production work on this lead (a genuine
+  // scope/price change to an in-progress job); suggest "Repeat Job" if everything already closed
+  // out — meaning this is really the client coming back later for a separate project. Always
+  // editable, this is just a starting point.
+  const suggestRecordType = (): "change_order" | "repeat_job" => {
+    const hasActiveWork =
+      changeOrders.some(co => co.status === "won" && co.production_stage && !CLOSED_PRODUCTION_STAGES.includes(co.production_stage as any)) ||
+      (l.production_stage && !CLOSED_PRODUCTION_STAGES.includes(l.production_stage));
+    if (changeOrders.length === 0) return "change_order";
+    return hasActiveWork ? "change_order" : "repeat_job";
+  };
+  const handleUpdateCORecordType = async (coId: string, newType: "change_order" | "repeat_job") => {
+    await supabase.from("change_orders").update({ record_type: newType }).eq("id", coId);
+    await fetchChangeOrders();
   };
   const handleUpdateCOStatus = async (coId: string, newStatus: "pending" | "won" | "lost") => {
     await supabase.from("change_orders").update({ status: newStatus, signed_at: newStatus === "won" ? new Date().toISOString() : null }).eq("id", coId);
@@ -707,9 +724,17 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
                 return (
                   <div key={co.id} className="rounded-lg border border-border p-4 space-y-3">
                     <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Change Order #{co.order_number}</p>
                         <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${coStatusColors[co.status]}`}>{co.status.charAt(0).toUpperCase() + co.status.slice(1)}</span>
+                        <select
+                          value={co.record_type || "change_order"}
+                          onChange={(e) => handleUpdateCORecordType(co.id, e.target.value as any)}
+                          title="Is this a scope change to an active job, or the client coming back later for a separate job?"
+                          className={`text-xs rounded-full font-medium px-2 py-0.5 border-none focus:outline-none focus:ring-2 focus:ring-primary/40 cursor-pointer ${co.record_type === "repeat_job" ? "bg-purple-100 text-purple-700" : "bg-slate-100 text-slate-600"}`}>
+                          <option value="change_order">Change Order</option>
+                          <option value="repeat_job">Repeat Job</option>
+                        </select>
                       </div>
                       <div className="flex items-center gap-2">
                         <select value={co.status} onChange={(e) => handleUpdateCOStatus(co.id, e.target.value as any)} className="text-xs rounded-md border border-border bg-background px-2 py-1 focus:outline-none focus:ring-2 focus:ring-primary/40"><option value="pending">Pending</option><option value="won">Won</option><option value="lost">Lost</option></select>
@@ -777,10 +802,23 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
                 );
               })}
               {!showAddChangeOrder ? (
-                <button onClick={() => setShowAddChangeOrder(true)} className="w-full flex items-center justify-center gap-2 rounded-lg border border-dashed border-border py-2.5 text-xs text-muted-foreground hover:border-primary/40 hover:text-primary transition-colors"><Plus className="h-3.5 w-3.5" /> Add Change Order</button>
+                <button onClick={() => { setNewChangeOrder(prev => ({ ...prev, record_type: suggestRecordType() })); setShowAddChangeOrder(true); }} className="w-full flex items-center justify-center gap-2 rounded-lg border border-dashed border-border py-2.5 text-xs text-muted-foreground hover:border-primary/40 hover:text-primary transition-colors"><Plus className="h-3.5 w-3.5" /> Add Change Order</button>
               ) : (
                 <div className="rounded-lg border border-primary/30 bg-primary/5 p-4 space-y-3">
                   <p className="text-xs font-semibold text-primary uppercase tracking-wide">New Change Order</p>
+                  <div>
+                    <label className="text-xs text-muted-foreground block mb-1">Is this a scope change to an active job, or a separate job the client is coming back for?</label>
+                    <div className="flex gap-2">
+                      <button type="button" onClick={() => setNewChangeOrder({ ...newChangeOrder, record_type: "change_order" })}
+                        className={`flex-1 text-xs px-3 py-2 rounded-md border font-medium transition-colors ${newChangeOrder.record_type === "change_order" ? "bg-primary text-primary-foreground border-primary" : "border-border hover:bg-muted text-muted-foreground"}`}>
+                        Change Order <span className="opacity-70">(active job)</span>
+                      </button>
+                      <button type="button" onClick={() => setNewChangeOrder({ ...newChangeOrder, record_type: "repeat_job" })}
+                        className={`flex-1 text-xs px-3 py-2 rounded-md border font-medium transition-colors ${newChangeOrder.record_type === "repeat_job" ? "bg-purple-600 text-white border-purple-600" : "border-border hover:bg-muted text-muted-foreground"}`}>
+                        Repeat Job <span className="opacity-70">(client's back)</span>
+                      </button>
+                    </div>
+                  </div>
                   <div className="grid grid-cols-2 gap-2">
                     <div><label className="text-xs text-muted-foreground block mb-1">Job Type</label><select value={newChangeOrder.job_type} onChange={(e) => setNewChangeOrder({ ...newChangeOrder, job_type: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"><option value="">— Select type —</option>{STANDARD_JOB_TYPES.map(t => <option key={t}>{t}</option>)}<option value="Other">Other</option></select></div>
                     <div><label className="text-xs text-muted-foreground block mb-1">Amount</label><input type="number" placeholder="0" value={newChangeOrder.amount} onChange={(e) => setNewChangeOrder({ ...newChangeOrder, amount: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" /></div>

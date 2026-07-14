@@ -188,7 +188,7 @@ export default function KPIPage() {
   // Revenue events = initial contracts + won change orders, each dated by when it was actually
   // won (event_date) rather than by the parent lead's created_at. Source of truth for all
   // revenue figures below — replaces the old changeOrders-only state.
-  const [revenueEvents, setRevenueEvents] = useState<{ lead_id: string; source_id: string | null; event_type: 'initial_contract' | 'change_order'; event_date: string; amount: number }[]>([])
+  const [revenueEvents, setRevenueEvents] = useState<{ lead_id: string; source_id: string | null; event_type: 'initial_contract' | 'change_order'; event_date: string; amount: number; record_type: 'change_order' | 'repeat_job' | null }[]>([])
   const [spend,        setSpend]        = useState<SpendRow[]>([])
   const [sources,      setSources]      = useState<LeadSource[]>([])
   const [trend,        setTrend]        = useState<{ label: string; contracted: number; actual: number; leads: number }[]>([])
@@ -199,7 +199,7 @@ export default function KPIPage() {
   const [compareYear,  setCompareYear]  = useState<number>(today.getFullYear())
   const [compareLeads, setCompareLeads] = useState<LeadRow[]>([])
   const [compareSpend, setCompareSpend] = useState<SpendRow[]>([])
-  const [compareRevEvents, setCompareRevEvents] = useState<{ lead_id: string; source_id: string | null; event_type: 'initial_contract' | 'change_order'; event_date: string; amount: number }[]>([])
+  const [compareRevEvents, setCompareRevEvents] = useState<{ lead_id: string; source_id: string | null; event_type: 'initial_contract' | 'change_order'; event_date: string; amount: number; record_type: 'change_order' | 'repeat_job' | null }[]>([])
 
   const [showSpendForm,    setShowSpendForm]    = useState(false)
   const [spendForm,        setSpendForm]        = useState({ source_id: '', amount: '', period_start: todayStr(), period_end: todayStr() })
@@ -258,7 +258,7 @@ export default function KPIPage() {
       // Revenue events dated by when they were actually won, not by the parent lead's created_at.
       // This is what lets a change order won this period on an old repeat-client lead (e.g. JCC
       // Bayone, lead from 2024) show up here instead of being buried under the lead's intake date.
-      supabase.from('revenue_events').select('lead_id,source_id,event_type,event_date,amount')
+      supabase.from('revenue_events').select('lead_id,source_id,event_type,event_date,amount,record_type')
         .gte('event_date', dateFrom).lte('event_date', dateTo),
     ])
 
@@ -354,7 +354,7 @@ export default function KPIPage() {
       supabase.from('marketing_spend').select('id,source_id,amount_spent,lead_sources(name)').gte('period_start', spStart).lt('period_start', spEnd),
       // Same fix as the main period: revenue for the comparison month comes from revenue_events
       // (dated by when it was won), not from leads created that month.
-      supabase.from('revenue_events').select('lead_id,source_id,event_type,event_date,amount').gte('event_date', revStart).lte('event_date', revEnd),
+      supabase.from('revenue_events').select('lead_id,source_id,event_type,event_date,amount,record_type').gte('event_date', revStart).lte('event_date', revEnd),
     ]).then(([lr, sr, rr]) => {
       setCompareLeads((lr.data as any[]) || [])
       setCompareSpend((sr.data as any[]) || [])
@@ -378,6 +378,10 @@ export default function KPIPage() {
     const revInRange = filterSrc ? revenueEvents.filter(e => e.source_id === filterSrc) : revenueEvents
     const contracted = revInRange.filter(e => e.event_type === 'initial_contract').reduce((s, e) => s + Number(e.amount || 0), 0)
     const coVolume    = revInRange.filter(e => e.event_type === 'change_order').reduce((s, e) => s + Number(e.amount || 0), 0)
+    // Split of coVolume: true change orders (scope change to an active job) vs repeat jobs
+    // (client came back later for what's really a separate project) — see change_orders.record_type.
+    const changeOrderVolume = revInRange.filter(e => e.event_type === 'change_order' && e.record_type !== 'repeat_job').reduce((s, e) => s + Number(e.amount || 0), 0)
+    const repeatJobVolume   = revInRange.filter(e => e.event_type === 'change_order' && e.record_type === 'repeat_job').reduce((s, e) => s + Number(e.amount || 0), 0)
     const totalRev    = contracted + coVolume
 
     const actual        = payments.reduce((s, p) => s + Number(p.amount || 0), 0) + coPayments.reduce((s, p) => s + Number(p.amount || 0), 0)
@@ -410,7 +414,7 @@ export default function KPIPage() {
       }
       bySrc[key].contracted += Number(e.amount || 0)
     })
-    return { total, inPerson, phoneQ, totalAppts, wonCount, contracted, coVolume, totalRev, actual, lsaCharged, lsaCredited, lsaNotCharged, lsaInReview, totalSpend, apptAcqCost, projAcqCost, bySrc }
+    return { total, inPerson, phoneQ, totalAppts, wonCount, contracted, coVolume, changeOrderVolume, repeatJobVolume, totalRev, actual, lsaCharged, lsaCredited, lsaNotCharged, lsaInReview, totalSpend, apptAcqCost, projAcqCost, bySrc }
   }, [filtered, payments, coPayments, spend, revenueEvents, sources, filterSrc])
 
   const compareBySrc = useMemo(() => {
@@ -733,7 +737,8 @@ export default function KPIPage() {
               <ExpandMetric label="Total Revenue" value={fmt$(kpi.totalRev)} color="text-emerald-600">
                 <div className="space-y-2">
                   <div className="flex justify-between text-sm"><span className="text-muted-foreground">Initial contracts</span><span className="font-bold">{fmt$(kpi.contracted)}</span></div>
-                  <div className="flex justify-between text-sm"><span className="text-muted-foreground">Change orders</span><span className="font-bold">{fmt$(kpi.coVolume)}</span></div>
+                  <div className="flex justify-between text-sm pl-3"><span className="text-muted-foreground">↳ Change orders</span><span className="font-bold">{fmt$(kpi.changeOrderVolume)}</span></div>
+                  <div className="flex justify-between text-sm pl-3"><span className="text-muted-foreground">↳ Repeat jobs</span><span className="font-bold text-purple-600">{fmt$(kpi.repeatJobVolume)}</span></div>
                   <div className="flex justify-between text-sm border-t border-border pt-2"><span className="text-muted-foreground">Collected (actual)</span><span className="font-bold text-emerald-600">{fmt$(kpi.actual)}</span></div>
                 </div>
               </ExpandMetric>
