@@ -123,6 +123,8 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
   const [jnSyncing,                    setJnSyncing]                    = useState(false);
   const [jnSyncResult,                 setJnSyncResult]                 = useState<"success" | "error" | null>(null);
   const [jnContactId,                  setJnContactId]                  = useState<string | null>(null);
+  const [matchSuggestion,              setMatchSuggestion]              = useState<{ id: string; match_reason: string; suggested_name: string; suggested_phone: string | null } | null>(null);
+  const [resolvingMatch,               setResolvingMatch]               = useState(false);
 
   const leadId = (lead as any)?.id;
   const inlineJobTypeDropdownVal = STANDARD_JOB_TYPES.includes(inlineJobType) ? inlineJobType : inlineJobType ? "Other" : "";
@@ -144,7 +146,7 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
 
   useEffect(() => {
     if (open && leadId) {
-      fetchPayments(); fetchLeadSources(); fetchChangeOrders();
+      fetchPayments(); fetchLeadSources(); fetchChangeOrders(); fetchMatchSuggestion();
       const raw = lead as any;
       if (raw?.appointment_at) {
         const d = new Date(raw.appointment_at);
@@ -197,6 +199,43 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
       return { ...order, payments: coPayments || [] };
     }));
     setChangeOrders(ordersWithPayments);
+  }
+  async function fetchMatchSuggestion() {
+    const { data: suggestion } = await supabase
+      .from("contact_match_suggestions")
+      .select("id, match_reason, suggested_contact_id")
+      .eq("lead_id", leadId)
+      .eq("status", "pending")
+      .maybeSingle();
+    if (!suggestion) { setMatchSuggestion(null); return; }
+    const { data: contact } = await supabase
+      .from("contacts")
+      .select("full_name, phone")
+      .eq("id", suggestion.suggested_contact_id)
+      .maybeSingle();
+    setMatchSuggestion({
+      id: suggestion.id,
+      match_reason: suggestion.match_reason,
+      suggested_name: contact?.full_name || "Unknown",
+      suggested_phone: contact?.phone || null,
+    });
+  }
+  async function handleConfirmMatch() {
+    if (!matchSuggestion) return;
+    setResolvingMatch(true);
+    const { error } = await supabase.rpc("confirm_contact_match", { p_suggestion_id: matchSuggestion.id });
+    setResolvingMatch(false);
+    if (error) { alert("Failed to confirm match: " + error.message); return; }
+    setMatchSuggestion(null);
+    if (onLeadUpdated) onLeadUpdated(leadId);
+  }
+  async function handleDismissMatch() {
+    if (!matchSuggestion) return;
+    setResolvingMatch(true);
+    const { error } = await supabase.rpc("dismiss_contact_match", { p_suggestion_id: matchSuggestion.id });
+    setResolvingMatch(false);
+    if (error) { alert("Failed to dismiss: " + error.message); return; }
+    setMatchSuggestion(null);
   }
   async function handleZipLookup(zip: string) {
     if (zip.length !== 5) return;
@@ -439,7 +478,7 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
       setAppointmentAt(""); setAppointmentNotes(""); setSavedAppointment(false);
       setReasonLost(""); setSavedReasonLost(false);
       setLsaStatus("not_charged"); setContactType("");
-      setJnSyncResult(null);
+      setJnSyncResult(null); setMatchSuggestion(null);
     }
     onOpenChange(val);
   };
@@ -510,6 +549,29 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
           {saveEditSuccess && (
             <div className="flex items-center gap-2 rounded-md bg-emerald-500/10 border border-emerald-500/30 px-3 py-2 text-sm text-emerald-600 font-medium">
               ✓ Lead updated successfully
+            </div>
+          )}
+
+          {matchSuggestion && (
+            <div className="rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/20 p-3 space-y-2">
+              <p className="text-sm font-medium text-amber-800 dark:text-amber-300">
+                Possible existing client: <span className="font-semibold">{matchSuggestion.suggested_name}</span>
+                {matchSuggestion.suggested_phone ? ` (${formatPhone(matchSuggestion.suggested_phone)})` : ""}
+              </p>
+              <p className="text-xs text-amber-700 dark:text-amber-400">
+                Matched by {matchSuggestion.match_reason === "email_match" ? "email" : "name"} — different phone number on this lead.
+                Confirm if this is the same client so their job history and revenue link up.
+              </p>
+              <div className="flex gap-2">
+                <button onClick={handleConfirmMatch} disabled={resolvingMatch}
+                  className="flex-1 rounded-md bg-amber-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-amber-700 disabled:opacity-40 transition-colors">
+                  {resolvingMatch ? "..." : "Yes, same client — link them"}
+                </button>
+                <button onClick={handleDismissMatch} disabled={resolvingMatch}
+                  className="rounded-md border border-amber-300 px-3 py-1.5 text-xs hover:bg-amber-100 dark:hover:bg-amber-900/30 transition-colors disabled:opacity-40">
+                  Not the same
+                </button>
+              </div>
             </div>
           )}
 
