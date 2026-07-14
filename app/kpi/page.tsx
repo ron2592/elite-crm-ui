@@ -106,7 +106,9 @@ function MetricCard({ label, value, sub, color = '' }: {
   )
 }
 
-function YTDBlock({ ytd }: { ytd: YTDData | null }) {
+function YTDBlock({ ytd, year, yearOptions, onYearChange, isCurrentYear }: {
+  ytd: YTDData | null; year: number; yearOptions: number[]; onYearChange: (y: number) => void; isCurrentYear: boolean
+}) {
   if (!ytd) return (
     <div className="rounded-xl border border-border p-4 flex items-center justify-center gap-2 text-muted-foreground text-sm">
       <Loader2 className="h-4 w-4 animate-spin" /> Loading year-to-date metrics…
@@ -121,14 +123,15 @@ function YTDBlock({ ytd }: { ytd: YTDData | null }) {
           <div>
             <p className="text-sm font-bold">Year-to-Date · {ytd.year}</p>
             <p className="text-xs text-muted-foreground">
-              Jan 1 – today · For job pricing decisions
-              {!hasData && <span className="ml-1 text-amber-500">· Finish importing historical data for accuracy</span>}
+              {isCurrentYear ? 'Jan 1 – today' : `Jan 1 – Dec 31, ${ytd.year}`} · For job pricing decisions
+              {!hasData && <span className="ml-1 text-amber-500">· No spend/jobs logged for {ytd.year}</span>}
             </p>
           </div>
         </div>
-        <span className="text-xs px-2.5 py-1 rounded-full bg-primary/10 text-primary font-semibold border border-primary/20">
-          {ytd.year} YTD
-        </span>
+        <select value={year} onChange={e => onYearChange(Number(e.target.value))}
+          className="text-xs px-2.5 py-1 rounded-full bg-primary/10 text-primary font-semibold border border-primary/20 focus:outline-none cursor-pointer">
+          {yearOptions.map(y => <option key={y} value={y}>{y} YTD</option>)}
+        </select>
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-3 divide-y sm:divide-y-0 sm:divide-x divide-border bg-card">
         <div className="px-6 py-5">
@@ -215,7 +218,12 @@ export default function KPIPage() {
     return `${fmtDate(dateFrom)} – ${fmtDate(dateTo)}`
   }, [dateFrom, dateTo])
 
-  const selectedYear = useMemo(() => new Date(dateFrom + 'T00:00:00').getFullYear(), [dateFrom])
+  const [ytdYear, setYtdYear] = useState<number>(today.getFullYear())
+  const ytdYearOptions = useMemo(() => {
+    const opts: number[] = []
+    for (let y = today.getFullYear(); y >= today.getFullYear() - 4; y--) opts.push(y)
+    return opts
+  }, [])
 
   function setThisWeek() {
     const now = new Date()
@@ -237,6 +245,7 @@ export default function KPIPage() {
   }
 
   useEffect(() => { fetchAll() }, [rangeStart, rangeEnd])
+  useEffect(() => { fetchYtd(ytdYear) }, [ytdYear])
 
   async function fetchAll() {
     setLoading(true)
@@ -298,15 +307,31 @@ export default function KPIPage() {
     })
     setTrend(Object.entries(tMap).map(([label, v]) => ({ label, ...v })))
 
-    const ytdStart    = new Date(selectedYear, 0, 1).toISOString()
-    const ytdEnd      = new Date().toISOString()
-    const ytdSpendEnd = todayStr()
+    setLeads((leadsRes.data as any[]) || [])
+    setPayments(paymentsRes.data || [])
+    setCoPayments(coPaymentsRes.data || [])
+    setRevenueEvents((revEventsRes.data as any[]) || [])
+    setSpend((spendRes.data as any[]) || [])
+    setSources(srcRes.data || [])
+    setLoading(false)
+  }
+
+  // YTD is its own independent lookup, keyed by ytdYear — NOT tied to the main From/To filter
+  // above, so you can check e.g. 2025's YTD performance while looking at a July 2026 KPI window.
+  async function fetchYtd(year: number) {
+    const isCurrentYear = year === today.getFullYear()
+    const ytdStart    = new Date(year, 0, 1).toISOString()
+    // For the current year, "to date" means right now. For a past year, it means the full year
+    // (Dec 31) — otherwise a past year's YTD would silently include real 2026 data past its own
+    // year boundary.
+    const ytdEnd      = isCurrentYear ? new Date().toISOString() : new Date(year + 1, 0, 1).toISOString()
+    const ytdSpendEnd = isCurrentYear ? todayStr() : `${year}-12-31`
 
     const [ytdLeadsRes, ytdSpendRes, ytdPayRes, ytdCoPayRes] = await Promise.all([
       supabase.from('leads').select('id,status,contact_type,initial_contract_value')
         .gte('created_at', ytdStart).lt('created_at', ytdEnd).eq('archived', false),
       supabase.from('marketing_spend').select('amount_spent')
-        .gte('period_start', `${selectedYear}-01-01`).lte('period_start', ytdSpendEnd),
+        .gte('period_start', `${year}-01-01`).lte('period_start', ytdSpendEnd),
       supabase.from('payments').select('amount')
         .gte('paid_at', ytdStart).lt('paid_at', ytdEnd).gt('amount', 0),
       // YTD revenue = cash actually collected, so it needs change_order_payments too — previously
@@ -329,16 +354,8 @@ export default function KPIPage() {
       cpa:         ytdWon > 0 && ytdSpendAmt > 0 ? ytdSpendAmt / ytdWon : 0,
       apptAcqCost: ytdIP > 0 && ytdSpendAmt > 0 ? ytdSpendAmt / ytdIP : 0,
       roi:         ytdSpendAmt > 0 && ytdRevenue > 0 ? ytdRevenue / ytdSpendAmt : 0,
-      year:        selectedYear,
+      year,
     })
-
-    setLeads((leadsRes.data as any[]) || [])
-    setPayments(paymentsRes.data || [])
-    setCoPayments(coPaymentsRes.data || [])
-    setRevenueEvents((revEventsRes.data as any[]) || [])
-    setSpend((spendRes.data as any[]) || [])
-    setSources(srcRes.data || [])
-    setLoading(false)
   }
 
   useEffect(() => {
@@ -376,18 +393,23 @@ export default function KPIPage() {
     // parent lead's created_at — so a change order won this period on an old repeat-client lead
     // shows up here instead of being buried under the lead's original intake date.
     const revInRange = filterSrc ? revenueEvents.filter(e => e.source_id === filterSrc) : revenueEvents
-    const contracted = revInRange.filter(e => e.event_type === 'initial_contract').reduce((s, e) => s + Number(e.amount || 0), 0)
-    const coVolume    = revInRange.filter(e => e.event_type === 'change_order').reduce((s, e) => s + Number(e.amount || 0), 0)
-    // Split of coVolume only: true change orders (scope change to an active job) vs repeat jobs
-    // flagged manually on the same lead — see change_orders.record_type.
-    const changeOrderVolume = revInRange.filter(e => e.event_type === 'change_order' && e.record_type !== 'repeat_job').reduce((s, e) => s + Number(e.amount || 0), 0)
-    const repeatJobVolume   = revInRange.filter(e => e.event_type === 'change_order' && e.record_type === 'repeat_job').reduce((s, e) => s + Number(e.amount || 0), 0)
-    // Repeat Business Revenue: the comprehensive figure, across BOTH initial contracts and change
-    // orders. Catches a client's second-or-later lead entirely (e.g. a different property address,
-    // matched by phone via contacts) in addition to manually-flagged repeat change orders — this
-    // is the number that answers "how much of our revenue is from repeat clients," full stop.
-    const repeatBusinessRevenue = revInRange.filter(e => e.is_repeat_business).reduce((s, e) => s + Number(e.amount || 0), 0)
-    const totalRev    = contracted + coVolume
+    // Two buckets, full stop:
+    // - Initial Job Revenue: the very first job a client ever won with us.
+    // - Additional Job Revenue: everything after that — a change order on an existing job, OR the
+    //   client coming back later for a separate job (even a different address), whichever happens.
+    //   Auto-counted in the month it was actually won (event_date), not the month the original
+    //   lead came in.
+    const initialJobRevenue = revInRange
+      .filter(e => e.event_type === 'initial_contract' && !e.is_repeat_business)
+      .reduce((s, e) => s + Number(e.amount || 0), 0)
+    const additionalJobRevenue = revInRange
+      .filter(e => e.event_type === 'change_order' || (e.event_type === 'initial_contract' && e.is_repeat_business))
+      .reduce((s, e) => s + Number(e.amount || 0), 0)
+    const totalRev = initialJobRevenue + additionalJobRevenue
+    // Kept as aliases so the per-source table (which just needs each source's grand total,
+    // regardless of bucket) and older references don't need to change.
+    const contracted = initialJobRevenue
+    const coVolume    = additionalJobRevenue
 
     const actual        = payments.reduce((s, p) => s + Number(p.amount || 0), 0) + coPayments.reduce((s, p) => s + Number(p.amount || 0), 0)
     const lsaCharged    = filtered.filter(l => l.lsa_status === 'charged' || l.lsa_status === 'submitted').length
@@ -419,7 +441,7 @@ export default function KPIPage() {
       }
       bySrc[key].contracted += Number(e.amount || 0)
     })
-    return { total, inPerson, phoneQ, totalAppts, wonCount, contracted, coVolume, changeOrderVolume, repeatJobVolume, repeatBusinessRevenue, totalRev, actual, lsaCharged, lsaCredited, lsaNotCharged, lsaInReview, totalSpend, apptAcqCost, projAcqCost, bySrc }
+    return { total, inPerson, phoneQ, totalAppts, wonCount, contracted, coVolume, initialJobRevenue, additionalJobRevenue, totalRev, actual, lsaCharged, lsaCredited, lsaNotCharged, lsaInReview, totalSpend, apptAcqCost, projAcqCost, bySrc }
   }, [filtered, payments, coPayments, spend, revenueEvents, sources, filterSrc])
 
   const compareBySrc = useMemo(() => {
@@ -465,7 +487,7 @@ export default function KPIPage() {
 
   const insightsData: InsightData = useMemo(() => ({
     totalLeads: kpi.total, totalAppts: kpi.inPerson, totalPhoneQ: kpi.phoneQ,
-    totalWon: kpi.wonCount, totalContracted: kpi.contracted + kpi.coVolume,
+    totalWon: kpi.wonCount, totalContracted: kpi.totalRev,
     totalSpend: kpi.totalSpend, period: periodLabel, viewMode: 'weekly',
     sources: srcList.map(src => {
       const srcSpendRow = spendBySrc.find(s => { const key = Object.keys(kpi.bySrc).find(k => kpi.bySrc[k] === src); return s.source_id === key })
@@ -589,6 +611,13 @@ export default function KPIPage() {
         )}
         <span className="text-xs text-muted-foreground ml-auto">{filtered.length} leads · {periodLabel}</span>
       </div>
+      {filterSrc && filtered.length === 0 && kpi.totalRev > 0 && (
+        <div className="rounded-md border border-amber-300 bg-amber-50 dark:bg-amber-950/20 px-3 py-2 text-xs text-amber-800 dark:text-amber-300">
+          No new leads with this source in {periodLabel}, but {fmt$(kpi.totalRev)} in revenue shows because a job tied to
+          an older lead with this source was won or had a change order signed during this period. Leads count by when
+          they came in; revenue counts by when it was actually won — they're different lenses on purpose.
+        </div>
+      )}
 
       {loading ? (
         <div className="flex items-center justify-center py-24 text-muted-foreground gap-2">
@@ -741,10 +770,8 @@ export default function KPIPage() {
             <div className="rounded-lg border border-border bg-card overflow-hidden">
               <ExpandMetric label="Total Revenue" value={fmt$(kpi.totalRev)} color="text-emerald-600">
                 <div className="space-y-2">
-                  <div className="flex justify-between text-sm"><span className="text-muted-foreground">Initial contracts</span><span className="font-bold">{fmt$(kpi.contracted)}</span></div>
-                  <div className="flex justify-between text-sm pl-3"><span className="text-muted-foreground">↳ Change orders</span><span className="font-bold">{fmt$(kpi.changeOrderVolume)}</span></div>
-                  <div className="flex justify-between text-sm pl-3"><span className="text-muted-foreground">↳ Repeat jobs (flagged on same lead)</span><span className="font-bold text-purple-600">{fmt$(kpi.repeatJobVolume)}</span></div>
-                  <div className="flex justify-between text-sm border-t border-border pt-2"><span className="text-muted-foreground font-medium">Repeat Business Revenue (all clients)</span><span className="font-bold text-purple-600">{fmt$(kpi.repeatBusinessRevenue)}</span></div>
+                  <div className="flex justify-between text-sm"><span className="text-muted-foreground">Initial Job Revenue <span className="text-[11px]">(first job won per client)</span></span><span className="font-bold">{fmt$(kpi.initialJobRevenue)}</span></div>
+                  <div className="flex justify-between text-sm"><span className="text-muted-foreground">Additional Job Revenue <span className="text-[11px]">(change orders + repeat clients)</span></span><span className="font-bold text-purple-600">{fmt$(kpi.additionalJobRevenue)}</span></div>
                   <div className="flex justify-between text-sm border-t border-border pt-2"><span className="text-muted-foreground">Collected (actual)</span><span className="font-bold text-emerald-600">{fmt$(kpi.actual)}</span></div>
                 </div>
               </ExpandMetric>
@@ -762,7 +789,7 @@ export default function KPIPage() {
           </div>
 
           {/* 3. YTD BLOCK */}
-          <YTDBlock ytd={ytd} />
+          <YTDBlock ytd={ytd} year={ytdYear} yearOptions={ytdYearOptions} onYearChange={setYtdYear} isCurrentYear={ytdYear === today.getFullYear()} />
 
           {/* 4. SOURCE PERFORMANCE */}
           <Section title="Lead Source Performance" badge={`${srcList.length} sources`} defaultOpen>
@@ -855,7 +882,7 @@ export default function KPIPage() {
                         <td className="py-2.5 pr-3">{kpi.phoneQ}</td>
                         <td className="py-2.5 pr-3">{kpi.wonCount}</td>
                         <td className="py-2.5 pr-3">{closeRatePct(kpi.wonCount, kpi.totalAppts)}</td>
-                        <td className="py-2.5 pr-3 text-emerald-600">{fmt$(kpi.contracted)}</td>
+                        <td className="py-2.5 pr-3 text-emerald-600">{fmt$(kpi.totalRev)}</td>
                         <td className="py-2.5 pr-3">{fmt$(kpi.totalSpend)}</td>
                         <td className="py-2.5 pr-3">{kpi.apptAcqCost > 0 ? fmt$(kpi.apptAcqCost) : '—'}</td>
                         <td className="py-2.5 pr-3">{kpi.projAcqCost > 0 ? fmt$(kpi.projAcqCost) : '—'}</td>
