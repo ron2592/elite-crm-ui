@@ -13,7 +13,7 @@ import {
 import KpiInsights, { InsightData } from '@/components/KpiInsights'
 
 interface LeadRow {
-  id: string; first_name?: string; last_name?: string; phone?: string;
+  id: string; first_name?: string; last_name?: string; lead_name?: string; phone?: string;
   status: string; contact_type: string | null; lsa_status: string | null;
   initial_contract_value: number; created_at: string; source_id: string | null;
   metadata: { salesperson?: string } | null;
@@ -264,7 +264,7 @@ export default function KPIPage() {
 
     const [leadsRes, paymentsRes, coPaymentsRes, spendRes, srcRes, revEventsRes] = await Promise.all([
       supabase.from('leads')
-        .select('id,first_name,last_name,phone,status,contact_type,lsa_status,initial_contract_value,created_at,source_id,metadata,lead_sources(name)')
+        .select('id,first_name,last_name,lead_name,phone,status,contact_type,lsa_status,initial_contract_value,created_at,source_id,metadata,lead_sources(name)')
         .gte('created_at', rangeStart).lte('created_at', rangeEnd).eq('archived', false),
       supabase.from('payments').select('amount,paid_at,lead_id')
         .gte('paid_at', rangeStart).lte('paid_at', rangeEnd),
@@ -998,7 +998,10 @@ export default function KPIPage() {
                   </thead>
                   <tbody>
                     {filtered.map((lead, i) => {
-                      const name        = `${lead.first_name || ''} ${lead.last_name || ''}`.trim() || '—'
+                      // lead_name (the full name captured at intake) takes priority -- a lot of
+                      // older leads never got last_name parsed out of it, so leading with the
+                      // first/last split was silently truncating otherwise-complete names.
+                      const name        = lead.lead_name || `${lead.first_name || ''} ${lead.last_name || ''}`.trim() || '—'
                       const source      = (lead.lead_sources as any)?.name || '—'
                       const salesperson = lead.metadata?.salesperson || '—'
                       const contactType = lead.contact_type === 'in_person' ? '🏠 In-Person' : lead.contact_type === 'phone_quote' ? '📞 Phone' : '—'

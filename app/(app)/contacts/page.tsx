@@ -199,6 +199,14 @@ export default function ContactsPage() {
   const totalPages = Math.ceil(filtered.length / ITEMS_PER_PAGE);
   const paginated  = filtered.slice((page - 1) * ITEMS_PER_PAGE, page * ITEMS_PER_PAGE);
 
+  // How many jobs each contact_id has across ALL leads (not just the filtered/paginated set) --
+  // powers the "Repeat · N jobs" badge that links to the full Client Profile page.
+  const contactJobCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    leads.forEach(l => { if (l.contact_id) counts[l.contact_id] = (counts[l.contact_id] || 0) + 1; });
+    return counts;
+  }, [leads]);
+
   useEffect(() => { setPage(1); }, [search, filterStatus, filterSource, dateFrom, dateTo]);
 
   // ── Selection logic ───────────────────────────────────────────────────────
@@ -509,7 +517,12 @@ export default function ContactsPage() {
                   </td>
                 </tr>
               ) : paginated.map((lead, i) => {
-                const name     = `${lead.first_name || ""} ${lead.last_name || ""}`.trim() || lead.lead_name || "Unnamed";
+                // lead_name (the original full name captured at intake) takes priority over the
+                // first_name/last_name split -- for a lot of older leads last_name never got parsed
+                // out (e.g. "Micheal Giles" ends up with first_name="Micheal", last_name=null), so
+                // showing the combo first was silently truncating otherwise-complete names. This
+                // matches the priority LeadDetailDialog already uses.
+                const name     = lead.lead_name || `${lead.first_name || ""} ${lead.last_name || ""}`.trim() || "Unnamed";
                 const initials = name.split(" ").map((n: string) => n[0]).join("").toUpperCase().slice(0, 2);
                 const city     = lead.client_city || lead.city || "";
                 const state    = lead.client_state || lead.state || "";
@@ -542,7 +555,18 @@ export default function ContactsPage() {
                           {initials}
                         </div>
                         <div>
-                          <p className="font-medium text-sm leading-tight">{name}</p>
+                          <div className="flex items-center gap-1.5">
+                            <p className="font-medium text-sm leading-tight">{name}</p>
+                            {lead.contact_id && contactJobCounts[lead.contact_id] > 1 && (
+                              <button
+                                onClick={(e) => { e.stopPropagation(); router.push(`/contacts/${lead.contact_id}`); }}
+                                title="View this client's full job history"
+                                className="text-[10px] px-1.5 py-0.5 rounded-full bg-purple-100 text-purple-700 font-semibold hover:bg-purple-200 transition-colors whitespace-nowrap"
+                              >
+                                Repeat · {contactJobCounts[lead.contact_id]} jobs
+                              </button>
+                            )}
+                          </div>
                           {lead.email && <p className="text-xs text-muted-foreground">{lead.email}</p>}
                         </div>
                       </div>

@@ -194,9 +194,9 @@ export default function EstimateBuilderPage() {
 
         if (estRes.data.lead_id) {
           const { data: lead } = await supabase
-            .from('leads').select('id, first_name, last_name, phone, metadata')
+            .from('leads').select('id, first_name, last_name, lead_name, phone, metadata')
             .eq('id', estRes.data.lead_id).single()
-          if (lead) { setLinkedLead(lead); setLeadQuery(`${lead.first_name} ${lead.last_name}`.trim()) }
+          if (lead) { setLinkedLead(lead); setLeadQuery(lead.lead_name || `${lead.first_name} ${lead.last_name}`.trim()) }
         }
       }
 
@@ -221,8 +221,10 @@ export default function EstimateBuilderPage() {
     if (!q || q.length < 2) { setLeadResults([]); return }
     const { data } = await supabase
       .from('leads')
-      .select('id, first_name, last_name, phone, metadata')
-      .or(`first_name.ilike.%${q}%,last_name.ilike.%${q}%`)
+      .select('id, first_name, last_name, lead_name, phone, metadata')
+      // lead_name included -- a lot of older leads never got last_name parsed out of it, so
+      // searching by last name alone (e.g. "Giles") would otherwise silently miss them.
+      .or(`first_name.ilike.%${q}%,last_name.ilike.%${q}%,lead_name.ilike.%${q}%`)
       .limit(8)
     setLeadResults(data || [])
   }, [])
@@ -247,7 +249,7 @@ export default function EstimateBuilderPage() {
       client_zip:        m.zip     || v.client_zip,
     }))
     setLinkedLead(lead)
-    setLeadQuery(`${lead.first_name} ${lead.last_name}`.trim())
+    setLeadQuery((lead as any).lead_name || `${lead.first_name} ${lead.last_name}`.trim())
     setShowLeadDrop(false)
     setLeadResults([])
   }
@@ -452,7 +454,7 @@ export default function EstimateBuilderPage() {
                     {leadResults.map(lead => (
                       <button key={lead.id} onClick={() => selectLead(lead)}
                         className="w-full text-left px-4 py-3 hover:bg-gray-700 transition-colors border-b border-gray-700/50 last:border-0">
-                        <div className="text-sm font-medium text-white">{lead.first_name} {lead.last_name}</div>
+                        <div className="text-sm font-medium text-white">{(lead as any).lead_name || `${lead.first_name} ${lead.last_name}`}</div>
                         {lead.phone && <div className="text-xs text-gray-400 mt-0.5">{lead.phone}</div>}
                         {lead.metadata?.address && <div className="text-xs text-gray-500">{lead.metadata.address}</div>}
                       </button>

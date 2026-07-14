@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { Lead } from "@/types";
 import { supabase } from "@/lib/supabaseClient";
 import { useRole } from "@/lib/useRole";
@@ -71,6 +72,7 @@ interface LeadDetailDialogProps {
 
 export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChange, onLeadUpdated, onLeadDeleted }: LeadDetailDialogProps) {
   const { deleteLead, archiveLead, isAdmin, isManager } = useRole();
+  const router = useRouter();
 
   const [estimatedAmount,              setEstimatedAmount]              = useState("");
   const [contractValue,                setContractValue]                = useState("");
@@ -543,6 +545,12 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
                   {isFinancing && <span className="text-xs px-2 py-0.5 rounded-full bg-orange-100 text-orange-600 font-medium">Financing</span>}
                 </DialogTitle>
                 <DialogDescription>{source} {jobType ? `· ${jobType}` : ""}</DialogDescription>
+                {l.contact_id && (
+                  <button onClick={() => router.push(`/contacts/${l.contact_id}`)}
+                    className="text-xs text-primary hover:underline font-medium mt-0.5">
+                    View full client profile →
+                  </button>
+                )}
               </div>
             </div>
             <div className="flex items-center gap-2 mr-6">
