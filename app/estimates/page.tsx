@@ -103,6 +103,13 @@ export default function EstimatesPage() {
         </button>
       </div>
 
+      <div className="mb-5 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 flex items-center gap-2.5">
+        <span className="text-base">🚧</span>
+        <p className="text-sm text-amber-800">
+          <span className="font-semibold">This tab is up for an upgrade.</span> Estimates still work as-is — a more built-out version (better templates, tighter lead/job linking) is planned.
+        </p>
+      </div>
+
       <div className="flex gap-2 mb-4 overflow-x-auto pb-1">
         {(['all', 'Draft', 'Sent', 'Signed', 'Declined'] as const).map(s => (
           <button
