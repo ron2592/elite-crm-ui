@@ -8,9 +8,10 @@ import {
 } from 'recharts'
 import {
   ChevronDown, ChevronUp, Plus, Save, X, Loader2,
-  LayoutDashboard, Printer, Trash2, TrendingUp,
+  Printer, Trash2, TrendingUp,
 } from 'lucide-react'
 import KpiInsights, { InsightData } from '@/components/KpiInsights'
+import KpiTabs from '@/components/kpi/KpiTabs'
 
 interface LeadRow {
   id: string; first_name?: string; last_name?: string; lead_name?: string; phone?: string;
@@ -182,7 +183,6 @@ export default function KPIPage() {
 
   const [dateFrom,        setDateFrom]        = useState(firstOfMonthStr())
   const [dateTo,          setDateTo]          = useState(todayStr())
-  const [kpiDropdownOpen, setKpiDropdownOpen] = useState(false)
   const [filterSrc,       setFilterSrc]       = useState('')
 
   const [leads,        setLeads]        = useState<LeadRow[]>([])
@@ -581,44 +581,17 @@ export default function KPIPage() {
     <div className="p-6 max-w-6xl mx-auto space-y-5">
 
       {/* Header */}
+      <KpiTabs />
       <div className="flex items-center justify-between flex-wrap gap-3">
-        <div className="flex items-center gap-3">
-          <button onClick={() => router.push('/dashboard')}
-            className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md border border-border hover:bg-muted text-muted-foreground">
-            <LayoutDashboard className="h-3.5 w-3.5" /> Dashboard
-          </button>
-          <div>
-            <h1 className="text-2xl font-bold">KPI Dashboard</h1>
-            <p className="text-sm text-muted-foreground">Elite Work Home Improvement</p>
-          </div>
+        <div>
+          <h1 className="text-2xl font-bold">KPI Dashboard</h1>
+          <p className="text-sm text-muted-foreground">Elite Work Home Improvement</p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <button onClick={() => window.print()}
             className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md border border-border hover:bg-muted text-muted-foreground">
             <Printer className="h-3.5 w-3.5" /> Export PDF
           </button>
-          <div className="relative">
-            <button onClick={() => setKpiDropdownOpen(v => !v)}
-              className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md border border-border hover:bg-muted text-muted-foreground font-medium">
-              KPI Views <ChevronDown className="h-3.5 w-3.5" />
-            </button>
-            {kpiDropdownOpen && (
-              <div className="absolute right-0 top-full mt-1 w-56 rounded-lg border border-border bg-background shadow-lg z-50 overflow-hidden">
-                <button onClick={() => { router.push('/kpi/salesperson'); setKpiDropdownOpen(false) }}
-                  className="w-full text-left px-4 py-2.5 text-sm hover:bg-muted text-muted-foreground">
-                  Salesperson KPI
-                </button>
-                <button onClick={() => { router.push('/kpi/organic'); setKpiDropdownOpen(false) }}
-                  className="w-full text-left px-4 py-2.5 text-sm hover:bg-muted text-muted-foreground">
-                  Organic & Repeat Revenue
-                </button>
-                <button onClick={() => { router.push('/kpi/health'); setKpiDropdownOpen(false) }}
-                  className="w-full text-left px-4 py-2.5 text-sm hover:bg-muted text-muted-foreground">
-                  Company Health
-                </button>
-              </div>
-            )}
-          </div>
 
           <div className="flex items-center gap-2 flex-wrap rounded-lg border border-border px-3 py-1.5">
             <span className="text-xs text-muted-foreground">From</span>

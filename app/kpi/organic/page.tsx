@@ -3,7 +3,8 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabaseClient'
-import { ChevronLeft, LayoutDashboard, Loader2, Users, Repeat } from 'lucide-react'
+import { Printer, Loader2, Users, Repeat } from 'lucide-react'
+import KpiTabs from '@/components/kpi/KpiTabs'
 
 const WON_STAGES = ['closed_won', 'won', 'completed', 'completed_with_balance']
 
@@ -137,17 +138,16 @@ export default function OrganicRevenuePage() {
 
   return (
     <div className="p-6 max-w-5xl mx-auto space-y-5">
+      <KpiTabs />
       <div className="flex items-center justify-between flex-wrap gap-3">
-        <div className="flex items-center gap-3">
-          <button onClick={() => router.push('/kpi')}
-            className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md border border-border hover:bg-muted text-muted-foreground">
-            <ChevronLeft className="h-3.5 w-3.5" /> KPI Dashboard
-          </button>
-          <div>
-            <h1 className="text-2xl font-bold">Organic & Repeat Revenue</h1>
-            <p className="text-sm text-muted-foreground">Revenue with no marketing spend behind it — referrals, organic traffic, and returning clients</p>
-          </div>
+        <div>
+          <h1 className="text-2xl font-bold">Organic & Repeat Revenue</h1>
+          <p className="text-sm text-muted-foreground">Revenue with no marketing spend behind it — referrals, organic traffic, and returning clients</p>
         </div>
+        <button onClick={() => window.print()}
+          className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md border border-border hover:bg-muted text-muted-foreground">
+          <Printer className="h-3.5 w-3.5" /> Export PDF
+        </button>
         <div className="flex items-center gap-2 flex-wrap rounded-lg border border-border px-3 py-1.5">
           <span className="text-xs text-muted-foreground">From</span>
           <input type="date" value={dateFrom} onChange={e => { setDateFrom(e.target.value); if (e.target.value > dateTo) setDateTo(e.target.value) }}

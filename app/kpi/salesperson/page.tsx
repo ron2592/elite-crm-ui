@@ -4,7 +4,8 @@ import { useState, useEffect, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabaseClient'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts'
-import { ChevronLeft, ChevronRight, TrendingUp, Plus, Trash2, X, UserPlus } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Printer, TrendingUp, Plus, Trash2, X, UserPlus } from 'lucide-react'
+import KpiTabs from '@/components/kpi/KpiTabs'
 import KpiInsights, { InsightData } from '@/components/KpiInsights'
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -228,18 +229,19 @@ export default function SalespersonKPIPage() {
     <div className="min-h-screen bg-gray-950 text-gray-100">
 
       {/* ── Header ── */}
-      <div className="sticky top-0 z-50 bg-gray-900 border-b border-gray-800 px-6 py-3 flex items-center justify-between shadow-xl">
-        <div className="flex items-center gap-3">
-          <button onClick={() => router.push('/kpi')}
-            className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md border border-gray-700 hover:bg-gray-800 text-gray-400">
-            ← KPI Dashboard
-          </button>
+      <div className="sticky top-0 z-50 bg-gray-900 border-b border-gray-800 px-6 py-3 flex items-center justify-between shadow-xl flex-wrap gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
+          <KpiTabs dark />
           <div>
             <div className="text-white font-semibold">Salesperson Performance</div>
             <div className="text-gray-500 text-xs">Individual KPI breakdown</div>
           </div>
         </div>
         <div className="flex items-center gap-2">
+          <button onClick={() => window.print()}
+            className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md border border-gray-700 hover:bg-gray-800 text-gray-400">
+            <Printer className="h-3.5 w-3.5" /> Export PDF
+          </button>
           <button onClick={() => setShowManager(v => !v)}
             className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md border transition-colors font-medium ${showManager ? 'bg-purple-700 border-purple-600 text-white' : 'border-gray-700 hover:bg-gray-800 text-gray-400'}`}>
             <UserPlus className="h-3.5 w-3.5" /> Manage Salespersons
