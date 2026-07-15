@@ -612,6 +612,10 @@ export default function KPIPage() {
                   className="w-full text-left px-4 py-2.5 text-sm hover:bg-muted text-muted-foreground">
                   Organic & Repeat Revenue
                 </button>
+                <button onClick={() => { router.push('/kpi/health'); setKpiDropdownOpen(false) }}
+                  className="w-full text-left px-4 py-2.5 text-sm hover:bg-muted text-muted-foreground">
+                  Company Health
+                </button>
               </div>
             )}
           </div>

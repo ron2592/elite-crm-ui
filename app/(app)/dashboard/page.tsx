@@ -1,20 +1,36 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
-import { Users, CalendarCheck, TrendingUp, DollarSign, FileSignature, X, ChevronLeft, ChevronRight } from "lucide-react";
+import { Users, CalendarCheck, TrendingUp, DollarSign, FileSignature, X, ChevronLeft, ChevronRight, Target, Wallet, Hammer, AlertTriangle } from "lucide-react";
 import KpiCard from "@/components/dashboard/KpiCard";
 import RevenueChart from "@/components/dashboard/RevenueChart";
 import PipelineSummary from "@/components/dashboard/PipelineSummary";
 import RecentLeads from "@/components/dashboard/RecentLeads";
+
+const OPEN_STAGES = ["new", "contacted", "appointment_set", "estimate_sent"];
+const WON_STAGES  = ["closed_won", "won", "completed", "completed_with_balance"];
+const CANCELLED_PROD_STAGES = ["Cancelled Before Start", "Cancelled Mid-Job"];
+const COMPLETED_PROD_STAGES = ["Completed", "Completed with Balance"];
+const isPendingProdStage = (s: string | null) => !!s && s.startsWith("Pending");
+const isActiveProdStage  = (s: string | null) => !!s && !isPendingProdStage(s) && !COMPLETED_PROD_STAGES.includes(s) && !CANCELLED_PROD_STAGES.includes(s);
 
 const MONTH_NAMES = ["January", "February", "March", "April", "May", "June",
   "July", "August", "September", "October", "November", "December"];
 
 export default function DashboardPage() {
   const now = new Date();
+  const router = useRouter();
   const [selectedMonth, setSelectedMonth] = useState(now.getMonth());
   const [selectedYear,  setSelectedYear]  = useState(now.getFullYear());
+
+  // Company Health snapshot — same "right now" signals as the full Company Health tab
+  // (/kpi/health), condensed to a glance here. Not tied to the month selector below since a
+  // backlog or an aging pipeline is a current-state thing, not a "this month" thing.
+  const [health, setHealth] = useState({
+    pipelineValue: 0, openCount: 0, balanceDue: 0, backlogCount: 0, stuckCount: 0, loaded: false,
+  });
 
   const [stats, setStats] = useState({
     totalLeads: 0, appointments: 0, closeRate: 0,
@@ -103,6 +119,36 @@ export default function DashboardPage() {
     }
     fetchStats();
   }, [selectedMonth, selectedYear]);
+
+  useEffect(() => {
+    async function fetchHealth() {
+      const [openRes, wonRes, coRes, payRes, coPayRes] = await Promise.all([
+        supabase.from("leads").select("estimated_amount,created_at").in("status", OPEN_STAGES).eq("archived", false),
+        supabase.from("leads").select("initial_contract_value,production_stage").in("status", WON_STAGES).eq("archived", false),
+        supabase.from("change_orders").select("amount").eq("status", "won").is("deleted_at", null),
+        supabase.from("payments").select("amount"),
+        supabase.from("change_order_payments").select("amount"),
+      ]);
+      const openLeads = (openRes.data as any[]) || [];
+      const wonLeads   = (wonRes.data as any[]) || [];
+      const pipelineValue = openLeads.reduce((s, l) => s + Number(l.estimated_amount || 0), 0);
+      const stuckCount = openLeads.filter(l => {
+        const days = Math.floor((Date.now() - new Date(l.created_at).getTime()) / 86400000);
+        return days >= 14;
+      }).length;
+      const backlogCount = wonLeads.filter(l => !l.production_stage || isPendingProdStage(l.production_stage) || isActiveProdStage(l.production_stage)).length;
+      const totalContracted = wonLeads.reduce((s, l) => s + Number(l.initial_contract_value || 0), 0)
+        + (coRes.data || []).reduce((s: number, r: any) => s + Number(r.amount || 0), 0);
+      const collected = (payRes.data || []).reduce((s: number, r: any) => s + Number(r.amount || 0), 0)
+        + (coPayRes.data || []).reduce((s: number, r: any) => s + Number(r.amount || 0), 0);
+      setHealth({
+        pipelineValue, openCount: openLeads.length,
+        balanceDue: Math.max(0, totalContracted - collected),
+        backlogCount, stuckCount, loaded: true,
+      });
+    }
+    fetchHealth();
+  }, []);
 
   return (
     <div className="space-y-6 max-w-7xl">
@@ -197,6 +243,38 @@ export default function DashboardPage() {
       <div className="grid gap-4 lg:grid-cols-3">
         <div className="lg:col-span-2"><RevenueChart /></div>
         <div><PipelineSummary /></div>
+      </div>
+
+      {/* Company Health summary — condensed version of /kpi/health, separate from marketing/sales
+          KPIs above. Answers "is the business running well" rather than "is marketing working." */}
+      <div className="rounded-xl border border-border bg-card overflow-hidden">
+        <button onClick={() => router.push("/kpi/health")}
+          className="w-full flex items-center justify-between px-5 py-3 bg-muted/20 hover:bg-muted/40 transition-colors">
+          <span className="text-sm font-bold">Company Health</span>
+          <span className="text-xs text-primary font-medium">View full report →</span>
+        </button>
+        <div className="grid grid-cols-2 sm:grid-cols-4 divide-x divide-border">
+          <div className="px-5 py-4">
+            <p className="text-xs text-muted-foreground font-semibold uppercase tracking-wide mb-1.5 flex items-center gap-1"><Target className="h-3.5 w-3.5" /> Pipeline in Play</p>
+            <p className="text-xl font-bold">{health.loaded ? `$${health.pipelineValue.toLocaleString()}` : "..."}</p>
+            <p className="text-xs text-muted-foreground mt-0.5">{health.loaded ? `${health.openCount} active leads` : ""}</p>
+          </div>
+          <div className="px-5 py-4">
+            <p className="text-xs text-muted-foreground font-semibold uppercase tracking-wide mb-1.5 flex items-center gap-1"><Wallet className="h-3.5 w-3.5" /> Balance Due</p>
+            <p className="text-xl font-bold text-amber-600">{health.loaded ? `$${health.balanceDue.toLocaleString()}` : "..."}</p>
+            <p className="text-xs text-muted-foreground mt-0.5">Signed, not yet collected</p>
+          </div>
+          <div className="px-5 py-4">
+            <p className="text-xs text-muted-foreground font-semibold uppercase tracking-wide mb-1.5 flex items-center gap-1"><Hammer className="h-3.5 w-3.5" /> Production Backlog</p>
+            <p className="text-xl font-bold">{health.loaded ? health.backlogCount : "..."}</p>
+            <p className="text-xs text-muted-foreground mt-0.5">Won, not yet completed</p>
+          </div>
+          <div className="px-5 py-4">
+            <p className="text-xs text-muted-foreground font-semibold uppercase tracking-wide mb-1.5 flex items-center gap-1"><AlertTriangle className="h-3.5 w-3.5" /> Stuck 14+ Days</p>
+            <p className={`text-xl font-bold ${health.loaded && health.stuckCount > 0 ? "text-red-500" : ""}`}>{health.loaded ? health.stuckCount : "..."}</p>
+            <p className="text-xs text-muted-foreground mt-0.5">Leads sitting untouched</p>
+          </div>
+        </div>
       </div>
 
       <RecentLeads />
