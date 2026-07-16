@@ -9,7 +9,7 @@ import { pushAppointmentToGoogle } from "@/lib/calendar-sync";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
 } from "@/components/ui/dialog";
-import { Phone, Mail, MapPin, Calendar, DollarSign, Save, Plus, X, Pencil, Archive, ChevronDown, ChevronUp, Trash2, RefreshCw } from "lucide-react";
+import { Phone, Mail, MapPin, Calendar, DollarSign, Save, Plus, X, Pencil, Archive, ChevronDown, ChevronUp, Trash2, RefreshCw, ExternalLink } from "lucide-react";
 
 const statusLabels: Record<string, string> = {
   new: "New Lead", open: "New Lead", contacted: "Qualified",
@@ -88,12 +88,13 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
   const [editMode,                     setEditMode]                     = useState(false);
   const [saveEditSuccess,              setSaveEditSuccess]              = useState(false);
   const [editFields,                   setEditFields]                   = useState({
-    first_name: "", last_name: "", phone: "", email: "",
+    first_name: "", last_name: "", company_name: "", phone: "", phone_2: "", email: "",
     address_line_1: "", city: "", state: "", zip: "",
     source_id: "", job_type: "", custom_job_type: "",
     salesperson: "", notes: "",
     lead_received_date: "",
   });
+  const [linksDraft,                   setLinksDraft]                   = useState<{label:string;url:string}[]>([]);
   const [editSaving,                   setEditSaving]                   = useState(false);
   const [archiving,                    setArchiving]                    = useState(false);
   const [deleting,                     setDeleting]                     = useState(false);
@@ -178,7 +179,9 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
       setEditFields({
         first_name:         l.first_name || parsed.first,
         last_name:          l.last_name  || parsed.last,
+        company_name:       l.company_name       || "",
         phone:              l.phone              || "",
+        phone_2:            l.phone_2            || "",
         email:              l.email              || "",
         address_line_1:     l.address_line_1     || l.client_address || "",
         city:               l.city               || l.client_city    || "",
@@ -191,6 +194,7 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
         notes:              l.metadata?.notes    || "",
         lead_received_date: toLocalDate(l.created_at),
       });
+      setLinksDraft(Array.isArray(l.links) ? l.links.map((x: any) => ({ label: x?.label || "", url: x?.url || "" })) : []);
     }
   }, [editMode, lead]);
 
@@ -360,18 +364,30 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
     setSaving(false); setSaved(true); setTimeout(() => setSaved(false), 2000);
     if (onLeadUpdated) onLeadUpdated(leadId);
   };
+  function addLinkDraft(presetLabel = "") {
+    setLinksDraft(prev => [...prev, { label: presetLabel, url: "" }]);
+  }
+  function updateLinkDraft(idx: number, field: "label" | "url", value: string) {
+    setLinksDraft(prev => prev.map((x, i) => (i === idx ? { ...x, [field]: value } : x)));
+  }
+  function removeLinkDraft(idx: number) {
+    setLinksDraft(prev => prev.filter((_, i) => i !== idx));
+  }
   const handleSaveEdit = async () => {
     setEditSaving(true);
     const fullName     = `${editFields.first_name} ${editFields.last_name}`.trim();
     const finalJobType = editFields.job_type === "Other" ? editFields.custom_job_type : editFields.job_type;
     const updates: any = {
       lead_name:      fullName || l.lead_name,
+      company_name:   editFields.company_name || null,
       phone:          editFields.phone,
+      phone_2:        editFields.phone_2 || null,
       email:          editFields.email,
       client_address: editFields.address_line_1,
       client_city:    editFields.city,
       client_state:   editFields.state,
       client_zip:     editFields.zip,
+      links:          linksDraft.filter(x => x.url.trim()).map(x => ({ label: x.label.trim() || "Link", url: x.url.trim() })),
       metadata: { ...l.metadata, job_type: finalJobType || null, salesperson: editFields.salesperson || null, notes: editFields.notes || null },
     };
     if (editFields.source_id) updates.source_id = editFields.source_id;
@@ -605,6 +621,7 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
                   {isFinancing && <span className="text-xs px-2 py-0.5 rounded-full bg-orange-100 text-orange-600 font-medium">Financing</span>}
                 </DialogTitle>
                 <DialogDescription>{source} {jobType ? `· ${jobType}` : ""}</DialogDescription>
+                {l.company_name && <p className="text-xs text-muted-foreground mt-0.5">{l.company_name}</p>}
                 {l.contact_id && (
                   <button onClick={() => router.push(`/contacts/${l.contact_id}`)}
                     className="text-xs text-primary hover:underline font-medium mt-0.5">
@@ -672,10 +689,12 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
                 <div><label className="text-xs text-muted-foreground block mb-1">First Name</label><input value={editFields.first_name} onChange={(e) => setEditFields({ ...editFields, first_name: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" /></div>
                 <div><label className="text-xs text-muted-foreground block mb-1">Last Name</label><input value={editFields.last_name} onChange={(e) => setEditFields({ ...editFields, last_name: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" /></div>
               </div>
+              <div><label className="text-xs text-muted-foreground block mb-1">Company Name (optional)</label><input value={editFields.company_name} onChange={(e) => setEditFields({ ...editFields, company_name: e.target.value })} placeholder="e.g. ABC Roofing LLC" className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" /></div>
               <div className="grid grid-cols-2 gap-2">
                 <div><label className="text-xs text-muted-foreground block mb-1">Phone</label><input value={editFields.phone} onChange={(e) => setEditFields({ ...editFields, phone: formatPhone(e.target.value) })} placeholder="(201) 555-0000" className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" /></div>
                 <div><label className="text-xs text-muted-foreground block mb-1">Email</label><input value={editFields.email} onChange={(e) => setEditFields({ ...editFields, email: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" /></div>
               </div>
+              <div><label className="text-xs text-muted-foreground block mb-1">Extra Phone (optional)</label><input value={editFields.phone_2} onChange={(e) => setEditFields({ ...editFields, phone_2: formatPhone(e.target.value) })} placeholder="Office, spouse, alternate contact…" className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" /></div>
               <div><label className="text-xs text-muted-foreground block mb-1">Address</label><input value={editFields.address_line_1} onChange={(e) => setEditFields({ ...editFields, address_line_1: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" /></div>
               <div className="grid grid-cols-3 gap-2">
                 <div><label className="text-xs text-muted-foreground block mb-1">Zip {zipLooking && <span className="text-blue-500">...</span>}</label><input value={editFields.zip} maxLength={5} placeholder="07011" onChange={(e) => { const val = e.target.value.replace(/\D/g, "").slice(0, 5); setEditFields({ ...editFields, zip: val }); if (val.length === 5) handleZipLookup(val); }} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" /></div>
@@ -708,6 +727,27 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
                   <option value="">— Select salesperson —</option>
                   {SALESPERSONS.map((s) => <option key={s}>{s}</option>)}
                 </select>
+              </div>
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-xs text-muted-foreground">Links</label>
+                  <div className="flex gap-1.5">
+                    <button type="button" onClick={() => addLinkDraft("CompanyCam")} className="text-xs px-2 py-1 rounded-md border border-border hover:bg-muted text-muted-foreground transition-colors">+ CompanyCam</button>
+                    <button type="button" onClick={() => addLinkDraft("JobNimbus Estimate")} className="text-xs px-2 py-1 rounded-md border border-border hover:bg-muted text-muted-foreground transition-colors">+ JN Estimate</button>
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  {linksDraft.map((link, idx) => (
+                    <div key={idx} className="flex gap-2 items-center">
+                      <input value={link.label} onChange={(e) => updateLinkDraft(idx, "label", e.target.value)} placeholder="Label" className="w-28 shrink-0 rounded-md border border-border bg-background px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-primary/40" />
+                      <input value={link.url} onChange={(e) => updateLinkDraft(idx, "url", e.target.value)} placeholder="https://…" className="flex-1 rounded-md border border-border bg-background px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-primary/40" />
+                      <button type="button" onClick={() => removeLinkDraft(idx)} className="shrink-0 rounded-md p-1.5 hover:bg-muted text-muted-foreground transition-colors"><X className="h-3.5 w-3.5" /></button>
+                    </div>
+                  ))}
+                  <button type="button" onClick={() => addLinkDraft()} className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors">
+                    <Plus className="h-3 w-3" /> Add link
+                  </button>
+                </div>
               </div>
               <div>
                 <label className="text-xs text-muted-foreground block mb-1">Notes</label>
@@ -1078,12 +1118,25 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
           {!editMode && (
             <div className="space-y-2.5">
               <div className="flex items-center gap-2.5 text-sm"><Phone className="h-4 w-4 text-muted-foreground" /><span>{phone}</span></div>
+              {l.phone_2 && (
+                <div className="flex items-center gap-2.5 text-sm pl-6"><span className="text-xs text-muted-foreground">Extra:</span><span>{l.phone_2}</span></div>
+              )}
               <div className="flex items-center gap-2.5 text-sm"><Mail className="h-4 w-4 text-muted-foreground" /><span>{email}</span></div>
               <div className="flex items-center gap-2.5 text-sm"><MapPin className="h-4 w-4 text-muted-foreground" /><span>{address}</span></div>
               {createdAt && (
                 <div className="flex items-center gap-2.5 text-sm">
                   <Calendar className="h-4 w-4 text-muted-foreground" />
                   <span>Lead received {new Date(createdAt).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}</span>
+                </div>
+              )}
+              {Array.isArray(l.links) && l.links.length > 0 && (
+                <div className="flex flex-wrap gap-2 pt-1">
+                  {l.links.map((link: any, idx: number) => (
+                    <a key={idx} href={link.url} target="_blank" rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-full border border-border hover:bg-muted text-primary transition-colors">
+                      <ExternalLink className="h-3 w-3" /> {link.label || "Link"}
+                    </a>
+                  ))}
                 </div>
               )}
             </div>

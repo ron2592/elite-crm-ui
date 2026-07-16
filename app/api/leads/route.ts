@@ -114,7 +114,9 @@ export async function POST(req: Request) {
   const { data, error } = await supabase.from("leads").insert([
     {
       lead_name:              body.lead_name || `${firstName} ${lastName}`.trim() || "LSA Lead",
+      company_name:           body.company_name || null,
       phone:                  body.phone ? normalizePhone(body.phone) : null,
+      phone_2:                body.phone_2 ? normalizePhone(body.phone_2) : null,
       email:                  body.email || null,
       created_at:             body.created_at || new Date().toISOString(),
       client_address:         body.client_address  || body.address_line_1 || null,
@@ -128,6 +130,7 @@ export async function POST(req: Request) {
       bad_lead:               body.bad_lead     || false,
       archived:               false,
       initial_contract_value: body.initial_contract_value || 0,
+      links: Array.isArray(body.links) ? body.links.filter((l: any) => l && l.url) : [],
       metadata: {
         salesperson: body.meta_salesperson || body.salesperson || null,
         job_type:    body.meta_job_type    || body.job_type    || null,

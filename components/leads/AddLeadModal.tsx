@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { supabase } from "@/lib/supabaseClient";
-import { X, Loader2, Calendar, DollarSign, Save } from "lucide-react";
+import { X, Loader2, Calendar, DollarSign, Save, Plus } from "lucide-react";
 import { pushLeadToJN } from "@/lib/jn-sync";
 
 const JOB_TYPES = [
@@ -35,7 +35,9 @@ const BLANK_FORM = {
   lead_received:    todayStr(),
   first_name:       "",
   last_name:        "",
+  company_name:     "",
   phone:            "",
+  phone_2:          "",
   email:            "",
   address:          "",
   zip:              "",
@@ -74,6 +76,7 @@ export default function AddLeadModal({ open, onOpenChange, onLeadCreated }: AddL
   const [zipLoading,   setZipLoading]   = useState(false);
   const [otherJobType, setOtherJobType] = useState("");
   const [showOtherJob, setShowOtherJob] = useState(false);
+  const [links,        setLinks]        = useState<{label:string;url:string}[]>([]);
 
   const isAppointmentStage = form.status === "appointment_set";
   const isEstimateStage    = form.status === "estimate_sent";
@@ -90,6 +93,7 @@ export default function AddLeadModal({ open, onOpenChange, onLeadCreated }: AddL
       setDupWarning(null);
       setShowOtherJob(false);
       setOtherJobType("");
+      setLinks([]);
     }
   }, [open]);
 
@@ -119,6 +123,16 @@ export default function AddLeadModal({ open, onOpenChange, onLeadCreated }: AddL
       estimated_amount: "",
       reason_lost:      "",
     }));
+  }
+
+  function addLink(presetLabel = "") {
+    setLinks(prev => [...prev, { label: presetLabel, url: "" }]);
+  }
+  function updateLink(idx: number, field: "label" | "url", value: string) {
+    setLinks(prev => prev.map((l, i) => (i === idx ? { ...l, [field]: value } : l)));
+  }
+  function removeLink(idx: number) {
+    setLinks(prev => prev.filter((_, i) => i !== idx));
   }
 
   async function handleSave(force = false) {
@@ -156,6 +170,9 @@ export default function AddLeadModal({ open, onOpenChange, onLeadCreated }: AddL
           estimated_amount:       isEstimateStage && form.estimated_amount ? Number(form.estimated_amount) : 0,
           initial_contract_value: isWonStage && form.contract_value ? Number(form.contract_value) : 0,
           bad_lead:               false,
+          company_name:           form.company_name || null,
+          phone_2:                form.phone_2      || null,
+          links:                  links.filter(l => l.url.trim()).map(l => ({ label: l.label.trim() || "Link", url: l.url.trim() })),
           meta_salesperson:       form.salesperson || null,
           meta_job_type:          jobType          || null,
           meta_notes:             form.notes       || null,
@@ -251,6 +268,13 @@ export default function AddLeadModal({ open, onOpenChange, onLeadCreated }: AddL
             </div>
           </div>
 
+          {/* Company Name (optional) */}
+          <div>
+            <label className={labelClass}>Company Name (optional)</label>
+            <input value={form.company_name} onChange={e => setForm(f => ({ ...f, company_name: e.target.value }))}
+              placeholder="e.g. ABC Roofing LLC" className={inputClass} />
+          </div>
+
           {/* Phone + Email */}
           <div className="grid grid-cols-2 gap-3">
             <div>
@@ -265,6 +289,14 @@ export default function AddLeadModal({ open, onOpenChange, onLeadCreated }: AddL
               <input type="email" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
                 placeholder="email@example.com" className={inputClass} />
             </div>
+          </div>
+
+          {/* Extra Phone (optional) */}
+          <div>
+            <label className={labelClass}>Extra Phone (optional)</label>
+            <input value={form.phone_2}
+              onChange={e => setForm(f => ({ ...f, phone_2: formatPhone(e.target.value) }))}
+              placeholder="Office, spouse, alternate contact…" className={inputClass} />
           </div>
 
           {/* Address */}
@@ -510,6 +542,41 @@ export default function AddLeadModal({ open, onOpenChange, onLeadCreated }: AddL
                 className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-400/40 resize-none" />
             </div>
           )}
+
+          {/* Links (CompanyCam photos, JobNimbus estimate, or anything else) */}
+          <div>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className={labelClass + " mb-0"}>Links</label>
+              <div className="flex gap-1.5">
+                <button type="button" onClick={() => addLink("CompanyCam")}
+                  className="text-xs px-2 py-1 rounded-md border border-border hover:bg-muted text-muted-foreground transition-colors">
+                  + CompanyCam
+                </button>
+                <button type="button" onClick={() => addLink("JobNimbus Estimate")}
+                  className="text-xs px-2 py-1 rounded-md border border-border hover:bg-muted text-muted-foreground transition-colors">
+                  + JN Estimate
+                </button>
+              </div>
+            </div>
+            <div className="space-y-2">
+              {links.map((link, idx) => (
+                <div key={idx} className="flex gap-2 items-center">
+                  <input value={link.label} onChange={e => updateLink(idx, "label", e.target.value)}
+                    placeholder="Label" className="w-28 shrink-0 rounded-md border border-border bg-background px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-primary/40" />
+                  <input value={link.url} onChange={e => updateLink(idx, "url", e.target.value)}
+                    placeholder="https://…" className="flex-1 rounded-md border border-border bg-background px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-primary/40" />
+                  <button type="button" onClick={() => removeLink(idx)}
+                    className="shrink-0 rounded-md p-1.5 hover:bg-muted text-muted-foreground transition-colors">
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              ))}
+              <button type="button" onClick={() => addLink()}
+                className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors">
+                <Plus className="h-3 w-3" /> Add link
+              </button>
+            </div>
+          </div>
 
           {/* Notes */}
           <div>
