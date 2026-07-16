@@ -111,6 +111,9 @@ export async function POST(req: Request) {
   }
 
   // ─── Insert to Supabase ───────────────────────────────────────────────────────
+  // .select().single() so the caller actually gets the created row back -- without it,
+  // `data` comes back null and callers like AddLeadModal's `result.lead?.id` check (used
+  // to fire the JobNimbus sync and the Google Calendar push) silently never fires.
   const { data, error } = await supabase.from("leads").insert([
     {
       lead_name:              body.lead_name || `${firstName} ${lastName}`.trim() || "LSA Lead",
@@ -129,21 +132,29 @@ export async function POST(req: Request) {
       lsa_status:             body.lsa_status   || null,
       bad_lead:               body.bad_lead     || false,
       archived:               false,
+      // These three were previously omitted entirely -- creating a lead directly in the
+      // Appointment Set / Estimate Sent stage (via +New Lead) silently dropped the very
+      // appointment/estimate info the form asked for.
+      appointment_at:         body.appointment_at    || null,
+      appointment_notes:      body.appointment_notes || null,
+      estimated_amount:       body.estimated_amount  || 0,
       initial_contract_value: body.initial_contract_value || 0,
       links: Array.isArray(body.links) ? body.links.filter((l: any) => l && l.url) : [],
       metadata: {
         salesperson: body.meta_salesperson || body.salesperson || null,
         job_type:    body.meta_job_type    || body.job_type    || null,
         notes:       body.meta_notes       || body.notes       || null,
+        description: body.meta_description || null,
+        reason_lost: body.meta_reason_lost || null,
         source:      body.lead_source      || null,
       },
     },
-  ]);
+  ]).select().single();
 
   if (error) {
     console.error("Supabase insert error:", error.message);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  return NextResponse.json({ success: true, data, jn_id: null });
+  return NextResponse.json({ success: true, lead: data, data, jn_id: null });
 }

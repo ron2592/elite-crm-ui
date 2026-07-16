@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { X, Loader2, Calendar, DollarSign, Save, Plus } from "lucide-react";
 import { pushLeadToJN } from "@/lib/jn-sync";
+import { pushAppointmentToGoogle } from "@/lib/calendar-sync";
 
 const JOB_TYPES = [
   "Roof Replacement","Roof Repair","Deck","Siding","Gutters",
@@ -198,7 +199,13 @@ export default function AddLeadModal({ open, onOpenChange, onLeadCreated }: AddL
         return;
       }
 
-      if (result.lead?.id) pushLeadToJN(result.lead.id);
+      if (result.lead?.id) {
+        pushLeadToJN(result.lead.id);
+        // If this lead was created straight into Appointment Set with a date/time already
+        // filled in, mirror it to Google Calendar too -- same one-way sync as editing an
+        // existing lead's appointment, so it doesn't need to be entered twice.
+        if (isAppointmentStage && form.appointment_at) pushAppointmentToGoogle(result.lead.id);
+      }
 
       onOpenChange(false);
       onLeadCreated?.();
