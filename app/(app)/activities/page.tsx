@@ -7,7 +7,7 @@ import {
   Phone, RefreshCw, Plus, X, Save, Loader2,
   CalendarDays, ChevronDown, ChevronUp,
   Link2, FileText, CheckCircle2, Users,
-  Target, TrendingUp, Search,
+  Target, TrendingUp, Search, Zap,
 } from "lucide-react";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -23,6 +23,7 @@ interface Activity {
   goals_achieved: Record<string, number> | null;
   activity_date: string;
   created_at: string;
+  auto_generated: boolean;
 }
 
 interface LeadOption { id: string; lead_name: string; phone: string | null }
@@ -63,6 +64,13 @@ function formatDate(d: string) {
   return date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
 
+// Auto-generated titles already start with the same emoji shown on the type badge
+// (e.g. "✅ Task completed: ..." next to a "✅ Task Completed" badge) -- strip that
+// leading emoji from the title so the card isn't showing the same icon twice.
+function cleanTitle(title: string) {
+  return title.replace(/^\p{Extended_Pictographic}\uFE0F?\s*/u, "");
+}
+
 // ── Component ─────────────────────────────────────────────────────────────────
 export default function ActivitiesPage() {
   const [activities,  setActivities]  = useState<Activity[]>([]);
@@ -76,6 +84,7 @@ export default function ActivitiesPage() {
   const [filterUser,   setFilterUser]   = useState("");
   const [filterType,   setFilterType]   = useState("");
   const [filterDate,   setFilterDate]   = useState("");
+  const [filterOrigin,  setFilterOrigin] = useState<"all" | "auto" | "manual">("all");
   const [search,       setSearch]       = useState("");
 
   // ── Log form ───────────────────────────────────────────────────────────────
@@ -191,12 +200,14 @@ export default function ActivitiesPage() {
       if (filterUser && a.user_name      !== filterUser) return false;
       if (filterType && a.activity_type  !== filterType) return false;
       if (filterDate && a.activity_date  !== filterDate) return false;
+      if (filterOrigin === "auto"   && !a.auto_generated) return false;
+      if (filterOrigin === "manual" &&  a.auto_generated) return false;
       if (q && !a.title.toLowerCase().includes(q) &&
                !(a.lead_name   || "").toLowerCase().includes(q) &&
                !(a.description || "").toLowerCase().includes(q)) return false;
       return true;
     });
-  }, [activities, filterUser, filterType, filterDate, search]);
+  }, [activities, filterUser, filterType, filterDate, filterOrigin, search]);
 
   // Group by date
   const grouped = useMemo(() => {
@@ -282,11 +293,19 @@ export default function ActivitiesPage() {
           {/* Tabs */}
           <div className="flex rounded-lg border border-border overflow-hidden">
             <button onClick={() => { setActiveTab("log"); setShowForm(true); }}
-              className="flex items-center gap-1.5 text-xs px-3 py-1.5 bg-primary text-primary-foreground font-medium hover:bg-primary/90 transition-colors">
+              className={`flex items-center gap-1.5 text-xs px-3 py-1.5 font-medium transition-colors ${
+                showForm && activeTab === "log"
+                  ? "bg-primary text-primary-foreground hover:bg-primary/90"
+                  : "hover:bg-muted text-muted-foreground"
+              }`}>
               <Plus className="h-3.5 w-3.5" /> Log Activity
             </button>
             <button onClick={() => { setActiveTab("eod"); setShowForm(true); }}
-              className="flex items-center gap-1.5 text-xs px-3 py-1.5 border-l border-border hover:bg-muted text-muted-foreground transition-colors font-medium">
+              className={`flex items-center gap-1.5 text-xs px-3 py-1.5 border-l border-border font-medium transition-colors ${
+                showForm && activeTab === "eod"
+                  ? "bg-violet-600 text-white hover:bg-violet-700"
+                  : "hover:bg-muted text-muted-foreground"
+              }`}>
               <Target className="h-3.5 w-3.5" /> EOD Report
             </button>
           </div>
@@ -520,8 +539,23 @@ export default function ActivitiesPage() {
         </select>
         <input type="date" value={filterDate} onChange={e => setFilterDate(e.target.value)}
           className="rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none text-muted-foreground" />
-        {(filterUser || filterType || filterDate || search) && (
-          <button onClick={() => { setFilterUser(""); setFilterType(""); setFilterDate(""); setSearch(""); }}
+
+        {/* Auto vs manual origin toggle */}
+        <div className="flex rounded-md border border-border overflow-hidden">
+          {(["all", "auto", "manual"] as const).map(o => (
+            <button key={o} onClick={() => setFilterOrigin(o)}
+              className={`text-xs px-2.5 py-1.5 font-medium transition-colors ${
+                filterOrigin === o
+                  ? "bg-primary text-primary-foreground"
+                  : "hover:bg-muted text-muted-foreground"
+              } ${o !== "all" ? "border-l border-border" : ""}`}>
+              {o === "all" ? "All" : o === "auto" ? "Auto" : "Manual"}
+            </button>
+          ))}
+        </div>
+
+        {(filterUser || filterType || filterDate || filterOrigin !== "all" || search) && (
+          <button onClick={() => { setFilterUser(""); setFilterType(""); setFilterDate(""); setFilterOrigin("all"); setSearch(""); }}
             className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
             <X className="h-3.5 w-3.5" /> Clear
           </button>
@@ -573,7 +607,14 @@ export default function ActivitiesPage() {
 
                         {/* Content */}
                         <div className="flex-1 min-w-0">
-                          <p className="font-medium text-sm leading-snug">{activity.title}</p>
+                          <div className="flex items-start gap-2 flex-wrap">
+                            <p className="font-medium text-sm leading-snug">{cleanTitle(activity.title)}</p>
+                            {activity.auto_generated && (
+                              <span className="flex items-center gap-1 text-xs px-1.5 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20 shrink-0">
+                                <Zap className="h-2.5 w-2.5" /> Auto
+                              </span>
+                            )}
+                          </div>
                           {activity.description && (
                             <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{activity.description}</p>
                           )}
