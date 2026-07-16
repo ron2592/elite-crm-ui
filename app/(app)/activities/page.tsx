@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useMemo } from "react";
 import { supabase } from "@/lib/supabaseClient";
+import { matchesSearch } from "@/lib/utils";
 import {
   Phone, RefreshCw, Plus, X, Save, Loader2,
   CalendarDays, ChevronDown, ChevronUp,
@@ -38,6 +39,7 @@ const ACTIVITY_TYPES = [
   { value: "note",           label: "📝 Note",           color: "bg-slate-100 text-slate-600" },
   { value: "eod_report",     label: "📊 EOD Report",     color: "bg-violet-100 text-violet-700" },
   { value: "goal_set",       label: "🎯 Goal Set",       color: "bg-pink-100 text-pink-700" },
+  { value: "task_completed", label: "✅ Task Completed", color: "bg-teal-100 text-teal-700" },
 ];
 
 const TYPE_MAP = Object.fromEntries(ACTIVITY_TYPES.map(t => [t.value, t]));
@@ -218,7 +220,7 @@ export default function ActivitiesPage() {
   }));
 
   const filteredLeads = leads.filter(l =>
-    (l.lead_name || "").toLowerCase().includes(leadSearch.toLowerCase()) ||
+    matchesSearch(l.lead_name || "", leadSearch) ||
     (l.phone || "").includes(leadSearch)
   ).slice(0, 20);
 

@@ -120,7 +120,7 @@ export default function ContactsPage() {
     if (search.trim()) {
       const q = search.toLowerCase();
       f = f.filter(l =>
-        l.lead_name?.toLowerCase().includes(q) ||
+        matchesSearch(l.lead_name || "", q) ||
         l.phone?.includes(q) ||
         l.email?.toLowerCase().includes(q) ||
         l.client_city?.toLowerCase().includes(q)

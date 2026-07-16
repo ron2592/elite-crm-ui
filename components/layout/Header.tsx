@@ -207,13 +207,23 @@ export default function Header({ onMobileMenuToggle }: HeaderProps) {
 
   // ── Search ────────────────────────────────────────────────────────────────
   const doSearch = useCallback(async (q: string) => {
-    if (!q.trim()) { setResults([]); return; }
+    const trimmed = q.trim();
+    if (!trimmed) { setResults([]); return; }
     setSearching(true);
+    // Split into words and require each word to appear somewhere in lead_name (in any
+    // order) rather than one literal substring -- a plain %John Smith% match silently
+    // breaks on reordered names or the double-spacing some synced/imported leads had.
+    // Strip characters that would break PostgREST's or()/and() filter syntax.
+    const words = trimmed.split(/\s+/).filter(Boolean).map(w => w.replace(/[(),]/g, "")).filter(Boolean);
+    const safeQ = trimmed.replace(/[(),]/g, "");
+    const nameCond = words.length > 1
+      ? `and(${words.map(w => `lead_name.ilike.%${w}%`).join(",")})`
+      : `lead_name.ilike.%${safeQ}%`;
     const { data } = await supabase
       .from("leads")
       .select("id, lead_name, first_name, phone, status, metadata, lead_sources(name)")
       .eq("archived", false)
-      .or(`lead_name.ilike.%${q}%,phone.ilike.%${q}%,client_city.ilike.%${q}%`)
+      .or(`${nameCond},phone.ilike.%${safeQ}%,client_city.ilike.%${safeQ}%`)
       .limit(8);
     setResults((data || []).map((l: any) => ({
       id: l.id, lead_name: l.lead_name || l.first_name || "Unnamed",

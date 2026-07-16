@@ -3,6 +3,7 @@
 import { useEffect, useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
+import { matchesSearch } from "@/lib/utils";
 import { Lead } from "@/types";
 import LeadDetailDialog from "@/components/leads/LeadDetailDialog";
 import {
@@ -180,11 +181,11 @@ export default function ContactsPage() {
   const filtered = useMemo(() => {
     const q = search.toLowerCase().trim();
     return leads.filter(l => {
-      const name  = `${l.first_name || ""} ${l.last_name || ""} ${l.lead_name || ""}`.toLowerCase();
+      const name  = `${l.first_name || ""} ${l.last_name || ""} ${l.lead_name || ""}`;
       const phone = (l.phone || "").toLowerCase();
       const city  = (l.client_city || l.city || "").toLowerCase();
       const email = (l.email || "").toLowerCase();
-      if (q && !name.includes(q) && !phone.includes(q) && !city.includes(q) && !email.includes(q)) return false;
+      if (q && !matchesSearch(name, q) && !phone.includes(q) && !city.includes(q) && !email.includes(q)) return false;
       if (filterStatus && l.status !== filterStatus) return false;
       if (filterSource && (l.lead_sources as any)?.id !== filterSource) return false;
       if (dateFrom || dateTo) {

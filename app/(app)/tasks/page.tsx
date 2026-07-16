@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useMemo } from "react";
 import { supabase } from "@/lib/supabaseClient";
+import { matchesSearch } from "@/lib/utils";
 import {
   Plus, X, Save, Loader2, CheckSquare, Square,
   AlertCircle, Clock, ChevronDown, Search,
@@ -224,7 +225,7 @@ export default function TasksPage() {
   };
 
   const filteredLeads = leads.filter(l =>
-    (l.lead_name || "").toLowerCase().includes(leadSearch.toLowerCase()) ||
+    matchesSearch(l.lead_name || "", leadSearch) ||
     (l.phone     || "").includes(leadSearch)
   ).slice(0, 20);
 
