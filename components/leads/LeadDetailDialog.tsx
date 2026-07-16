@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Lead } from "@/types";
 import { supabase } from "@/lib/supabaseClient";
 import { useRole } from "@/lib/useRole";
+import { pushAppointmentToGoogle } from "@/lib/calendar-sync";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
 } from "@/components/ui/dialog";
@@ -537,6 +538,9 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
     setSavingAppointment(false); setSavedAppointment(true);
     setTimeout(() => setSavedAppointment(false), 2000);
     if (onLeadUpdated) onLeadUpdated(leadId);
+    // Mirror this appointment to the connected Google Calendar so it never needs to be typed
+    // twice -- silent/best-effort, same pattern as the JobNimbus auto-sync.
+    if (leadId) pushAppointmentToGoogle(leadId);
   };
   const handleSaveReasonLost = async () => {
     setSavingReasonLost(true);

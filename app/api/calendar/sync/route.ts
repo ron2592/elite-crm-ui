@@ -1,10 +1,27 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 
+// One-way calendar sync: ComCenter -> Google Calendar (info@eliteworkhomeimprovement.com).
+// Deliberately one-way -- appointments are entered once, in ComCenter, and mirrored out to
+// Google so nothing needs to be typed twice. Nothing flows back in from Google.
+//
+// This route previously referenced calendar_events columns (start_time/end_time,
+// synced_from_google/synced_to_google) that don't exist in the real schema (the real columns
+// are start_at/end_at) -- meaning it silently failed every time it was actually called. The
+// old two-way "pull" path has been removed entirely since it's not wanted and was equally
+// broken. This rewrite fixes the column names and only does the push direction.
+
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 )
+
+interface SyncRecord {
+  google_email: string
+  access_token: string
+  refresh_token: string
+  token_expiry: string
+}
 
 async function refreshAccessToken(refreshToken: string): Promise<string | null> {
   const response = await fetch('https://oauth2.googleapis.com/token', {
@@ -17,38 +34,22 @@ async function refreshAccessToken(refreshToken: string): Promise<string | null> 
       grant_type: 'refresh_token',
     }),
   })
-
   const data = await response.json()
-
   if (!response.ok || !data.access_token) {
-    console.error('Token refresh failed:', data)
+    console.error('[Calendar Sync] Token refresh failed:', data)
     return null
   }
-
   return data.access_token
 }
 
-async function getValidAccessToken(syncRecord: {
-  access_token: string
-  refresh_token: string
-  token_expiry: string
-  google_email: string
-}): Promise<string | null> {
+async function getValidAccessToken(syncRecord: SyncRecord): Promise<string | null> {
   const expiry = new Date(syncRecord.token_expiry)
-  const now = new Date()
   const fiveMinutes = 5 * 60 * 1000
+  if (expiry.getTime() - Date.now() > fiveMinutes) return syncRecord.access_token
 
-  // If token is still valid (more than 5 min remaining), use it
-  if (expiry.getTime() - now.getTime() > fiveMinutes) {
-    return syncRecord.access_token
-  }
-
-  // Token expired or expiring soon — refresh it
   const newAccessToken = await refreshAccessToken(syncRecord.refresh_token)
-
   if (!newAccessToken) return null
 
-  // Update the stored token
   await supabaseAdmin
     .from('google_calendar_sync')
     .update({
@@ -61,22 +62,29 @@ async function getValidAccessToken(syncRecord: {
   return newAccessToken
 }
 
-// Push a ComCenter calendar event to Google Calendar
+// This is a single shared company calendar connection (info@eliteworkhomeimprovement.com),
+// not per-user -- so callers never need to know or pass which Google account to use.
+async function getActiveSyncRecord(): Promise<SyncRecord | null> {
+  const { data } = await supabaseAdmin
+    .from('google_calendar_sync')
+    .select('google_email, access_token, refresh_token, token_expiry')
+    .eq('is_active', true)
+    .order('updated_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  return data
+}
+
 async function pushEventToGoogle(
   accessToken: string,
-  event: {
-    title: string
-    description?: string
-    start_time: string
-    end_time: string
-    google_event_id?: string
-  }
+  event: { title: string; description?: string | null; location?: string | null; start_at: string; end_at: string; google_event_id?: string | null }
 ): Promise<string | null> {
   const body = {
     summary: event.title,
     description: event.description || '',
-    start: { dateTime: event.start_time, timeZone: 'America/New_York' },
-    end: { dateTime: event.end_time, timeZone: 'America/New_York' },
+    location: event.location || undefined,
+    start: { dateTime: event.start_at, timeZone: 'America/New_York' },
+    end: { dateTime: event.end_at, timeZone: 'America/New_York' },
   }
 
   const isUpdate = !!event.google_event_id
@@ -86,164 +94,141 @@ async function pushEventToGoogle(
 
   const response = await fetch(url, {
     method: isUpdate ? 'PUT' : 'POST',
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      'Content-Type': 'application/json',
-    },
+    headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   })
-
   const data = await response.json()
-
   if (!response.ok) {
-    console.error('Failed to push event to Google:', data)
+    console.error('[Calendar Sync] Failed to push event to Google:', data)
     return null
   }
-
   return data.id
 }
 
-// Pull events from Google Calendar into ComCenter
-async function pullEventsFromGoogle(
-  accessToken: string,
-  googleEmail: string
-): Promise<void> {
-  const timeMin = new Date().toISOString()
-  const timeMax = new Date(
-    Date.now() + 30 * 24 * 60 * 60 * 1000
-  ).toISOString() // 30 days ahead
+// Builds/updates the calendar_events row for a lead's appointment, then pushes it to Google.
+// Upserting on (lead_id, event_type='appointment') keeps a single calendar entry per lead
+// appointment instead of creating a new one every time the appointment date is edited.
+async function syncLeadAppointment(leadId: string, accessToken: string): Promise<{ ok: boolean; reason?: string }> {
+  const { data: lead, error } = await supabaseAdmin
+    .from('leads')
+    .select('id, lead_name, appointment_at, appointment_notes, address_line_1, client_address, city, client_city')
+    .eq('id', leadId)
+    .single()
 
-  const response = await fetch(
-    `https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${timeMin}&timeMax=${timeMax}&singleEvents=true&orderBy=startTime`,
-    {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    }
-  )
+  if (error || !lead) return { ok: false, reason: 'lead not found' }
+  if (!lead.appointment_at) return { ok: false, reason: 'no appointment set' }
 
-  const data = await response.json()
+  const start = new Date(lead.appointment_at)
+  const end = new Date(start.getTime() + 60 * 60 * 1000) // default 1-hour block
+  const address = lead.address_line_1 || lead.client_address || ''
+  const city = lead.city || lead.client_city || ''
+  const location = [address, city].filter(Boolean).join(', ') || null
 
-  if (!response.ok || !data.items) {
-    console.error('Failed to pull events from Google:', data)
-    return
+  const { data: existing } = await supabaseAdmin
+    .from('calendar_events')
+    .select('id, google_event_id')
+    .eq('lead_id', leadId)
+    .eq('event_type', 'appointment')
+    .maybeSingle()
+
+  const payload = {
+    title: `Appointment: ${lead.lead_name || 'Lead'}`,
+    description: lead.appointment_notes || null,
+    event_type: 'appointment',
+    start_at: start.toISOString(),
+    end_at: end.toISOString(),
+    location,
+    lead_id: leadId,
   }
 
-  for (const googleEvent of data.items) {
-    if (!googleEvent.start?.dateTime) continue // skip all-day events for now
+  let eventRowId = existing?.id as string | undefined
+  let googleEventId = existing?.google_event_id as string | undefined
 
-    // Check if this event already exists in ComCenter
-    const { data: existing } = await supabaseAdmin
-      .from('calendar_events')
-      .select('id')
-      .eq('google_event_id', googleEvent.id)
-      .single()
-
-    if (existing) continue // already synced
-
-    // Insert new event from Google into ComCenter
-    await supabaseAdmin.from('calendar_events').insert({
-      title: googleEvent.summary || 'Untitled Event',
-      description: googleEvent.description || null,
-      start_time: googleEvent.start.dateTime,
-      end_time: googleEvent.end?.dateTime || googleEvent.start.dateTime,
-      google_event_id: googleEvent.id,
-      synced_from_google: true,
-      created_at: new Date().toISOString(),
-    })
+  if (existing) {
+    await supabaseAdmin.from('calendar_events').update(payload).eq('id', existing.id)
+  } else {
+    const { data: inserted } = await supabaseAdmin.from('calendar_events').insert(payload).select('id').single()
+    eventRowId = inserted?.id
   }
+  if (!eventRowId) return { ok: false, reason: 'failed to save calendar_events row' }
+
+  const newGoogleEventId = await pushEventToGoogle(accessToken, {
+    title: payload.title, description: payload.description, location: payload.location,
+    start_at: payload.start_at, end_at: payload.end_at, google_event_id: googleEventId,
+  })
+  if (!newGoogleEventId) return { ok: false, reason: 'google push failed' }
+
+  await supabaseAdmin
+    .from('calendar_events')
+    .update({ google_event_id: newGoogleEventId, google_calendar_id: 'primary' })
+    .eq('id', eventRowId)
+
+  return { ok: true }
 }
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const { google_email, event_id, direction } = body
+    const { lead_id, bulk } = body
 
-    // Get the sync record for this user
-    const { data: syncRecord, error: syncError } = await supabaseAdmin
-      .from('google_calendar_sync')
-      .select('*')
-      .eq('google_email', google_email)
-      .eq('is_active', true)
-      .single()
-
-    if (syncError || !syncRecord) {
-      return NextResponse.json(
-        { error: 'No active Google Calendar connection found' },
-        { status: 404 }
-      )
-    }
+    const syncRecord = await getActiveSyncRecord()
+    if (!syncRecord) return NextResponse.json({ error: 'No active Google Calendar connection found' }, { status: 404 })
 
     const accessToken = await getValidAccessToken(syncRecord)
+    if (!accessToken) return NextResponse.json({ error: 'Failed to get valid access token' }, { status: 401 })
 
-    if (!accessToken) {
-      return NextResponse.json(
-        { error: 'Failed to get valid access token' },
-        { status: 401 }
-      )
-    }
+    // Bulk mode: catch up every upcoming appointment at once (used for a one-time backfill of
+    // appointments that were set before this auto-push existed, or as a manual "push everything
+    // now" safety net from Settings).
+    if (bulk) {
+      const { data: leads } = await supabaseAdmin
+        .from('leads')
+        .select('id')
+        .not('appointment_at', 'is', null)
+        .gte('appointment_at', new Date().toISOString())
+        .eq('archived', false)
 
-    // Pull: Google → ComCenter
-    if (direction === 'pull' || direction === 'both') {
-      await pullEventsFromGoogle(accessToken, google_email)
-    }
-
-    // Push: ComCenter → Google
-    if ((direction === 'push' || direction === 'both') && event_id) {
-      const { data: event, error: eventError } = await supabaseAdmin
-        .from('calendar_events')
-        .select('*')
-        .eq('id', event_id)
-        .single()
-
-      if (eventError || !event) {
-        return NextResponse.json({ error: 'Event not found' }, { status: 404 })
+      let synced = 0
+      let failed = 0
+      for (const l of leads || []) {
+        const result = await syncLeadAppointment(l.id, accessToken)
+        if (result.ok) synced++
+        else failed++
       }
-
-      const googleEventId = await pushEventToGoogle(accessToken, event)
-
-      if (googleEventId) {
-        await supabaseAdmin
-          .from('calendar_events')
-          .update({
-            google_event_id: googleEventId,
-            synced_to_google: true,
-          })
-          .eq('id', event_id)
-      }
+      return NextResponse.json({ success: true, synced, failed })
     }
+
+    if (!lead_id) return NextResponse.json({ error: 'lead_id required' }, { status: 400 })
+
+    const result = await syncLeadAppointment(lead_id, accessToken)
+    if (!result.ok) return NextResponse.json({ error: result.reason }, { status: 422 })
 
     return NextResponse.json({ success: true })
   } catch (err) {
-    console.error('Calendar sync error:', err)
+    console.error('[Calendar Sync] Error:', err)
     return NextResponse.json({ error: 'Sync failed' }, { status: 500 })
   }
 }
 
-export async function GET(request: NextRequest) {
-  const { searchParams } = new URL(request.url)
-  const google_email = searchParams.get('google_email')
-
-  if (!google_email) {
-    return NextResponse.json({ error: 'google_email required' }, { status: 400 })
-  }
-
+export async function GET() {
   try {
-    const { data: syncRecord, error } = await supabaseAdmin
+    const syncRecord = await supabaseAdmin
       .from('google_calendar_sync')
       .select('google_email, is_active, updated_at, token_expiry')
-      .eq('google_email', google_email)
-      .single()
+      .eq('is_active', true)
+      .order('updated_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
 
-    if (error || !syncRecord) {
-      return NextResponse.json({ connected: false })
-    }
+    if (!syncRecord.data) return NextResponse.json({ connected: false })
 
     return NextResponse.json({
-      connected: syncRecord.is_active,
-      google_email: syncRecord.google_email,
-      last_synced: syncRecord.updated_at,
+      connected: syncRecord.data.is_active,
+      google_email: syncRecord.data.google_email,
+      last_synced: syncRecord.data.updated_at,
     })
   } catch (err) {
-    console.error('Calendar status check error:', err)
+    console.error('[Calendar Sync] Status check error:', err)
     return NextResponse.json({ error: 'Status check failed' }, { status: 500 })
   }
 }

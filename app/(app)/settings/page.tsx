@@ -76,14 +76,14 @@ export default function SettingsPage() {
       if (data) setProfile(data);
 
       // Check Google Calendar connection status
-      if (data?.email) {
-        try {
-          const res = await fetch(`/api/calendar/sync?google_email=${encodeURIComponent(data.email)}`);
-          const status = await res.json();
-          setGoogleStatus(status);
-        } catch {
-          setGoogleStatus({ connected: false });
-        }
+      // The connection is a single shared company calendar (not per-user), so the status
+      // check doesn't need to know who's logged in.
+      try {
+        const res = await fetch('/api/calendar/sync');
+        const status = await res.json();
+        setGoogleStatus(status);
+      } catch {
+        setGoogleStatus({ connected: false });
       }
       setGoogleLoading(false);
     };
@@ -105,17 +105,17 @@ export default function SettingsPage() {
     window.location.href = '/api/auth/google';
   };
 
+  // Appointments now auto-push to Google the moment they're set on a lead (see
+  // LeadDetailDialog's handleSaveAppointment) -- this button is just a one-time catch-up for
+  // appointments that were already on the books before that existed, or a manual safety net.
   const handleManualSync = async () => {
-    if (!profile?.email || !googleStatus?.connected) return;
+    if (!googleStatus?.connected) return;
     setSyncing(true);
     try {
       await fetch('/api/calendar/sync', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          google_email: profile.email,
-          direction: 'both',
-        }),
+        body: JSON.stringify({ bulk: true }),
       });
       setGoogleStatus(prev => prev ? { ...prev, last_synced: new Date().toISOString() } : prev);
     } catch (err) {
@@ -205,6 +205,7 @@ export default function SettingsPage() {
               </div>
               <div className="flex-1">
                 <p className="text-sm font-medium">Google Calendar</p>
+                <p className="text-xs text-muted-foreground mt-0.5">Appointments set on a lead push here automatically -- one-way, so nothing needs to be entered twice.</p>
                 {googleLoading ? (
                   <p className="text-xs text-muted-foreground">Checking connection...</p>
                 ) : googleStatus?.connected ? (
@@ -236,7 +237,7 @@ export default function SettingsPage() {
                         Syncing...
                       </>
                     ) : (
-                      'Sync Now'
+                      'Push Upcoming Appts'
                     )}
                   </Button>
                 )}
