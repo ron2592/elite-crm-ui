@@ -134,11 +134,14 @@ export default function ContactsPage() {
   const [bulkUpdating,    setBulkUpdating]    = useState(false);
 
   // ── Filters ───────────────────────────────────────────────────────────────
-  const [search,       setSearch]       = useState("");
-  const [filterStatus, setFilterStatus] = useState("");
-  const [filterSource, setFilterSource] = useState("");
-  const [dateFrom,     setDateFrom]     = useState("");
-  const [dateTo,       setDateTo]       = useState("");
+  const [search,            setSearch]            = useState("");
+  const [filterStatus,      setFilterStatus]      = useState("");
+  const [filterSource,      setFilterSource]      = useState("");
+  const [filterLsaStatus,   setFilterLsaStatus]   = useState("");
+  const [filterSalesperson, setFilterSalesperson] = useState("");
+  const [filterJobType,     setFilterJobType]     = useState("");
+  const [dateFrom,          setDateFrom]          = useState("");
+  const [dateTo,            setDateTo]            = useState("");
 
   // ── Selection ─────────────────────────────────────────────────────────────
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -188,6 +191,12 @@ export default function ContactsPage() {
       if (q && !matchesSearch(name, q) && !phone.includes(q) && !city.includes(q) && !email.includes(q)) return false;
       if (filterStatus && l.status !== filterStatus) return false;
       if (filterSource && (l.lead_sources as any)?.id !== filterSource) return false;
+      if (filterLsaStatus && (l.lsa_status || "not_charged") !== filterLsaStatus) return false;
+      if (filterSalesperson) {
+        const sp = l.metadata?.salesperson || "";
+        if (filterSalesperson === "__unassigned__" ? sp : sp !== filterSalesperson) return false;
+      }
+      if (filterJobType && (l.metadata?.job_type || "") !== filterJobType) return false;
       if (dateFrom || dateTo) {
         const d = new Date(l.created_at);
         if (dateFrom && d < new Date(dateFrom + "T00:00:00")) return false;
@@ -195,7 +204,14 @@ export default function ContactsPage() {
       }
       return true;
     });
-  }, [leads, search, filterStatus, filterSource, dateFrom, dateTo]);
+  }, [leads, search, filterStatus, filterSource, filterLsaStatus, filterSalesperson, filterJobType, dateFrom, dateTo]);
+
+  // Distinct job types actually present in the data, for the Job Type filter dropdown.
+  const jobTypeOptions = useMemo(() => {
+    const set = new Set<string>();
+    leads.forEach(l => { const jt = l.metadata?.job_type; if (jt) set.add(jt); });
+    return Array.from(set).sort();
+  }, [leads]);
 
   const totalPages = Math.ceil(filtered.length / ITEMS_PER_PAGE);
   const paginated  = filtered.slice((page - 1) * ITEMS_PER_PAGE, page * ITEMS_PER_PAGE);
@@ -287,9 +303,11 @@ export default function ContactsPage() {
 
   // ── Misc ──────────────────────────────────────────────────────────────────
   const clearFilters = () => {
-    setSearch(""); setFilterStatus(""); setFilterSource(""); setDateFrom(""); setDateTo("");
+    setSearch(""); setFilterStatus(""); setFilterSource("");
+    setFilterLsaStatus(""); setFilterSalesperson(""); setFilterJobType("");
+    setDateFrom(""); setDateTo("");
   };
-  const hasFilters = search || filterStatus || filterSource || dateFrom || dateTo;
+  const hasFilters = search || filterStatus || filterSource || filterLsaStatus || filterSalesperson || filterJobType || dateFrom || dateTo;
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
@@ -372,6 +390,43 @@ export default function ContactsPage() {
         >
           <option value="">All Sources</option>
           {sources.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+        </select>
+
+        {/* LSA Status */}
+        <select
+          value={filterLsaStatus}
+          onChange={e => setFilterLsaStatus(e.target.value)}
+          className="rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none text-muted-foreground"
+        >
+          <option value="">All LSA Status</option>
+          <option value="not_charged">Not Charged</option>
+          <option value="charged">Charged</option>
+          <option value="submitted">Submitted</option>
+          <option value="credited">Credited</option>
+          <option value="in_review">In Review</option>
+        </select>
+
+        {/* Salesperson */}
+        <select
+          value={filterSalesperson}
+          onChange={e => setFilterSalesperson(e.target.value)}
+          className="rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none text-muted-foreground"
+        >
+          <option value="">All Salespeople</option>
+          <option value="Ron">Ron</option>
+          <option value="Ray">Ray</option>
+          <option value="Other (Phone)">Other (Phone)</option>
+          <option value="__unassigned__">Unassigned</option>
+        </select>
+
+        {/* Job Type */}
+        <select
+          value={filterJobType}
+          onChange={e => setFilterJobType(e.target.value)}
+          className="rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none text-muted-foreground"
+        >
+          <option value="">All Job Types</option>
+          {jobTypeOptions.map(jt => <option key={jt} value={jt}>{jt}</option>)}
         </select>
 
         {/* Date range */}
