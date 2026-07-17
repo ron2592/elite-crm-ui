@@ -4,8 +4,14 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { Lead } from "@/types";
 import LeadDetailDialog from "@/components/leads/LeadDetailDialog";
+import { matchesSearch } from "@/lib/utils";
 
 const CALENDAR_STAGES = ["Scheduled to Start", "Job In Progress", "Rough Inspection", "Final Inspection"];
+
+const STANDARD_JOB_TYPES = [
+  "Roof Replacement", "Roof Repair", "Deck", "Siding",
+  "Windows", "Painting", "Masonry", "Stucco", "Chimney",
+];
 
 const stageColors: Record<string, string> = {
   "Pending - Check":          "bg-slate-100 text-slate-600",
@@ -46,6 +52,8 @@ interface JobRow {
   production_stage: string | null;
   production_stage_updated_at: string | null;
   production_notes: string | null;
+  jobStartDate: string | null;
+  jobEndDate: string | null;
   orderNumber?: number;
   sourceId: string | null;
   sourceName: string | null;
@@ -83,6 +91,24 @@ export default function ProductionPage() {
   const [sources,        setSources]        = useState<{ id: string; name: string }[]>([]);
   const [expandedClients, setExpandedClients] = useState<Set<string>>(new Set());
 
+  // — Schedule (job start/end date) inline edit —
+  const [editingSchedule, setEditingSchedule] = useState<string | null>(null);
+  const [scheduleDraft,   setScheduleDraft]   = useState({ start: "", end: "" });
+  const [savingSchedule,  setSavingSchedule]  = useState(false);
+
+  // — Quick "+ New Job" modal —
+  const [showNewJobModal,    setShowNewJobModal]    = useState(false);
+  const [newJobSearch,       setNewJobSearch]       = useState("");
+  const [newJobLeadOptions,  setNewJobLeadOptions]  = useState<any[]>([]);
+  const [newJobLead,         setNewJobLead]         = useState<any | null>(null);
+  const [newJobForm,         setNewJobForm]         = useState({
+    job_type: "", amount: "", status: "won" as "pending" | "won" | "lost",
+    record_type: "change_order" as "change_order" | "repeat_job",
+    date_added: new Date().toISOString().slice(0, 10), description: "",
+    job_start_date: "", job_end_date: "",
+  });
+  const [savingNewJob,       setSavingNewJob]       = useState(false);
+
   // ── Refund modal ──────────────────────────────────────────────────────────
   const [refundDraft,    setRefundDraft]    = useState<RefundDraft | null>(null);
   const [refundAmount,   setRefundAmount]   = useState("");
@@ -96,7 +122,7 @@ export default function ProductionPage() {
   async function fetchJobs() {
     const { data: leads, error } = await supabase
       .from("leads")
-      .select("id, contact_id, lead_name, initial_contract_value, closed_amount, estimated_amount, production_stage, production_stage_updated_at, production_notes, address_line_1, city, state, metadata, source_id, lead_sources(id, name), status, phone, email, client_address, client_city, client_state, client_zip, lsa_status, contact_type, created_at, archived")
+      .select("id, contact_id, lead_name, initial_contract_value, closed_amount, estimated_amount, production_stage, production_stage_updated_at, production_notes, address_line_1, city, state, metadata, source_id, lead_sources(id, name), status, phone, email, client_address, client_city, client_state, client_zip, lsa_status, contact_type, created_at, archived, job_start_date, job_end_date")
       // ✅ Include job_cancelled so cancelled jobs still appear in Production
       .in("status", ["closed_won", "completed", "job_cancelled"])
       .order("created_at", { ascending: false });
@@ -169,6 +195,8 @@ export default function ProductionPage() {
       production_stage:            job.production_stage || null,
       production_stage_updated_at: job.production_stage_updated_at || null,
       production_notes:            job.production_notes || null,
+      jobStartDate:                job.job_start_date || null,
+      jobEndDate:                  job.job_end_date || null,
       sourceId:                    job.source_id || null,
       sourceName:                  (job.lead_sources as any)?.name || null,
       leadStatus:                  job.status,
@@ -195,6 +223,8 @@ export default function ProductionPage() {
         production_stage:            co.production_stage || null,
         production_stage_updated_at: co.production_stage_updated_at || null,
         production_notes:            co.production_notes || null,
+        jobStartDate:                co.job_start_date || null,
+        jobEndDate:                  co.job_end_date || null,
         orderNumber:                 co.order_number,
         sourceId:                    parentLead?.source_id || null,
         sourceName:                  parentLead?.lead_sources?.name || null,
@@ -300,6 +330,78 @@ export default function ProductionPage() {
     setEditingDate(null);
     await fetchJobs();
   };
+
+  // Job start/end date -- used to schedule the crew, independent of production stage
+  const handleSaveSchedule = async (row: JobRow) => {
+    setSavingSchedule(true);
+    const updates = {
+      job_start_date: scheduleDraft.start || null,
+      job_end_date:   scheduleDraft.end   || null,
+    };
+    if (row.type === "lead") {
+      await supabase.from("leads").update(updates).eq("id", row.id);
+    } else {
+      await supabase.from("change_orders").update(updates).eq("id", row.id);
+    }
+    setSavingSchedule(false);
+    setEditingSchedule(null);
+    await fetchJobs();
+  };
+
+  // Quick "+ New Job" -- add a job to an existing lead/client without opening their full profile
+  const openNewJobModal = async () => {
+    setShowNewJobModal(true);
+    setNewJobLead(null);
+    setNewJobSearch("");
+    setNewJobForm({
+      job_type: "", amount: "", status: "won", record_type: "change_order",
+      date_added: new Date().toISOString().slice(0, 10), description: "",
+      job_start_date: "", job_end_date: "",
+    });
+    if (newJobLeadOptions.length === 0) {
+      const { data } = await supabase
+        .from("leads")
+        .select("id, lead_name, phone, client_address, client_city, status, contact_type")
+        .eq("archived", false)
+        .order("lead_name");
+      setNewJobLeadOptions(data || []);
+    }
+  };
+
+  const closeNewJobModal = () => setShowNewJobModal(false);
+
+  const handleCreateNewJob = async () => {
+    if (!newJobLead || !newJobForm.amount || Number(newJobForm.amount) <= 0) return;
+    setSavingNewJob(true);
+    const { count } = await supabase
+      .from("change_orders")
+      .select("id", { count: "exact", head: true })
+      .eq("lead_id", newJobLead.id);
+    const dateAdded = newJobForm.date_added || new Date().toISOString().slice(0, 10);
+    const { error } = await supabase.from("change_orders").insert({
+      lead_id:      newJobLead.id,
+      order_number: (count || 0) + 1,
+      description:  newJobForm.description || null,
+      job_type:     newJobForm.job_type || null,
+      amount:       Number(newJobForm.amount),
+      status:       newJobForm.status,
+      record_type:  newJobForm.record_type,
+      date_added:   dateAdded,
+      signed_at:    newJobForm.status === "won" ? new Date(dateAdded + "T12:00:00").toISOString() : null,
+      job_start_date: newJobForm.job_start_date || null,
+      job_end_date:   newJobForm.job_end_date || null,
+    });
+    setSavingNewJob(false);
+    if (!error) {
+      closeNewJobModal();
+      fetchJobs();
+    }
+  };
+
+  const newJobFiltered = (newJobSearch.trim()
+    ? newJobLeadOptions.filter(l => matchesSearch(`${l.lead_name || ""} ${l.phone || ""} ${l.client_address || ""} ${l.client_city || ""}`, newJobSearch))
+    : newJobLeadOptions
+  ).slice(0, 25);
 
   // ✅ Log a refund as a negative payment
   const handleLogRefund = async () => {
@@ -536,6 +638,47 @@ export default function ProductionPage() {
           )}
         </td>
 
+        {/* Schedule (job start / end date) */}
+        <td className="px-3 py-3 min-w-[140px]">
+          {editingSchedule === rowKey ? (
+            <div className="space-y-1">
+              <div>
+                <label className="text-[10px] text-muted-foreground block">Start</label>
+                <input type="date" value={scheduleDraft.start}
+                  onChange={e => setScheduleDraft({ ...scheduleDraft, start: e.target.value })} autoFocus
+                  className="w-full rounded-md border border-border bg-background px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-primary/40" />
+              </div>
+              <div>
+                <label className="text-[10px] text-muted-foreground block">End</label>
+                <input type="date" value={scheduleDraft.end}
+                  onChange={e => setScheduleDraft({ ...scheduleDraft, end: e.target.value })}
+                  className="w-full rounded-md border border-border bg-background px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-primary/40" />
+              </div>
+              <div className="flex gap-1">
+                <button onClick={() => handleSaveSchedule(job)} disabled={savingSchedule}
+                  className="text-xs px-2 py-0.5 rounded bg-primary text-primary-foreground disabled:opacity-40">
+                  {savingSchedule ? "..." : "Save"}
+                </button>
+                <button onClick={() => setEditingSchedule(null)}
+                  className="text-xs px-2 py-0.5 rounded border border-border hover:bg-muted">Cancel</button>
+              </div>
+            </div>
+          ) : (
+            <div onClick={() => { setEditingSchedule(rowKey); setScheduleDraft({ start: job.jobStartDate || "", end: job.jobEndDate || "" }); }}
+              className="cursor-pointer group">
+              {job.jobStartDate || job.jobEndDate ? (
+                <p className="text-xs group-hover:text-primary transition-colors">
+                  {job.jobStartDate ? new Date(job.jobStartDate + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "?"}
+                  {" - "}
+                  {job.jobEndDate ? new Date(job.jobEndDate + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "?"}
+                </p>
+              ) : (
+                <p className="text-xs text-muted-foreground/50 group-hover:text-primary">+ Set schedule</p>
+              )}
+            </div>
+          )}
+        </td>
+
         {/* Stage Date */}
         <td className="px-3 py-3 min-w-[115px]">
           {isEditingThisDate ? (
@@ -652,6 +795,7 @@ export default function ProductionPage() {
               ))}
             </div>
           </td>
+          <td className="px-3 py-3 min-w-[140px] text-xs text-muted-foreground">—</td>
           <td className="px-3 py-3 min-w-[115px] text-xs text-muted-foreground">
             {group.latestStageDate ? new Date(group.latestStageDate).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "—"}
           </td>
@@ -670,6 +814,15 @@ export default function ProductionPage() {
 
   return (
     <div className="space-y-6 max-w-full">
+
+      {/* ── Page header ── */}
+      <div className="flex items-center justify-between">
+        <h1 className="text-xl font-semibold">Production</h1>
+        <button onClick={openNewJobModal}
+          className="flex items-center gap-1.5 rounded-md bg-primary text-primary-foreground px-3 py-2 text-sm font-medium hover:bg-primary/90 transition-colors">
+          <span className="text-base leading-none">+</span> New Job
+        </button>
+      </div>
 
       {/* ── KPI Cards ── */}
       <div className="grid grid-cols-3 gap-4">
@@ -740,6 +893,132 @@ export default function ProductionPage() {
         </div>
       )}
 
+      {/* ── New Job Modal ── */}
+      {showNewJobModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="bg-background rounded-xl border border-border shadow-xl p-6 w-full max-w-md space-y-4 max-h-[85vh] overflow-y-auto">
+            {!newJobLead ? (
+              <>
+                <div>
+                  <p className="font-semibold">New Job</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">Search for the existing lead or client this job belongs to.</p>
+                </div>
+                <input
+                  type="text" autoFocus placeholder="Search by name, phone, or address..."
+                  value={newJobSearch} onChange={e => setNewJobSearch(e.target.value)}
+                  className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" />
+                <div className="border border-border rounded-md divide-y divide-border max-h-72 overflow-y-auto">
+                  {newJobFiltered.length === 0 ? (
+                    <p className="px-3 py-4 text-xs text-muted-foreground text-center">
+                      {newJobSearch.trim() ? "No matching leads." : "Start typing to search..."}
+                    </p>
+                  ) : newJobFiltered.map(l => (
+                    <button key={l.id} onClick={() => setNewJobLead(l)}
+                      className="w-full text-left px-3 py-2 hover:bg-muted transition-colors">
+                      <p className="text-sm font-medium">{l.lead_name || "Unnamed"}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {[l.phone, l.client_address || l.client_city].filter(Boolean).join(" · ") || "No contact info"}
+                      </p>
+                    </button>
+                  ))}
+                </div>
+                <button onClick={closeNewJobModal}
+                  className="w-full px-3 py-2 rounded-md border border-border text-sm hover:bg-muted transition-colors">
+                  Cancel
+                </button>
+              </>
+            ) : (
+              <>
+                <div className="flex items-start justify-between">
+                  <div>
+                    <p className="font-semibold">New Job</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">for {newJobLead.lead_name || "Unnamed"}</p>
+                  </div>
+                  <button onClick={() => setNewJobLead(null)} className="text-xs text-primary hover:underline">Change client</button>
+                </div>
+                <div>
+                  <label className="text-xs text-muted-foreground block mb-1">Is this a scope change to an active job, or a separate job the client is coming back for?</label>
+                  <div className="flex gap-2">
+                    <button type="button" onClick={() => setNewJobForm({ ...newJobForm, record_type: "change_order" })}
+                      className={`flex-1 text-xs px-3 py-2 rounded-md border font-medium transition-colors ${newJobForm.record_type === "change_order" ? "bg-primary text-primary-foreground border-primary" : "border-border hover:bg-muted text-muted-foreground"}`}>
+                      Change Order <span className="opacity-70">(active job)</span>
+                    </button>
+                    <button type="button" onClick={() => setNewJobForm({ ...newJobForm, record_type: "repeat_job" })}
+                      className={`flex-1 text-xs px-3 py-2 rounded-md border font-medium transition-colors ${newJobForm.record_type === "repeat_job" ? "bg-purple-600 text-white border-purple-600" : "border-border hover:bg-muted text-muted-foreground"}`}>
+                      Repeat Job <span className="opacity-70">(client's back)</span>
+                    </button>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="text-xs text-muted-foreground block mb-1">Job Type</label>
+                    <select value={newJobForm.job_type} onChange={e => setNewJobForm({ ...newJobForm, job_type: e.target.value })}
+                      className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40">
+                      <option value="">— Select type —</option>
+                      {STANDARD_JOB_TYPES.map(t => <option key={t}>{t}</option>)}
+                      <option value="Other">Other</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-xs text-muted-foreground block mb-1">Amount</label>
+                    <input type="number" placeholder="0" value={newJobForm.amount}
+                      onChange={e => setNewJobForm({ ...newJobForm, amount: e.target.value })}
+                      className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" />
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="text-xs text-muted-foreground block mb-1">Date Added</label>
+                    <input type="date" value={newJobForm.date_added}
+                      onChange={e => setNewJobForm({ ...newJobForm, date_added: e.target.value })}
+                      className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" />
+                  </div>
+                  <div>
+                    <label className="text-xs text-muted-foreground block mb-1">Status</label>
+                    <select value={newJobForm.status} onChange={e => setNewJobForm({ ...newJobForm, status: e.target.value as any })}
+                      className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40">
+                      <option value="pending">Pending</option>
+                      <option value="won">Won</option>
+                      <option value="lost">Lost</option>
+                    </select>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="text-xs text-muted-foreground block mb-1">Job Start Date</label>
+                    <input type="date" value={newJobForm.job_start_date}
+                      onChange={e => setNewJobForm({ ...newJobForm, job_start_date: e.target.value })}
+                      className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" />
+                  </div>
+                  <div>
+                    <label className="text-xs text-muted-foreground block mb-1">Job End Date</label>
+                    <input type="date" value={newJobForm.job_end_date}
+                      onChange={e => setNewJobForm({ ...newJobForm, job_end_date: e.target.value })}
+                      className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" />
+                  </div>
+                </div>
+                <div>
+                  <label className="text-xs text-muted-foreground block mb-1">Description</label>
+                  <input type="text" placeholder="e.g. Add deck, replace gutters..." value={newJobForm.description}
+                    onChange={e => setNewJobForm({ ...newJobForm, description: e.target.value })}
+                    className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" />
+                </div>
+                <div className="flex gap-2">
+                  <button onClick={handleCreateNewJob} disabled={savingNewJob || !newJobForm.amount}
+                    className="flex-1 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-40 transition-colors">
+                    {savingNewJob ? "Saving..." : "Save Job"}
+                  </button>
+                  <button onClick={closeNewJobModal}
+                    className="px-4 py-2 rounded-md border border-border text-sm hover:bg-muted transition-colors">
+                    Cancel
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* ── Filters ── */}
       <div className="flex items-center gap-2 flex-wrap">
         {[
@@ -788,6 +1067,7 @@ export default function ProductionPage() {
                 <th className="text-right px-4 py-3 font-medium text-muted-foreground whitespace-nowrap">Collected</th>
                 <th className="text-right px-4 py-3 font-medium text-muted-foreground whitespace-nowrap">Balance</th>
                 <th className="text-left px-4 py-3 font-medium text-muted-foreground whitespace-nowrap">Production Stage</th>
+                <th className="text-left px-4 py-3 font-medium text-muted-foreground whitespace-nowrap">Schedule</th>
                 <th className="text-left px-4 py-3 font-medium text-muted-foreground whitespace-nowrap">Stage Date</th>
                 <th className="text-left px-4 py-3 font-medium text-muted-foreground whitespace-nowrap">Notes</th>
                 <th className="px-4 py-3 w-10" />
@@ -795,9 +1075,9 @@ export default function ProductionPage() {
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={10} className="px-4 py-8 text-center text-muted-foreground">Loading jobs...</td></tr>
+                <tr><td colSpan={11} className="px-4 py-8 text-center text-muted-foreground">Loading jobs...</td></tr>
               ) : filteredJobs.length === 0 ? (
-                <tr><td colSpan={10} className="px-4 py-8 text-center text-muted-foreground">
+                <tr><td colSpan={11} className="px-4 py-8 text-center text-muted-foreground">
                   {filter === "active" ? "No active jobs. Set a production stage to see jobs here." : "No jobs found."}
                 </td></tr>
               ) : clientGroups.map(group =>

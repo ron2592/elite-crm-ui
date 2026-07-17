@@ -59,7 +59,7 @@ function parseLeadName(leadName: string): { first: string; last: string } {
 }
 
 interface Payment { id: string; amount: number; payment_type: string; payment_method: string; paid_at: string; notes: string; }
-interface ChangeOrder { id: string; order_number: number; description: string; job_type: string; amount: number; status: "pending" | "won" | "lost"; signed_at: string | null; date_added: string; record_type: "change_order" | "repeat_job"; production_stage: string | null; production_notes: string | null; production_stage_updated_at: string | null; payments: ChangeOrderPayment[]; }
+interface ChangeOrder { id: string; order_number: number; description: string; job_type: string; amount: number; status: "pending" | "won" | "lost"; signed_at: string | null; date_added: string; record_type: "change_order" | "repeat_job"; production_stage: string | null; production_notes: string | null; production_stage_updated_at: string | null; job_start_date: string | null; job_end_date: string | null; payments: ChangeOrderPayment[]; }
 
 const CLOSED_PRODUCTION_STAGES = ["Completed", "Completed with Balance", "Cancelled Before Start", "Cancelled Mid-Job"];
 interface ChangeOrderPayment { id: string; amount: number; payment_type: string; payment_method: string; paid_at: string; notes: string; }
@@ -101,7 +101,7 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
   const [zipLooking,                   setZipLooking]                   = useState(false);
   const [changeOrders,                 setChangeOrders]                 = useState<ChangeOrder[]>([]);
   const [showAddChangeOrder,           setShowAddChangeOrder]           = useState(false);
-  const [newChangeOrder,               setNewChangeOrder]               = useState({ description: "", job_type: "", amount: "", status: "pending" as "pending" | "won" | "lost", record_type: "change_order" as "change_order" | "repeat_job", date_added: new Date().toISOString().slice(0, 10) });
+  const [newChangeOrder,               setNewChangeOrder]               = useState({ description: "", job_type: "", amount: "", status: "pending" as "pending" | "won" | "lost", record_type: "change_order" as "change_order" | "repeat_job", date_added: new Date().toISOString().slice(0, 10), job_start_date: "", job_end_date: "" });
   const [addingChangeOrder,            setAddingChangeOrder]            = useState(false);
   const [expandedChangeOrders,         setExpandedChangeOrders]         = useState<Set<string>>(new Set());
   const [showAddCOPayment,             setShowAddCOPayment]             = useState<string | null>(null);
@@ -132,7 +132,7 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
   const [resolvingMatch,               setResolvingMatch]               = useState(false);
   const [savingCODate,                 setSavingCODate]                 = useState<string | null>(null);
   const [editingCOId,                  setEditingCOId]                  = useState<string | null>(null);
-  const [editCODraft,                  setEditCODraft]                  = useState({ description: "", job_type: "", amount: "" });
+  const [editCODraft,                  setEditCODraft]                  = useState({ description: "", job_type: "", amount: "", job_start_date: "", job_end_date: "" });
   const [savingCOEdit,                 setSavingCOEdit]                 = useState(false);
   const [closedAtDraft,                setClosedAtDraft]                = useState("");
   const [savingClosedAt,               setSavingClosedAt]               = useState(false);
@@ -447,8 +447,10 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
       // Same reasoning as elsewhere in this file: signed_at drives which month this shows up in on
       // the KPI dashboard, so honor the date actually picked instead of always stamping "now".
       signed_at: newChangeOrder.status === "won" ? new Date(dateAdded + "T12:00:00").toISOString() : null,
+      job_start_date: newChangeOrder.job_start_date || null,
+      job_end_date: newChangeOrder.job_end_date || null,
     });
-    if (!error) { await fetchChangeOrders(); setNewChangeOrder({ description: "", job_type: "", amount: "", status: "pending", record_type: "change_order", date_added: new Date().toISOString().slice(0, 10) }); setShowAddChangeOrder(false); }
+    if (!error) { await fetchChangeOrders(); setNewChangeOrder({ description: "", job_type: "", amount: "", status: "pending", record_type: "change_order", date_added: new Date().toISOString().slice(0, 10), job_start_date: "", job_end_date: "" }); setShowAddChangeOrder(false); }
     setAddingChangeOrder(false);
   };
   // Suggest "Change Order" if there's still active production work on this lead (a genuine
@@ -497,7 +499,7 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
   };
   const handleStartCOEdit = (co: ChangeOrder) => {
     setEditingCOId(co.id);
-    setEditCODraft({ description: co.description || "", job_type: co.job_type || "", amount: String(co.amount) });
+    setEditCODraft({ description: co.description || "", job_type: co.job_type || "", amount: String(co.amount), job_start_date: co.job_start_date || "", job_end_date: co.job_end_date || "" });
   };
   const handleSaveCOEdit = async (coId: string) => {
     if (!editCODraft.amount || Number(editCODraft.amount) <= 0) return;
@@ -506,6 +508,8 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
       description: editCODraft.description || null,
       job_type: editCODraft.job_type || null,
       amount: Number(editCODraft.amount),
+      job_start_date: editCODraft.job_start_date || null,
+      job_end_date: editCODraft.job_end_date || null,
     }).eq("id", coId);
     setSavingCOEdit(false);
     if (error) { alert("Failed to save: " + error.message); return; }
@@ -951,6 +955,10 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
                           <div><label className="text-xs text-muted-foreground block mb-1">Job Type</label><select value={editCODraft.job_type} onChange={(e) => setEditCODraft({ ...editCODraft, job_type: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"><option value="">— Select type —</option>{STANDARD_JOB_TYPES.map(t => <option key={t}>{t}</option>)}<option value="Other">Other</option></select></div>
                           <div><label className="text-xs text-muted-foreground block mb-1">Amount</label><input type="number" placeholder="0" value={editCODraft.amount} onChange={(e) => setEditCODraft({ ...editCODraft, amount: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" /></div>
                         </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          <div><label className="text-xs text-muted-foreground block mb-1">Job Start Date</label><input type="date" value={editCODraft.job_start_date} onChange={(e) => setEditCODraft({ ...editCODraft, job_start_date: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" /></div>
+                          <div><label className="text-xs text-muted-foreground block mb-1">Job End Date</label><input type="date" value={editCODraft.job_end_date} onChange={(e) => setEditCODraft({ ...editCODraft, job_end_date: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" /></div>
+                        </div>
                         <div><label className="text-xs text-muted-foreground block mb-1">Description</label><input type="text" value={editCODraft.description} onChange={(e) => setEditCODraft({ ...editCODraft, description: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" /></div>
                         <div className="flex gap-2">
                           <button onClick={() => handleSaveCOEdit(co.id)} disabled={savingCOEdit || !editCODraft.amount} className="flex-1 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-40 transition-colors">{savingCOEdit ? "Saving..." : "Save Changes"}</button>
@@ -966,6 +974,13 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
                           <input type="date" value={co.date_added ? co.date_added.slice(0, 10) : ""} onChange={(e) => handleUpdateCODate(co.id, e.target.value)} disabled={savingCODate === co.id} title="Date this change order was added" className="text-xs rounded-md border border-border bg-background px-1.5 py-1 focus:outline-none focus:ring-2 focus:ring-primary/40 disabled:opacity-50" />
                           {savingCODate === co.id && <span className="text-xs text-blue-400">saving...</span>}
                         </div>
+                        {(co.job_start_date || co.job_end_date) && (
+                          <span className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium">
+                            {co.job_start_date ? new Date(co.job_start_date + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "?"}
+                            {" - "}
+                            {co.job_end_date ? new Date(co.job_end_date + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "?"}
+                          </span>
+                        )}
                         <span className="text-sm font-bold ml-auto">${Number(co.amount).toLocaleString()}</span>
                       </div>
                     )}
@@ -1042,6 +1057,10 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
                   <div className="grid grid-cols-2 gap-2">
                     <div><label className="text-xs text-muted-foreground block mb-1">Date</label><input type="date" value={newChangeOrder.date_added} onChange={(e) => setNewChangeOrder({ ...newChangeOrder, date_added: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" /></div>
                     <div><label className="text-xs text-muted-foreground block mb-1">Status</label><select value={newChangeOrder.status} onChange={(e) => setNewChangeOrder({ ...newChangeOrder, status: e.target.value as any })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"><option value="pending">Pending</option><option value="won">Won</option><option value="lost">Lost</option></select></div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div><label className="text-xs text-muted-foreground block mb-1">Job Start Date</label><input type="date" value={newChangeOrder.job_start_date} onChange={(e) => setNewChangeOrder({ ...newChangeOrder, job_start_date: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" /></div>
+                    <div><label className="text-xs text-muted-foreground block mb-1">Job End Date</label><input type="date" value={newChangeOrder.job_end_date} onChange={(e) => setNewChangeOrder({ ...newChangeOrder, job_end_date: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" /></div>
                   </div>
                   <div><label className="text-xs text-muted-foreground block mb-1">Description</label><input type="text" placeholder="e.g. Add deck, replace gutters..." value={newChangeOrder.description} onChange={(e) => setNewChangeOrder({ ...newChangeOrder, description: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" /></div>
                   <div className="flex gap-2">
