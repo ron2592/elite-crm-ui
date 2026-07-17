@@ -4,14 +4,9 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { Lead } from "@/types";
 import LeadDetailDialog from "@/components/leads/LeadDetailDialog";
-import { matchesSearch } from "@/lib/utils";
+import NewJobModal from "@/components/production/NewJobModal";
 
 const CALENDAR_STAGES = ["Scheduled to Start", "Job In Progress", "Rough Inspection", "Final Inspection"];
-
-const STANDARD_JOB_TYPES = [
-  "Roof Replacement", "Roof Repair", "Deck", "Siding",
-  "Windows", "Painting", "Masonry", "Stucco", "Chimney",
-];
 
 const stageColors: Record<string, string> = {
   "Pending - Check":          "bg-slate-100 text-slate-600",
@@ -96,18 +91,8 @@ export default function ProductionPage() {
   const [scheduleDraft,   setScheduleDraft]   = useState({ start: "", end: "" });
   const [savingSchedule,  setSavingSchedule]  = useState(false);
 
-  // — Quick "+ New Job" modal —
+  // — Quick "+ New Job" modal --  logic now lives in components/production/NewJobModal.tsx
   const [showNewJobModal,    setShowNewJobModal]    = useState(false);
-  const [newJobSearch,       setNewJobSearch]       = useState("");
-  const [newJobLeadOptions,  setNewJobLeadOptions]  = useState<any[]>([]);
-  const [newJobLead,         setNewJobLead]         = useState<any | null>(null);
-  const [newJobForm,         setNewJobForm]         = useState({
-    job_type: "", amount: "", status: "won" as "pending" | "won" | "lost",
-    record_type: "change_order" as "change_order" | "repeat_job",
-    date_added: new Date().toISOString().slice(0, 10), description: "",
-    job_start_date: "", job_end_date: "",
-  });
-  const [savingNewJob,       setSavingNewJob]       = useState(false);
 
   // ── Refund modal ──────────────────────────────────────────────────────────
   const [refundDraft,    setRefundDraft]    = useState<RefundDraft | null>(null);
@@ -347,61 +332,6 @@ export default function ProductionPage() {
     setEditingSchedule(null);
     await fetchJobs();
   };
-
-  // Quick "+ New Job" -- add a job to an existing lead/client without opening their full profile
-  const openNewJobModal = async () => {
-    setShowNewJobModal(true);
-    setNewJobLead(null);
-    setNewJobSearch("");
-    setNewJobForm({
-      job_type: "", amount: "", status: "won", record_type: "change_order",
-      date_added: new Date().toISOString().slice(0, 10), description: "",
-      job_start_date: "", job_end_date: "",
-    });
-    if (newJobLeadOptions.length === 0) {
-      const { data } = await supabase
-        .from("leads")
-        .select("id, lead_name, phone, client_address, client_city, status, contact_type")
-        .eq("archived", false)
-        .order("lead_name");
-      setNewJobLeadOptions(data || []);
-    }
-  };
-
-  const closeNewJobModal = () => setShowNewJobModal(false);
-
-  const handleCreateNewJob = async () => {
-    if (!newJobLead || !newJobForm.amount || Number(newJobForm.amount) <= 0) return;
-    setSavingNewJob(true);
-    const { count } = await supabase
-      .from("change_orders")
-      .select("id", { count: "exact", head: true })
-      .eq("lead_id", newJobLead.id);
-    const dateAdded = newJobForm.date_added || new Date().toISOString().slice(0, 10);
-    const { error } = await supabase.from("change_orders").insert({
-      lead_id:      newJobLead.id,
-      order_number: (count || 0) + 1,
-      description:  newJobForm.description || null,
-      job_type:     newJobForm.job_type || null,
-      amount:       Number(newJobForm.amount),
-      status:       newJobForm.status,
-      record_type:  newJobForm.record_type,
-      date_added:   dateAdded,
-      signed_at:    newJobForm.status === "won" ? new Date(dateAdded + "T12:00:00").toISOString() : null,
-      job_start_date: newJobForm.job_start_date || null,
-      job_end_date:   newJobForm.job_end_date || null,
-    });
-    setSavingNewJob(false);
-    if (!error) {
-      closeNewJobModal();
-      fetchJobs();
-    }
-  };
-
-  const newJobFiltered = (newJobSearch.trim()
-    ? newJobLeadOptions.filter(l => matchesSearch(`${l.lead_name || ""} ${l.phone || ""} ${l.client_address || ""} ${l.client_city || ""}`, newJobSearch))
-    : newJobLeadOptions
-  ).slice(0, 25);
 
   // ✅ Log a refund as a negative payment
   const handleLogRefund = async () => {
@@ -818,7 +748,7 @@ export default function ProductionPage() {
       {/* ── Page header ── */}
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold">Production</h1>
-        <button onClick={openNewJobModal}
+        <button onClick={() => setShowNewJobModal(true)}
           className="flex items-center gap-1.5 rounded-md bg-primary text-primary-foreground px-3 py-2 text-sm font-medium hover:bg-primary/90 transition-colors">
           <span className="text-base leading-none">+</span> New Job
         </button>
@@ -894,130 +824,7 @@ export default function ProductionPage() {
       )}
 
       {/* ── New Job Modal ── */}
-      {showNewJobModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="bg-background rounded-xl border border-border shadow-xl p-6 w-full max-w-md space-y-4 max-h-[85vh] overflow-y-auto">
-            {!newJobLead ? (
-              <>
-                <div>
-                  <p className="font-semibold">New Job</p>
-                  <p className="text-xs text-muted-foreground mt-0.5">Search for the existing lead or client this job belongs to.</p>
-                </div>
-                <input
-                  type="text" autoFocus placeholder="Search by name, phone, or address..."
-                  value={newJobSearch} onChange={e => setNewJobSearch(e.target.value)}
-                  className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" />
-                <div className="border border-border rounded-md divide-y divide-border max-h-72 overflow-y-auto">
-                  {newJobFiltered.length === 0 ? (
-                    <p className="px-3 py-4 text-xs text-muted-foreground text-center">
-                      {newJobSearch.trim() ? "No matching leads." : "Start typing to search..."}
-                    </p>
-                  ) : newJobFiltered.map(l => (
-                    <button key={l.id} onClick={() => setNewJobLead(l)}
-                      className="w-full text-left px-3 py-2 hover:bg-muted transition-colors">
-                      <p className="text-sm font-medium">{l.lead_name || "Unnamed"}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {[l.phone, l.client_address || l.client_city].filter(Boolean).join(" · ") || "No contact info"}
-                      </p>
-                    </button>
-                  ))}
-                </div>
-                <button onClick={closeNewJobModal}
-                  className="w-full px-3 py-2 rounded-md border border-border text-sm hover:bg-muted transition-colors">
-                  Cancel
-                </button>
-              </>
-            ) : (
-              <>
-                <div className="flex items-start justify-between">
-                  <div>
-                    <p className="font-semibold">New Job</p>
-                    <p className="text-xs text-muted-foreground mt-0.5">for {newJobLead.lead_name || "Unnamed"}</p>
-                  </div>
-                  <button onClick={() => setNewJobLead(null)} className="text-xs text-primary hover:underline">Change client</button>
-                </div>
-                <div>
-                  <label className="text-xs text-muted-foreground block mb-1">Is this a scope change to an active job, or a separate job the client is coming back for?</label>
-                  <div className="flex gap-2">
-                    <button type="button" onClick={() => setNewJobForm({ ...newJobForm, record_type: "change_order" })}
-                      className={`flex-1 text-xs px-3 py-2 rounded-md border font-medium transition-colors ${newJobForm.record_type === "change_order" ? "bg-primary text-primary-foreground border-primary" : "border-border hover:bg-muted text-muted-foreground"}`}>
-                      Change Order <span className="opacity-70">(active job)</span>
-                    </button>
-                    <button type="button" onClick={() => setNewJobForm({ ...newJobForm, record_type: "repeat_job" })}
-                      className={`flex-1 text-xs px-3 py-2 rounded-md border font-medium transition-colors ${newJobForm.record_type === "repeat_job" ? "bg-purple-600 text-white border-purple-600" : "border-border hover:bg-muted text-muted-foreground"}`}>
-                      Repeat Job <span className="opacity-70">(client's back)</span>
-                    </button>
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <label className="text-xs text-muted-foreground block mb-1">Job Type</label>
-                    <select value={newJobForm.job_type} onChange={e => setNewJobForm({ ...newJobForm, job_type: e.target.value })}
-                      className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40">
-                      <option value="">— Select type —</option>
-                      {STANDARD_JOB_TYPES.map(t => <option key={t}>{t}</option>)}
-                      <option value="Other">Other</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="text-xs text-muted-foreground block mb-1">Amount</label>
-                    <input type="number" placeholder="0" value={newJobForm.amount}
-                      onChange={e => setNewJobForm({ ...newJobForm, amount: e.target.value })}
-                      className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" />
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <label className="text-xs text-muted-foreground block mb-1">Date Added</label>
-                    <input type="date" value={newJobForm.date_added}
-                      onChange={e => setNewJobForm({ ...newJobForm, date_added: e.target.value })}
-                      className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" />
-                  </div>
-                  <div>
-                    <label className="text-xs text-muted-foreground block mb-1">Status</label>
-                    <select value={newJobForm.status} onChange={e => setNewJobForm({ ...newJobForm, status: e.target.value as any })}
-                      className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40">
-                      <option value="pending">Pending</option>
-                      <option value="won">Won</option>
-                      <option value="lost">Lost</option>
-                    </select>
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <label className="text-xs text-muted-foreground block mb-1">Job Start Date</label>
-                    <input type="date" value={newJobForm.job_start_date}
-                      onChange={e => setNewJobForm({ ...newJobForm, job_start_date: e.target.value })}
-                      className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" />
-                  </div>
-                  <div>
-                    <label className="text-xs text-muted-foreground block mb-1">Job End Date</label>
-                    <input type="date" value={newJobForm.job_end_date}
-                      onChange={e => setNewJobForm({ ...newJobForm, job_end_date: e.target.value })}
-                      className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" />
-                  </div>
-                </div>
-                <div>
-                  <label className="text-xs text-muted-foreground block mb-1">Description</label>
-                  <input type="text" placeholder="e.g. Add deck, replace gutters..." value={newJobForm.description}
-                    onChange={e => setNewJobForm({ ...newJobForm, description: e.target.value })}
-                    className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" />
-                </div>
-                <div className="flex gap-2">
-                  <button onClick={handleCreateNewJob} disabled={savingNewJob || !newJobForm.amount}
-                    className="flex-1 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-40 transition-colors">
-                    {savingNewJob ? "Saving..." : "Save Job"}
-                  </button>
-                  <button onClick={closeNewJobModal}
-                    className="px-4 py-2 rounded-md border border-border text-sm hover:bg-muted transition-colors">
-                    Cancel
-                  </button>
-                </div>
-              </>
-            )}
-          </div>
-        </div>
-      )}
+      <NewJobModal open={showNewJobModal} onOpenChange={setShowNewJobModal} onCreated={fetchJobs} />
 
       {/* ── Filters ── */}
       <div className="flex items-center gap-2 flex-wrap">

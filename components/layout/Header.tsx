@@ -1,9 +1,10 @@
 "use client";
 
 import { usePathname, useRouter } from "next/navigation";
-import { Bell, Search, X, Loader2, Plus, CheckSquare, Clock, AlertCircle, Menu, UserPlus, ArrowRightLeft, DollarSign } from "lucide-react";
+import { Bell, Search, X, Loader2, Plus, CheckSquare, Clock, AlertCircle, Menu, UserPlus, ArrowRightLeft, DollarSign, Briefcase } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import AddLeadModal from "@/components/leads/AddLeadModal";
+import NewJobModal from "@/components/production/NewJobModal";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { COMPANY } from "@/lib/config";
@@ -100,6 +101,7 @@ export default function Header({ onMobileMenuToggle }: HeaderProps) {
   // ── Quick add ─────────────────────────────────────────────────────────────
   const [quickAddOpen, setQuickAddOpen] = useState(false);
   const [addLeadOpen,  setAddLeadOpen]  = useState(false);
+  const [newJobOpen,   setNewJobOpen]   = useState(false);
   const quickAddRef = useRef<HTMLDivElement>(null);
 
   // ── Notifications ─────────────────────────────────────────────────────────
@@ -507,11 +509,22 @@ export default function Header({ onMobileMenuToggle }: HeaderProps) {
               >
                 <CheckSquare className="h-3.5 w-3.5 text-muted-foreground" /> Add Task
               </button>
+              <button
+                onClick={() => { setQuickAddOpen(false); setNewJobOpen(true); }}
+                className="w-full flex items-center gap-2 px-3 py-2.5 text-sm hover:bg-muted/50 transition-colors text-left"
+              >
+                <Briefcase className="h-3.5 w-3.5 text-muted-foreground" /> Add Job
+              </button>
             </div>
           )}
         </div>
 
         <AddLeadModal open={addLeadOpen} onOpenChange={setAddLeadOpen} />
+        <NewJobModal
+          open={newJobOpen}
+          onOpenChange={setNewJobOpen}
+          onCreated={() => router.push("/production")}
+        />
       </div>
     </header>
   );
