@@ -5,6 +5,7 @@ import { supabase } from "@/lib/supabaseClient";
 import { Lead } from "@/types";
 import LeadDetailDialog from "@/components/leads/LeadDetailDialog";
 import NewJobModal from "@/components/production/NewJobModal";
+import { useRole } from "@/lib/useRole";
 
 const CALENDAR_STAGES = ["Scheduled to Start", "Job In Progress", "Rough Inspection", "Final Inspection"];
 
@@ -73,6 +74,7 @@ function toLocalDateValue(iso: string | null): string {
 }
 
 export default function ProductionPage() {
+  const { isManager } = useRole();
   const [jobs,           setJobs]           = useState<JobRow[]>([]);
   const [loading,        setLoading]        = useState(true);
   const [updating,       setUpdating]       = useState<string | null>(null);
@@ -359,6 +361,27 @@ export default function ProductionPage() {
     if (data) {
       setSelectedLead(data as Lead);
       setDialogOpen(true);
+    }
+  };
+
+  // A "job" for a change_order is its own row -- deleting it is scoped and keeps payment
+  // history intact (same RPC LeadDetailDialog uses). A "job" for a lead IS the lead record
+  // itself (the initial contract lives directly on leads.*), so there's no narrower thing to
+  // delete -- confirm that clearly since it also removes any other change orders/payments.
+  const handleDeleteJob = async (row: JobRow) => {
+    if (row.type === "change_order") {
+      if (!confirm("Delete this change order? Its payment history stays intact for records, but it will no longer appear on this lead or in revenue reporting.")) return;
+      const { error } = await supabase.rpc("delete_change_order", { p_change_order_id: row.id });
+      if (error) { alert("Failed to delete: " + error.message); return; }
+      await fetchJobs();
+    } else {
+      if (!confirm(`Permanently delete "${row.clientName}"? This removes the entire lead record -- including any other jobs, change orders, and payments they have, not just this one.`)) return;
+      if (!confirm("Are you sure? This cannot be undone.")) return;
+      await supabase.from("change_order_payments").delete().eq("lead_id", row.id);
+      await supabase.from("change_orders").delete().eq("lead_id", row.id);
+      await supabase.from("payments").delete().eq("lead_id", row.id);
+      await supabase.from("leads").delete().eq("id", row.id);
+      await fetchJobs();
     }
   };
 
@@ -670,6 +693,12 @@ export default function ProductionPage() {
               className="text-xs px-2 py-1 rounded border border-border hover:bg-muted transition-colors text-muted-foreground whitespace-nowrap">
               Edit
             </button>
+            {isManager && (
+              <button onClick={() => handleDeleteJob(job)}
+                className="text-xs px-2 py-1 rounded border border-border hover:bg-red-100 hover:text-red-700 hover:border-red-400 transition-colors text-muted-foreground whitespace-nowrap">
+                Delete
+              </button>
+            )}
             {isCancelled && job.totalCollected > 0 && (
               <button
                 onClick={() => { setRefundDraft({ leadId: job.leadId, clientName: job.clientName, collected: job.totalCollected }); setRefundAmount(""); }}
