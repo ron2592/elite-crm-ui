@@ -1,13 +1,14 @@
 "use client";
 
 import { useEffect, useState, useMemo } from "react";
+import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import { matchesSearch } from "@/lib/utils";
 import {
   Phone, RefreshCw, Plus, X, Save, Loader2,
   CalendarDays, ChevronDown, ChevronUp,
   Link2, FileText, CheckCircle2, Users,
-  Target, TrendingUp, Search, Zap,
+  Target, TrendingUp, Search, Zap, ClipboardList,
 } from "lucide-react";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -73,6 +74,7 @@ function cleanTitle(title: string) {
 
 // ── Component ─────────────────────────────────────────────────────────────────
 export default function ActivitiesPage() {
+  const router = useRouter();
   const [activities,  setActivities]  = useState<Activity[]>([]);
   const [leads,       setLeads]       = useState<LeadOption[]>([]);
   const [loading,     setLoading]     = useState(true);
@@ -286,6 +288,10 @@ export default function ActivitiesPage() {
           <p className="text-xs text-muted-foreground">Daily log · EOD reports · Goal tracking</p>
         </div>
         <div className="flex items-center gap-2">
+          <button onClick={() => router.push("/activities/report")}
+            className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md border border-primary/30 bg-primary/5 hover:bg-primary/10 text-primary font-medium transition-colors">
+            <ClipboardList className="h-3.5 w-3.5" /> Daily Report
+          </button>
           <button onClick={fetchActivities}
             className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md border border-border hover:bg-muted text-muted-foreground transition-colors">
             <RefreshCw className="h-3.5 w-3.5" /> Refresh
