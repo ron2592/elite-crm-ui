@@ -3,6 +3,7 @@
 import { useEffect, useState, useMemo } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { matchesSearch } from "@/lib/utils";
+import LeadDetailDialog from "@/components/leads/LeadDetailDialog";
 import {
   Plus, X, Save, Loader2, CheckSquare, Square,
   AlertCircle, Clock, ChevronDown, Search,
@@ -102,6 +103,15 @@ export default function TasksPage() {
   });
   const [leadSearch, setLeadSearch] = useState("");
   const [showLeadDrop, setShowLeadDrop] = useState(false);
+
+  // ── Lead detail dialog (opened from a task's lead link) ──────────────────
+  const [selectedLead, setSelectedLead] = useState<any | null>(null);
+  const [leadDialogOpen, setLeadDialogOpen] = useState(false);
+
+  async function openLead(leadId: string) {
+    const { data } = await supabase.from("leads").select("*, lead_sources(name)").eq("id", leadId).single();
+    if (data) { setSelectedLead(data); setLeadDialogOpen(true); }
+  }
 
   // ── Fetch ──────────────────────────────────────────────────────────────────
   async function fetchTasks() {
@@ -291,8 +301,16 @@ export default function TasksPage() {
               </span>
             )}
 
-            {/* Lead link */}
-            {task.lead_name && (
+            {/* Lead link -- click to open the full lead detail */}
+            {task.lead_name && task.lead_id && (
+              <button
+                onClick={() => openLead(task.lead_id!)}
+                className="flex items-center gap-1 text-xs text-primary hover:underline"
+              >
+                <Link2 className="h-3 w-3" /> {task.lead_name}
+              </button>
+            )}
+            {task.lead_name && !task.lead_id && (
               <span className="flex items-center gap-1 text-xs text-muted-foreground">
                 <Link2 className="h-3 w-3" /> {task.lead_name}
               </span>
@@ -633,6 +651,14 @@ export default function TasksPage() {
           )}
         </div>
       )}
+
+      <LeadDetailDialog
+        lead={selectedLead}
+        open={leadDialogOpen}
+        onOpenChange={setLeadDialogOpen}
+        onLeadUpdated={(leadId) => openLead(leadId)}
+        onLeadDeleted={() => setLeadDialogOpen(false)}
+      />
     </div>
   );
 }
