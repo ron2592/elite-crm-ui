@@ -30,6 +30,13 @@ interface OpenLead {
 interface WonLead {
   id: string; lead_name: string | null; initial_contract_value: number | null
   production_stage: string | null; created_at: string; closed_at: string | null
+  metadata: { job_type?: string } | null
+}
+interface PeriodLead {
+  id: string; lead_name: string | null; first_name: string | null; last_name: string | null
+  phone: string | null; status: string; created_at: string
+  lead_sources: { name: string } | null
+  metadata: { reason_lost?: string } | null
 }
 
 function fmt$(n: number) {
@@ -75,7 +82,7 @@ export default function CompanyHealthPage() {
   const [dateTo,   setDateTo]   = useState(todayStr())
   const [loading,  setLoading]  = useState(true)
 
-  const [periodLeads, setPeriodLeads] = useState<{ status: string }[]>([])
+  const [periodLeads, setPeriodLeads] = useState<PeriodLead[]>([])
   const [openLeads,   setOpenLeads]   = useState<OpenLead[]>([])
   const [wonLeads,    setWonLeads]    = useState<WonLead[]>([])
   const [coValue,     setCoValue]     = useState(0)
@@ -99,9 +106,10 @@ export default function CompanyHealthPage() {
     setLoading(true)
     const rangeStart = new Date(dateFrom + 'T00:00:00').toISOString()
     const rangeEnd   = new Date(dateTo   + 'T23:59:59').toISOString()
-    const { data } = await supabase.from('leads').select('status')
+    const { data } = await supabase.from('leads')
+      .select('id,lead_name,first_name,last_name,phone,status,created_at,metadata,lead_sources(name)')
       .gte('created_at', rangeStart).lte('created_at', rangeEnd).eq('archived', false)
-    setPeriodLeads(data || [])
+    setPeriodLeads((data as any[]) || [])
     setLoading(false)
   }
 
@@ -114,7 +122,7 @@ export default function CompanyHealthPage() {
         .select('id,lead_name,first_name,last_name,phone,status,estimated_amount,created_at,lead_sources(name)')
         .in('status', OPEN_STAGES).eq('archived', false),
       supabase.from('leads')
-        .select('id,lead_name,initial_contract_value,production_stage,created_at,closed_at')
+        .select('id,lead_name,initial_contract_value,production_stage,created_at,closed_at,metadata')
         .in('status', WON_STAGES).eq('archived', false),
       supabase.from('change_orders').select('amount').eq('status', 'won').is('deleted_at', null),
       supabase.from('payments').select('amount'),
@@ -142,6 +150,19 @@ export default function CompanyHealthPage() {
     const lost  = periodLeads.filter(l => l.status === 'lost' || l.status === 'not_qualified').length
     return { total, won, lost, pct: total > 0 ? Math.round((won / total) * 100) : 0 }
   }, [periodLeads])
+
+  // Full detail behind the "Lost / Disqualified" count above -- which leads, and why, sorted
+  // newest first so the most recent losses are easiest to review during a SOD/EOD meeting.
+  const lostLeads = useMemo(() => {
+    return periodLeads
+      .filter(l => l.status === 'lost' || l.status === 'not_qualified')
+      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+  }, [periodLeads])
+
+  // Won leads sorted newest-first for the Production Status detail list below.
+  const wonLeadsSorted = useMemo(() => {
+    return [...wonLeads].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+  }, [wonLeads])
 
   // ── Pipeline value in play — quoted/appointment work not yet won or lost ────────────────────────
   const pipelineValue = useMemo(() => openLeads.reduce((s, l) => s + Number(l.estimated_amount || 0), 0), [openLeads])
@@ -263,6 +284,38 @@ export default function CompanyHealthPage() {
         )}
       </div>
 
+      {/* LOST / DISQUALIFIED DETAIL — the "Lost / Disqualified" count above the fold only tells you
+          how many; this is who, and why, so a manager can actually act on it. */}
+      <Section title="Lost / Disqualified Leads" icon={<AlertTriangle className="h-4 w-4 text-red-500" />} badge={`${lostLeads.length} leads`} defaultOpen={false}>
+        {lostLeads.length === 0 ? (
+          <p className="text-sm text-muted-foreground text-center py-4">No lost or disqualified leads in this period.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-border">
+                  {['Name', 'Phone', 'Source', 'Status', 'Reason Lost', 'Date'].map(h => (
+                    <th key={h} className="text-left text-xs text-muted-foreground font-semibold pb-2 pr-3 whitespace-nowrap">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {lostLeads.map(l => (
+                  <tr key={l.id} className="border-b border-border/40 hover:bg-muted/20 cursor-pointer" onClick={() => openLead(l.id)}>
+                    <td className="py-2.5 pr-3 font-semibold whitespace-nowrap">{leadName(l)}</td>
+                    <td className="py-2.5 pr-3 text-muted-foreground text-xs">{l.phone || '—'}</td>
+                    <td className="py-2.5 pr-3"><span className="text-xs px-2 py-0.5 rounded-full bg-muted font-medium">{(l.lead_sources as any)?.name || '—'}</span></td>
+                    <td className="py-2.5 pr-3 text-xs text-red-500 font-medium">{l.status === 'not_qualified' ? 'Not Qualified' : 'Lost'}</td>
+                    <td className="py-2.5 pr-3 text-muted-foreground">{l.metadata?.reason_lost || '—'}</td>
+                    <td className="py-2.5 pr-3 text-muted-foreground text-xs whitespace-nowrap">{new Date(l.created_at).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' })}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Section>
+
       {/* PIPELINE AGING & BOTTLENECKS */}
       <Section title="Pipeline Aging & Bottlenecks" icon={<Clock className="h-4 w-4 text-primary" />} badge={`${allAged.length} stuck 14+ days`}>
         <p className="text-xs text-muted-foreground mb-4">Based on how long a lead has sat in an open stage since it came in. A healthy pipeline keeps this low — a growing pile here means leads are being quoted and then forgotten.</p>
@@ -317,6 +370,23 @@ export default function CompanyHealthPage() {
           <div className="rounded-lg bg-muted/40 p-3"><p className="text-xs text-muted-foreground mb-1">Completed</p><p className="text-xl font-bold text-emerald-600">{production.completed.length}</p></div>
           <div className="rounded-lg bg-muted/40 p-3"><p className="text-xs text-muted-foreground mb-1">No Stage Set</p><p className="text-xl font-bold text-muted-foreground">{production.noStage.length}</p></div>
         </div>
+        {wonLeadsSorted.length > 0 && (
+          <div className="mb-3">
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Won jobs · client &amp; job type</p>
+            <div className="rounded-lg border border-border/60 divide-y divide-border/40 max-h-80 overflow-y-auto">
+              {wonLeadsSorted.map(l => (
+                <button key={l.id} onClick={() => openLead(l.id)}
+                  className="w-full flex items-center justify-between gap-3 px-4 py-2.5 hover:bg-muted/30 text-left">
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold truncate">{leadName(l)}</p>
+                    <p className="text-xs text-muted-foreground">{l.metadata?.job_type || 'No job type set'} · {l.production_stage || 'No stage set'}</p>
+                  </div>
+                  <span className="text-xs font-bold text-emerald-600 shrink-0">{fmt$(Number(l.initial_contract_value || 0))}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
         <button onClick={() => router.push('/production')} className="text-xs text-primary hover:underline font-medium">View full Production tracker →</button>
       </Section>
 
