@@ -17,7 +17,7 @@ interface LeadRow {
   id: string; first_name?: string; last_name?: string; lead_name?: string; phone?: string;
   status: string; contact_type: string | null; lsa_status: string | null;
   initial_contract_value: number; created_at: string; source_id: string | null;
-  metadata: { salesperson?: string } | null;
+  metadata: { salesperson?: string; job_type?: string } | null;
   lead_sources: { name: string } | null;
 }
 interface PaymentRow { amount: number; paid_at: string; lead_id: string }
@@ -134,7 +134,13 @@ function YTDBlock({ ytd, year, yearOptions, onYearChange, isCurrentYear }: {
           {yearOptions.map(y => <option key={y} value={y}>{y} YTD</option>)}
         </select>
       </div>
-      <div className="grid grid-cols-1 sm:grid-cols-3 divide-y sm:divide-y-0 sm:divide-x divide-border bg-card">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 divide-y sm:divide-y-0 sm:divide-x divide-border bg-card">
+        <div className="px-6 py-5">
+          <p className="text-xs text-muted-foreground font-semibold uppercase tracking-wide mb-1">Total Leads</p>
+          <p className="text-3xl font-bold mt-1">{ytd.totalLeads}</p>
+          <p className="text-xs text-muted-foreground mt-1">{ytd.totalWon} won · {ytd.totalInPerson} in-person</p>
+          <p className="text-[11px] text-muted-foreground/60 mt-2 italic">{isCurrentYear ? 'Jan 1 – today' : `Jan 1 – Dec 31, ${ytd.year}`}</p>
+        </div>
         <div className="px-6 py-5">
           <p className="text-xs text-muted-foreground font-semibold uppercase tracking-wide mb-1">Cost Per Acquisition</p>
           <p className={`text-3xl font-bold mt-1 ${!ytd.cpa ? 'text-muted-foreground' : ytd.cpa <= 700 ? 'text-emerald-600' : ytd.cpa <= 1200 ? 'text-amber-500' : 'text-red-500'}`}>
@@ -978,7 +984,7 @@ export default function KPIPage() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-border">
-                      {['Name','Phone','Source','Salesperson','Contact Type','LSA Status','Stage','Contract Value','Date'].map(h => (
+                      {['Name','Phone','Source','Salesperson','Contact Type','LSA Status','Stage','Job Closed','Contract Value','Date'].map(h => (
                         <th key={h} className="text-left text-xs text-muted-foreground font-semibold pb-2 pr-3 whitespace-nowrap">{h}</th>
                       ))}
                     </tr>
@@ -997,6 +1003,7 @@ export default function KPIPage() {
                       const stageColor  = isWon ? 'text-emerald-600 font-semibold' : lead.status === 'lost' ? 'text-red-500' : 'text-muted-foreground'
                       const stageLabel  = lead.status.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase())
                       const date        = new Date(lead.created_at).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' })
+                      const jobClosed   = isWon ? (lead.metadata?.job_type || '—') : '—'
                       return (
                         <tr key={lead.id} className={`border-b border-border/40 hover:bg-muted/20 ${i % 2 === 0 ? '' : 'bg-muted/10'}`}>
                           <td className="py-2.5 pr-3 font-semibold whitespace-nowrap">{name}</td>
@@ -1006,6 +1013,7 @@ export default function KPIPage() {
                           <td className="py-2.5 pr-3 text-muted-foreground text-xs">{contactType}</td>
                           <td className="py-2.5 pr-3 text-muted-foreground text-xs">{lsaStatus}</td>
                           <td className={`py-2.5 pr-3 text-xs ${stageColor}`}>{stageLabel}</td>
+                          <td className="py-2.5 pr-3 text-xs">{isWon ? <span className="px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 font-medium">{jobClosed}</span> : <span className="text-muted-foreground">—</span>}</td>
                           <td className="py-2.5 pr-3 font-semibold text-emerald-600">{lead.initial_contract_value > 0 ? fmt$(lead.initial_contract_value) : '—'}</td>
                           <td className="py-2.5 pr-3 text-muted-foreground text-xs">{date}</td>
                         </tr>
