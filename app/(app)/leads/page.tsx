@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import { Lead, LeadStatus } from "@/types";
 import KanbanColumn from "@/components/leads/KanbanColumn";
@@ -165,6 +165,7 @@ function SimpleStageColumn({
 export default function LeadsPage() {
   const now    = new Date();
   const router = useRouter();
+  const searchParams = useSearchParams();
 
   const [allLeads,          setAllLeads]          = useState<Lead[]>([]);
   const [changeOrderTotals, setChangeOrderTotals] = useState<Record<string, number>>({});
@@ -283,6 +284,24 @@ export default function LeadsPage() {
       .subscribe();
     return () => { supabase.removeChannel(ch); };
   }, []);
+
+  // Header search results and notifications link here as /leads?open=<id> -- previously this
+  // param was never read, so clicking a result just landed on the plain pipeline board with
+  // nothing opened. Fetch that lead directly (regardless of stage/month filter) and open its
+  // detail dialog, then strip the param so refreshing doesn't reopen it.
+  useEffect(() => {
+    const openId = searchParams.get("open");
+    if (!openId) return;
+    (async () => {
+      const { data } = await supabase.from("leads").select("*, lead_sources(name, id)").eq("id", openId).single();
+      if (data) {
+        const n = { ...data, status: normalizeStatus(data.status ?? "new") };
+        setSelectedLead(n as Lead);
+        setDialogOpen(true);
+      }
+      router.replace("/leads");
+    })();
+  }, [searchParams]);
 
   const monthStart = new Date(selectedYear, selectedMonth, 1);
   const monthEnd   = new Date(selectedYear, selectedMonth + 1, 0, 23, 59, 59);
