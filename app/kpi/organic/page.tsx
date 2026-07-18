@@ -3,16 +3,41 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabaseClient'
-import { Printer, Loader2, Users, Repeat } from 'lucide-react'
+import { Printer, Loader2, Users, Repeat, ChevronDown, ChevronUp } from 'lucide-react'
 import KpiTabs from '@/components/kpi/KpiTabs'
 
 const WON_STAGES = ['closed_won', 'won', 'completed', 'completed_with_balance']
+
+function Section({ title, badge, defaultOpen = true, children }: {
+  title: string; badge?: string; defaultOpen?: boolean; children: React.ReactNode
+}) {
+  const [open, setOpen] = useState(defaultOpen)
+  return (
+    <div className="rounded-lg border border-border overflow-hidden">
+      <button onClick={() => setOpen(v => !v)}
+        className="w-full flex items-center justify-between px-4 py-3 bg-muted/20 hover:bg-muted/40 transition-colors">
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-semibold">{title}</span>
+          {badge && <span className="text-xs px-2 py-0.5 rounded-full bg-primary/10 text-primary">{badge}</span>}
+        </div>
+        {open ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
+      </button>
+      {open && <div className="p-4">{children}</div>}
+    </div>
+  )
+}
 
 interface RevEvent {
   lead_id: string; source_id: string | null; event_type: 'initial_contract' | 'change_order'
   event_date: string; amount: number; contact_id: string | null; is_repeat_business: boolean
 }
-interface LeadRow { id: string; source_id: string | null; contact_type: string | null; status: string }
+interface LeadRow {
+  id: string; first_name?: string; last_name?: string; lead_name?: string; phone?: string;
+  source_id: string | null; contact_type: string | null; lsa_status: string | null; status: string;
+  initial_contract_value: number; created_at: string;
+  metadata: { salesperson?: string; job_type?: string } | null;
+  lead_sources: { name: string } | null;
+}
 interface LeadSource { id: string; name: string }
 interface Contact { id: string; full_name: string; phone: string | null }
 
@@ -65,7 +90,7 @@ export default function OrganicRevenuePage() {
     const [revRes, leadsRes, srcRes, spendSrcRes] = await Promise.all([
       supabase.from('revenue_events').select('lead_id,source_id,event_type,event_date,amount,contact_id,is_repeat_business')
         .gte('event_date', dateFrom).lte('event_date', dateTo),
-      supabase.from('leads').select('id,source_id,contact_type,status')
+      supabase.from('leads').select('id,first_name,last_name,lead_name,phone,source_id,contact_type,lsa_status,status,initial_contract_value,created_at,metadata,lead_sources(name)')
         .gte('created_at', rangeStart).lte('created_at', rangeEnd).eq('archived', false),
       supabase.from('lead_sources').select('id,name').order('name'),
       // All-time, not date-scoped — same "has this source ever had spend logged" rule as the main
@@ -259,6 +284,52 @@ export default function OrganicRevenuePage() {
               </p>
             </div>
           </div>
+
+          {/* LEADS THIS PERIOD -- same list as the main KPI Dashboard, kept here too so you don't
+              have to flip pages to see who's behind the organic/repeat numbers above. */}
+          <Section title="Leads This Period" badge={`${leads.length} leads`} defaultOpen={false}>
+            {leads.length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center py-4">No leads for this period.</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-border">
+                      {['Name','Phone','Source','Salesperson','LSA Status','Stage','Job Closed','Contract Value','Date'].map(h => (
+                        <th key={h} className="text-left text-xs text-muted-foreground font-semibold pb-2 pr-3 whitespace-nowrap">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {leads.map((lead, i) => {
+                      const name        = lead.lead_name || `${lead.first_name || ''} ${lead.last_name || ''}`.trim() || '—'
+                      const source      = (lead.lead_sources as any)?.name || '—'
+                      const salesperson = lead.metadata?.salesperson || '—'
+                      const lsaStatus   = lead.lsa_status ? lead.lsa_status.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase()) : '—'
+                      const isWon       = WON_STAGES.includes(lead.status)
+                      const stageColor  = isWon ? 'text-emerald-600 font-semibold' : lead.status === 'lost' ? 'text-red-500' : 'text-muted-foreground'
+                      const stageLabel  = lead.status.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase())
+                      const jobClosed   = isWon ? (lead.metadata?.job_type || '—') : '—'
+                      const date        = new Date(lead.created_at).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' })
+                      return (
+                        <tr key={lead.id} className={`border-b border-border/40 hover:bg-muted/20 ${i % 2 === 0 ? '' : 'bg-muted/10'}`}>
+                          <td className="py-2.5 pr-3 font-semibold whitespace-nowrap">{name}</td>
+                          <td className="py-2.5 pr-3 text-muted-foreground text-xs">{lead.phone || '—'}</td>
+                          <td className="py-2.5 pr-3"><span className="text-xs px-2 py-0.5 rounded-full bg-muted font-medium">{source}</span></td>
+                          <td className="py-2.5 pr-3 text-muted-foreground">{salesperson}</td>
+                          <td className="py-2.5 pr-3 text-muted-foreground text-xs">{lsaStatus}</td>
+                          <td className={`py-2.5 pr-3 text-xs ${stageColor}`}>{stageLabel}</td>
+                          <td className="py-2.5 pr-3 text-xs">{isWon ? <span className="px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 font-medium">{jobClosed}</span> : <span className="text-muted-foreground">—</span>}</td>
+                          <td className="py-2.5 pr-3 font-semibold text-emerald-600">{lead.initial_contract_value > 0 ? fmt$(lead.initial_contract_value) : '—'}</td>
+                          <td className="py-2.5 pr-3 text-muted-foreground text-xs">{date}</td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </Section>
 
         </div>
       )}
