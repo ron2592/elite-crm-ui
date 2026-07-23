@@ -438,7 +438,11 @@ export default function KPIPage() {
     // Revenue is bucketed by revenue_events.event_date (when it was actually won), not by the
     // parent lead's created_at — so a change order won this period on an old repeat-client lead
     // shows up here instead of being buried under the lead's original intake date.
-    const revInRange = filterSrc ? revenueEvents.filter(e => e.source_id === filterSrc) : revenueEvents
+    // This page is Marketing Performance -- paid channels only. No marketing budget was spent to
+    // win back a repeat client or an organic/referral lead, so that revenue doesn't belong in these
+    // figures; it's tracked on its own in the Organic & Repeat tab instead.
+    const revInRange = (filterSrc ? revenueEvents.filter(e => e.source_id === filterSrc) : revenueEvents)
+      .filter(e => paidSourceIds.has(e.source_id || '') && !e.is_repeat_business)
     // Two buckets, full stop:
     // - Initial Job Revenue: the very first job a client ever won with us.
     // - Additional Job Revenue: everything after that — a change order on an existing job, OR the
@@ -501,7 +505,7 @@ export default function KPIPage() {
       bySrc[key].contracted += Number(e.amount || 0)
     })
     return { total, inPerson, phoneQ, totalAppts, wonCount, contracted, coVolume, initialJobRevenue, additionalJobRevenue, revenueDetail, totalRev, actual, lsaCharged, lsaCredited, lsaNotCharged, lsaInReview, totalSpend, apptAcqCost, projAcqCost, bySrc }
-  }, [filtered, payments, coPayments, spend, revenueEvents, sources, filterSrc, revLeadNames])
+  }, [filtered, payments, coPayments, spend, revenueEvents, sources, filterSrc, revLeadNames, paidSourceIds])
 
   const compareBySrc = useMemo(() => {
     if (!compareLeads.length && !compareRevEvents.length) return {}
@@ -516,7 +520,10 @@ export default function KPIPage() {
     })
     // Revenue comes from revenue_events (dated by when won), same fix as the main period —
     // a source with a change order won this comparison month on an older lead still shows up.
+    // Same paid-only, no-repeat-business scope as the main period, so the comparison numbers stay
+    // apples-to-apples with what's shown above.
     compareRevEvents.forEach((e: any) => {
+      if (!paidSourceIds.has(e.source_id || '') || e.is_repeat_business) return
       const key = e.source_id || 'unknown'
       if (!bySrc[key]) {
         const name = sources.find(s => s.id === e.source_id)?.name || 'Unknown'
@@ -529,7 +536,7 @@ export default function KPIPage() {
       if (bySrc[key]) bySrc[key].spend += Number(s.amount_spent || 0)
     })
     return bySrc
-  }, [compareLeads, compareRevEvents, compareSpend, sources])
+  }, [compareLeads, compareRevEvents, compareSpend, sources, paidSourceIds])
 
   const spendBySrc = useMemo(() => {
     const map: Record<string, any> = {}
