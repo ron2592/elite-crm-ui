@@ -198,6 +198,10 @@ export default function KPIPage() {
   // won (event_date) rather than by the parent lead's created_at. Source of truth for all
   // revenue figures below — replaces the old changeOrders-only state.
   const [revenueEvents, setRevenueEvents] = useState<{ lead_id: string; source_id: string | null; event_type: 'initial_contract' | 'change_order'; event_date: string; amount: number; record_type: 'change_order' | 'repeat_job' | null; contact_id: string | null; is_repeat_business: boolean }[]>([])
+  // Name lookup for whatever lead each revenue_event belongs to -- covers leads outside the
+  // current date range too (e.g. an old repeat-client lead whose change order was just won),
+  // so the "Additional Job Revenue" breakdown below can always show a real client name.
+  const [revLeadNames,  setRevLeadNames]  = useState<Record<string, string>>({})
   const [spend,        setSpend]        = useState<SpendRow[]>([])
   const [sources,      setSources]      = useState<LeadSource[]>([])
   // All-time (not date-range-scoped) set of source_ids that have EVER had marketing spend logged.
@@ -330,6 +334,22 @@ export default function KPIPage() {
     setSpend((spendRes.data as any[]) || [])
     setSources(srcRes.data || [])
     setLoading(false)
+
+    // Fill in client names for every revenue_event's lead -- a change order won this period on an
+    // old repeat-client lead won't be in the leads list above (that list is scoped to leads created
+    // in this date range), so without this, "Additional Job Revenue" would show a dollar amount
+    // with no name to trace it back to.
+    const revLeadIds = Array.from(new Set(((revEventsRes.data as any[]) || []).map(e => e.lead_id).filter(Boolean)))
+    if (revLeadIds.length > 0) {
+      const { data: nameRows } = await supabase.from('leads').select('id,lead_name,first_name,last_name').in('id', revLeadIds)
+      const nameMap: Record<string, string> = {}
+      ;(nameRows || []).forEach((l: any) => {
+        nameMap[l.id] = l.lead_name || `${l.first_name || ''} ${l.last_name || ''}`.trim() || 'Unknown client'
+      })
+      setRevLeadNames(nameMap)
+    } else {
+      setRevLeadNames({})
+    }
   }
 
   // YTD is its own independent lookup, keyed by ytdYear — NOT tied to the main From/To filter
@@ -431,6 +451,18 @@ export default function KPIPage() {
     const additionalJobRevenue = revInRange
       .filter(e => e.event_type === 'change_order' || (e.event_type === 'initial_contract' && e.is_repeat_business))
       .reduce((s, e) => s + Number(e.amount || 0), 0)
+    // Line-item trace for "Additional Job Revenue" -- this is the part that's easy to lose track
+    // of, since a change order can be won on a lead that's still sitting in an earlier pipeline
+    // stage (e.g. "Estimate Sent"). Without this list, that dollar amount has nowhere to point to.
+    const additionalRevenueDetail = revInRange
+      .filter(e => e.event_type === 'change_order' || (e.event_type === 'initial_contract' && e.is_repeat_business))
+      .map(e => ({
+        name: revLeadNames[e.lead_id] || 'Unknown client',
+        kind: e.event_type === 'change_order' ? 'Change order' : 'Repeat job',
+        amount: Number(e.amount || 0),
+        date: e.event_date,
+      }))
+      .sort((a, b) => b.amount - a.amount)
     const totalRev = initialJobRevenue + additionalJobRevenue
     // Kept as aliases so the per-source table (which just needs each source's grand total,
     // regardless of bucket) and older references don't need to change.
@@ -467,8 +499,8 @@ export default function KPIPage() {
       }
       bySrc[key].contracted += Number(e.amount || 0)
     })
-    return { total, inPerson, phoneQ, totalAppts, wonCount, contracted, coVolume, initialJobRevenue, additionalJobRevenue, totalRev, actual, lsaCharged, lsaCredited, lsaNotCharged, lsaInReview, totalSpend, apptAcqCost, projAcqCost, bySrc }
-  }, [filtered, payments, coPayments, spend, revenueEvents, sources, filterSrc])
+    return { total, inPerson, phoneQ, totalAppts, wonCount, contracted, coVolume, initialJobRevenue, additionalJobRevenue, additionalRevenueDetail, totalRev, actual, lsaCharged, lsaCredited, lsaNotCharged, lsaInReview, totalSpend, apptAcqCost, projAcqCost, bySrc }
+  }, [filtered, payments, coPayments, spend, revenueEvents, sources, filterSrc, revLeadNames])
 
   const compareBySrc = useMemo(() => {
     if (!compareLeads.length && !compareRevEvents.length) return {}
@@ -793,6 +825,17 @@ export default function KPIPage() {
                 <div className="space-y-2">
                   <div className="flex justify-between text-sm"><span className="text-muted-foreground">Initial Job Revenue <span className="text-[11px]">(first job won per client)</span></span><span className="font-bold">{fmt$(kpi.initialJobRevenue)}</span></div>
                   <div className="flex justify-between text-sm"><span className="text-muted-foreground">Additional Job Revenue <span className="text-[11px]">(change orders + repeat clients)</span></span><span className="font-bold text-purple-600">{fmt$(kpi.additionalJobRevenue)}</span></div>
+                  {kpi.additionalRevenueDetail.length > 0 && (
+                    <div className="rounded-md border border-purple-200 bg-purple-50/50 dark:bg-purple-950/10 p-2.5 space-y-1.5 ml-2">
+                      <p className="text-[11px] font-semibold text-purple-700 uppercase tracking-wide">Where this came from</p>
+                      {kpi.additionalRevenueDetail.map((d, i) => (
+                        <div key={i} className="flex justify-between text-xs gap-2">
+                          <span className="text-muted-foreground truncate">{d.name} <span className="text-purple-600/70">· {d.kind}</span></span>
+                          <span className="font-semibold text-purple-700 whitespace-nowrap">{fmt$(d.amount)} <span className="text-muted-foreground font-normal">({fmtDate(d.date)})</span></span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                   <div className="flex justify-between text-sm border-t border-border pt-2"><span className="text-muted-foreground">Collected (actual)</span><span className="font-bold text-emerald-600">{fmt$(kpi.actual)}</span></div>
                 </div>
               </ExpandMetric>
