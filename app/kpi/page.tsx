@@ -451,18 +451,19 @@ export default function KPIPage() {
     const additionalJobRevenue = revInRange
       .filter(e => e.event_type === 'change_order' || (e.event_type === 'initial_contract' && e.is_repeat_business))
       .reduce((s, e) => s + Number(e.amount || 0), 0)
-    // Line-item trace for "Additional Job Revenue" -- this is the part that's easy to lose track
-    // of, since a change order can be won on a lead that's still sitting in an earlier pipeline
-    // stage (e.g. "Estimate Sent"). Without this list, that dollar amount has nowhere to point to.
-    const additionalRevenueDetail = revInRange
-      .filter(e => e.event_type === 'change_order' || (e.event_type === 'initial_contract' && e.is_repeat_business))
+    // One flat list, every dollar in Total Revenue, newest first. This replaces having to split
+    // your attention between two subtotals and a separate nested box -- one place, one line per
+    // dollar, tagged New Job vs Additional so a change order on a not-yet-won lead (e.g. Renato
+    // Stewart, still "Estimate Sent") is never invisible.
+    const revenueDetail = revInRange
       .map(e => ({
         name: revLeadNames[e.lead_id] || 'Unknown client',
-        kind: e.event_type === 'change_order' ? 'Change order' : 'Repeat job',
+        isNew: e.event_type === 'initial_contract' && !e.is_repeat_business,
+        kind: e.event_type === 'change_order' ? 'Change order' : e.is_repeat_business ? 'Repeat job' : 'New Job',
         amount: Number(e.amount || 0),
         date: e.event_date,
       }))
-      .sort((a, b) => b.amount - a.amount)
+      .sort((a, b) => b.date.localeCompare(a.date))
     const totalRev = initialJobRevenue + additionalJobRevenue
     // Kept as aliases so the per-source table (which just needs each source's grand total,
     // regardless of bucket) and older references don't need to change.
@@ -499,7 +500,7 @@ export default function KPIPage() {
       }
       bySrc[key].contracted += Number(e.amount || 0)
     })
-    return { total, inPerson, phoneQ, totalAppts, wonCount, contracted, coVolume, initialJobRevenue, additionalJobRevenue, additionalRevenueDetail, totalRev, actual, lsaCharged, lsaCredited, lsaNotCharged, lsaInReview, totalSpend, apptAcqCost, projAcqCost, bySrc }
+    return { total, inPerson, phoneQ, totalAppts, wonCount, contracted, coVolume, initialJobRevenue, additionalJobRevenue, revenueDetail, totalRev, actual, lsaCharged, lsaCredited, lsaNotCharged, lsaInReview, totalSpend, apptAcqCost, projAcqCost, bySrc }
   }, [filtered, payments, coPayments, spend, revenueEvents, sources, filterSrc, revLeadNames])
 
   const compareBySrc = useMemo(() => {
@@ -822,16 +823,19 @@ export default function KPIPage() {
             </div>
             <div className="rounded-lg border border-border bg-card overflow-hidden">
               <ExpandMetric label="Total Revenue" value={fmt$(kpi.totalRev)} color="text-emerald-600">
-                <div className="space-y-2">
-                  <div className="flex justify-between text-sm"><span className="text-muted-foreground">Initial Job Revenue <span className="text-[11px]">(first job won per client)</span></span><span className="font-bold">{fmt$(kpi.initialJobRevenue)}</span></div>
-                  <div className="flex justify-between text-sm"><span className="text-muted-foreground">Additional Job Revenue <span className="text-[11px]">(change orders + repeat clients)</span></span><span className="font-bold text-purple-600">{fmt$(kpi.additionalJobRevenue)}</span></div>
-                  {kpi.additionalRevenueDetail.length > 0 && (
-                    <div className="rounded-md border border-purple-200 bg-purple-50/50 dark:bg-purple-950/10 p-2.5 space-y-1.5 ml-2">
-                      <p className="text-[11px] font-semibold text-purple-700 uppercase tracking-wide">Where this came from</p>
-                      {kpi.additionalRevenueDetail.map((d, i) => (
-                        <div key={i} className="flex justify-between text-xs gap-2">
-                          <span className="text-muted-foreground truncate">{d.name} <span className="text-purple-600/70">· {d.kind}</span></span>
-                          <span className="font-semibold text-purple-700 whitespace-nowrap">{fmt$(d.amount)} <span className="text-muted-foreground font-normal">({fmtDate(d.date)})</span></span>
+                <div className="space-y-3">
+                  <div className="flex gap-5 text-sm">
+                    <span className="text-muted-foreground">New Job <span className="font-bold text-foreground">{fmt$(kpi.initialJobRevenue)}</span></span>
+                    <span className="text-muted-foreground">Additional <span className="font-bold text-purple-600">{fmt$(kpi.additionalJobRevenue)}</span></span>
+                  </div>
+                  {kpi.revenueDetail.length > 0 && (
+                    <div className="max-h-64 overflow-y-auto">
+                      {kpi.revenueDetail.map((d, i) => (
+                        <div key={i} className="flex items-center justify-between text-xs py-1.5 border-b border-border/30 last:border-0 gap-2">
+                          <span className="truncate font-medium">{d.name}</span>
+                          <span className={`shrink-0 px-1.5 py-0.5 rounded-full text-[10px] font-semibold ${d.isNew ? 'bg-emerald-100 text-emerald-700' : 'bg-purple-100 text-purple-700'}`}>{d.kind}</span>
+                          <span className="text-muted-foreground shrink-0">{fmtDate(d.date)}</span>
+                          <span className="font-semibold shrink-0 w-20 text-right">{fmt$(d.amount)}</span>
                         </div>
                       ))}
                     </div>
