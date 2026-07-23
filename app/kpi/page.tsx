@@ -829,13 +829,19 @@ export default function KPIPage() {
                     <span className="text-muted-foreground">Additional <span className="font-bold text-purple-600">{fmt$(kpi.additionalJobRevenue)}</span></span>
                   </div>
                   {kpi.revenueDetail.length > 0 && (
-                    <div className="max-h-64 overflow-y-auto">
+                    // This card sits in a narrow 1/6-width grid column, so the client name gets its
+                    // own full-width line instead of squeezing into a row next to the amount --
+                    // otherwise the name truncates to nothing and there's no way to tell which job
+                    // a dollar amount belongs to.
+                    <div className="max-h-72 overflow-y-auto space-y-2">
                       {kpi.revenueDetail.map((d, i) => (
-                        <div key={i} className="flex items-center justify-between text-xs py-1.5 border-b border-border/30 last:border-0 gap-2">
-                          <span className="truncate font-medium">{d.name}</span>
-                          <span className={`shrink-0 px-1.5 py-0.5 rounded-full text-[10px] font-semibold ${d.isNew ? 'bg-emerald-100 text-emerald-700' : 'bg-purple-100 text-purple-700'}`}>{d.kind}</span>
-                          <span className="text-muted-foreground shrink-0">{fmtDate(d.date)}</span>
-                          <span className="font-semibold shrink-0 w-20 text-right">{fmt$(d.amount)}</span>
+                        <div key={i} className="text-xs py-1 border-b border-border/30 last:border-0">
+                          <div className="font-semibold">{d.name}</div>
+                          <div className="flex items-center justify-between mt-0.5">
+                            <span className={`shrink-0 px-1.5 py-0.5 rounded-full text-[10px] font-semibold ${d.isNew ? 'bg-emerald-100 text-emerald-700' : 'bg-purple-100 text-purple-700'}`}>{d.kind}</span>
+                            <span className="font-semibold text-foreground">{fmt$(d.amount)}</span>
+                          </div>
+                          <div className="text-muted-foreground text-[11px] mt-0.5">{fmtDate(d.date)}</div>
                         </div>
                       ))}
                     </div>
