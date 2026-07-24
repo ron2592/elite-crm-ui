@@ -363,7 +363,7 @@ export default function KPIPage() {
     const ytdEnd      = isCurrentYear ? new Date().toISOString() : new Date(year + 1, 0, 1).toISOString()
     const ytdSpendEnd = isCurrentYear ? todayStr() : `${year}-12-31`
 
-    const [ytdLeadsRes, ytdSpendRes, ytdPayRes, ytdCoPayRes, ytdWonEventsRes] = await Promise.all([
+    const [ytdLeadsRes, ytdSpendRes, ytdPayRes, ytdCoPayRes, ytdWonEventsRes, ytdPaidSrcRes] = await Promise.all([
       supabase.from('leads').select('id,status,contact_type,initial_contract_value')
         .gte('created_at', ytdStart).lt('created_at', ytdEnd).eq('archived', false),
       supabase.from('marketing_spend').select('amount_spent')
@@ -381,9 +381,14 @@ export default function KPIPage() {
       // (COALESCE(closed_at, created_at)) for the main Total Revenue figures above -- this reuses
       // the same source so YTD stays consistent with it. Repeat-client wins are excluded here since
       // they had no marketing spend behind them and would artificially deflate CPA.
-      supabase.from('revenue_events').select('event_type,is_repeat_business')
+      supabase.from('revenue_events').select('event_type,is_repeat_business,source_id')
         .eq('event_type', 'initial_contract').eq('is_repeat_business', false)
         .gte('event_date', `${year}-01-01`).lte('event_date', ytdSpendEnd),
+      // Fetched fresh here (not read from the page's paidSourceIds state) so this stays correct
+      // regardless of load-order timing. Same rule as everywhere else on this page: a job only
+      // counts toward Cost Per Acquisition if it came from a source with real marketing spend
+      // behind it -- an organic/"Manual" job costs nothing to acquire and would otherwise dilute CPA.
+      supabase.from('marketing_spend').select('source_id'),
     ])
 
     const ytdLeads    = (ytdLeadsRes.data || []) as any[]
@@ -391,7 +396,8 @@ export default function KPIPage() {
     const ytdRevenue  = (ytdPayRes.data  || []).reduce((s: number, r: any) => s + Number(r.amount || 0), 0)
                       + (ytdCoPayRes.data || []).reduce((s: number, r: any) => s + Number(r.amount || 0), 0)
     const ytdIP       = ytdLeads.filter((l: any) => l.contact_type === 'in_person').length
-    const ytdWon      = (ytdWonEventsRes.data || []).length
+    const ytdPaidIds  = new Set((ytdPaidSrcRes.data || []).map((r: any) => r.source_id).filter(Boolean))
+    const ytdWon      = (ytdWonEventsRes.data || []).filter((e: any) => ytdPaidIds.has(e.source_id)).length
 
     setYtd({
       totalLeads: ytdLeads.length, totalInPerson: ytdIP, totalWon: ytdWon,
