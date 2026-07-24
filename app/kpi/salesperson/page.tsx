@@ -20,8 +20,11 @@ interface PaymentRow { amount: number; paid_at: string; lead_id: string }
 
 // ── Constants ──────────────────────────────────────────────────────────────
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
-const WON_STAGES = ['closed_won', 'won']
-const EST_STAGES = ['estimate_sent', 'closed_won', 'won', 'lost']
+// Must match every other KPI page's WON_STAGES exactly -- a job that's finished production sits in
+// 'completed'/'completed_with_balance', not 'closed_won'. Missing those here was silently dropping
+// most real wins (confirmed: 19 completed jobs vs 8 closed_won) from every stat on this page.
+const WON_STAGES = ['closed_won', 'won', 'completed', 'completed_with_balance']
+const EST_STAGES = ['estimate_sent', 'closed_won', 'won', 'completed', 'completed_with_balance', 'lost']
 const PALETTE = [
   { bg: 'bg-blue-950/30',    border: 'border-blue-700',    text: 'text-blue-400',    bar: '#378ADD' },
   { bg: 'bg-purple-950/30',  border: 'border-purple-700',  text: 'text-purple-400',  bar: '#8b5cf6' },
@@ -70,6 +73,15 @@ export default function SalespersonKPIPage() {
   const [salespersons, setSalespersons] = useState<Salesperson[]>([])
   const [leads, setLeads]               = useState<LeadRow[]>([])
   const [payments, setPayments]         = useState<PaymentRow[]>([])
+  const [coPayments, setCoPayments]     = useState<PaymentRow[]>([])
+  // Revenue actually won this period (initial contracts + change orders), dated by event_date --
+  // not lead intake -- same source of truth the main KPI Dashboard uses. Without this, a change
+  // order won this period on an older lead was invisible here (confirmed: $111,592 missing for
+  // one salesperson alone).
+  const [revEvents, setRevEvents]       = useState<{ lead_id: string; amount: number }[]>([])
+  // Salesperson for each lead referenced above -- looked up directly by lead_id since a change
+  // order's lead may have come in well before this period's "leads" list below.
+  const [revLeadSp, setRevLeadSp]       = useState<Record<string, string>>({})
   const [trendLeads, setTrendLeads]     = useState<any[]>([])
   const [loading, setLoading]           = useState(true)
 
@@ -101,18 +113,44 @@ export default function SalespersonKPIPage() {
     setLoading(true)
     const trendStart = new Date(year, month - 5, 1).toISOString()
     const trendEnd   = new Date(year, month + 1, 1).toISOString()
+    // Plain date-only bounds for revenue_events.event_date (a DATE column) -- comparing it against
+    // a full ISO datetime string works, but a date string is the cleaner, unambiguous match.
+    const evFromStr = rangeStart.split('T')[0]
+    const evToStr   = new Date(new Date(rangeEnd).getTime() - 1).toISOString().split('T')[0]
 
-    const [spRes, leadsRes, paymentsRes, trendRes] = await Promise.all([
+    const [spRes, leadsRes, paymentsRes, coPayRes, revRes, trendRes] = await Promise.all([
       supabase.from('salespersons').select('id, name').order('name'),
       supabase.from('leads').select('id,status,contact_type,initial_contract_value,created_at,metadata,lead_sources(name)').gte('created_at', rangeStart).lt('created_at', rangeEnd).eq('archived', false),
       supabase.from('payments').select('amount,paid_at,lead_id').gte('paid_at', rangeStart).lt('paid_at', rangeEnd),
+      supabase.from('change_order_payments').select('amount,paid_at,lead_id').gte('paid_at', rangeStart).lt('paid_at', rangeEnd),
+      supabase.from('revenue_events').select('lead_id,amount').gte('event_date', evFromStr).lte('event_date', evToStr),
       supabase.from('leads').select('status,initial_contract_value,created_at,metadata').gte('created_at', trendStart).lt('created_at', trendEnd).eq('archived', false),
     ])
 
     setSalespersons(spRes.data || [])
     setLeads((leadsRes.data as any[]) || [])
     setPayments(paymentsRes.data || [])
+    setCoPayments(coPayRes.data || [])
+    const events = (revRes.data as any[]) || []
+    setRevEvents(events)
     setTrendLeads(trendRes.data || [])
+
+    // Look up salesperson directly by lead_id for every lead referenced by revenue/payments this
+    // period -- covers older leads (e.g. a change order won this month on a job from 3 months ago)
+    // that wouldn't be in the "leads created this period" list above.
+    const relevantLeadIds = Array.from(new Set([
+      ...events.map((e: any) => e.lead_id),
+      ...(paymentsRes.data || []).map((p: any) => p.lead_id),
+      ...(coPayRes.data || []).map((p: any) => p.lead_id),
+    ].filter(Boolean)))
+    if (relevantLeadIds.length > 0) {
+      const { data } = await supabase.from('leads').select('id,metadata').in('id', relevantLeadIds)
+      const map: Record<string, string> = {}
+      ;(data || []).forEach((l: any) => { map[l.id] = (l.metadata?.salesperson || '').trim() })
+      setRevLeadSp(map)
+    } else {
+      setRevLeadSp({})
+    }
     setLoading(false)
   }
 
@@ -138,32 +176,47 @@ export default function SalespersonKPIPage() {
 
   // ── Stats per salesperson ──────────────────────────────────────────────
   const spData = useMemo(() => {
-    const payByLead: Record<string, number> = {}
-    payments.forEach(p => { payByLead[p.lead_id] = (payByLead[p.lead_id] || 0) + Number(p.amount) })
-
     const statsMap: Record<string, {
       leads: number; inPerson: number; phoneQ: number; estimated: number;
       won: number; contracted: number; actual: number;
       sourceBreakdown: Record<string, number>
     }> = {}
+    const ensure = (spName: string) => {
+      if (!statsMap[spName]) statsMap[spName] = { leads: 0, inPerson: 0, phoneQ: 0, estimated: 0, won: 0, contracted: 0, actual: 0, sourceBreakdown: {} }
+      return statsMap[spName]
+    }
+    const resolve = (raw: string) => {
+      const matched = salespersons.find(s => s.name.toLowerCase() === raw.toLowerCase())
+      return matched?.name || raw
+    }
 
+    // Lead counts (leads, in-person, phone quotes, estimates, won) stay scoped to leads that came
+    // IN during this period, same as the main KPI Dashboard's cohort convention.
     leads.forEach(l => {
       const rawSP = (l.metadata?.salesperson || '').trim()
       if (!rawSP) return
-      const matched = salespersons.find(s => s.name.toLowerCase() === rawSP.toLowerCase())
-      const spName = matched?.name || rawSP
-      if (!statsMap[spName]) statsMap[spName] = { leads: 0, inPerson: 0, phoneQ: 0, estimated: 0, won: 0, contracted: 0, actual: 0, sourceBreakdown: {} }
-      statsMap[spName].leads++
-      if (l.contact_type === 'in_person')   statsMap[spName].inPerson++
-      if (l.contact_type === 'phone_quote') statsMap[spName].phoneQ++
-      if (EST_STAGES.includes(l.status))    statsMap[spName].estimated++
-      if (WON_STAGES.includes(l.status)) {
-        statsMap[spName].won++
-        statsMap[spName].contracted += Number(l.initial_contract_value || 0)
-        statsMap[spName].actual += payByLead[l.id] || 0
-      }
+      const s = ensure(resolve(rawSP))
+      s.leads++
+      if (l.contact_type === 'in_person')   s.inPerson++
+      if (l.contact_type === 'phone_quote') s.phoneQ++
+      if (EST_STAGES.includes(l.status))    s.estimated++
+      if (WON_STAGES.includes(l.status))    s.won++
       const src = (l.lead_sources as any)?.name || 'Unknown'
-      statsMap[spName].sourceBreakdown[src] = (statsMap[spName].sourceBreakdown[src] || 0) + 1
+      s.sourceBreakdown[src] = (s.sourceBreakdown[src] || 0) + 1
+    })
+
+    // Revenue (contracted) and Collected stay scoped to dollars actually won/collected DURING this
+    // period (event_date / paid_at), same as the main KPI Dashboard -- so a change order won this
+    // month on an older lead counts for whoever sold it, even if that lead came in months ago.
+    revEvents.forEach(e => {
+      const rawSP = (revLeadSp[e.lead_id] || '').trim()
+      if (!rawSP) return
+      ensure(resolve(rawSP)).contracted += Number(e.amount || 0)
+    })
+    ;[...payments, ...coPayments].forEach(p => {
+      const rawSP = (revLeadSp[p.lead_id] || '').trim()
+      if (!rawSP) return
+      ensure(resolve(rawSP)).actual += Number(p.amount || 0)
     })
 
     return salespersons.map(sp => ({
@@ -171,7 +224,7 @@ export default function SalespersonKPIPage() {
       name: sp.name,
       ...(statsMap[sp.name] || { leads: 0, inPerson: 0, phoneQ: 0, estimated: 0, won: 0, contracted: 0, actual: 0, sourceBreakdown: {} })
     }))
-  }, [salespersons, leads, payments])
+  }, [salespersons, leads, payments, coPayments, revEvents, revLeadSp])
 
   // ── Insights data ──────────────────────────────────────────────────────
   const insightsData: InsightData = useMemo(() => ({
