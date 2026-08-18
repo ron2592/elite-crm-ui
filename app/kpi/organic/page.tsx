@@ -287,8 +287,8 @@ export default function OrganicRevenuePage() {
 
           {/* LEADS THIS PERIOD -- same list as the main KPI Dashboard, kept here too so you don't
               have to flip pages to see who's behind the organic/repeat numbers above. */}
-          <Section title="Leads This Period" badge={`${leads.length} leads`} defaultOpen={false}>
-            {leads.length === 0 ? (
+          <Section title="Leads This Period" badge={`${organicLeads.length} leads`} defaultOpen={false}>
+            {organicLeads.length === 0 ? (
               <p className="text-sm text-muted-foreground text-center py-4">No leads for this period.</p>
             ) : (
               <div className="overflow-x-auto">
@@ -301,7 +301,7 @@ export default function OrganicRevenuePage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {leads.map((lead, i) => {
+                    {organicLeads.map((lead, i) => {
                       const name        = lead.lead_name || `${lead.first_name || ''} ${lead.last_name || ''}`.trim() || '—'
                       const source      = (lead.lead_sources as any)?.name || '—'
                       const salesperson = lead.metadata?.salesperson || '—'
