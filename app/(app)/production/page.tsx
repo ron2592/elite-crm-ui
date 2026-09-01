@@ -54,6 +54,17 @@ interface ArData {
   refunded: number;
 }
 
+// One row per cancelled UNIT in v_cancellations — a cancelled change order or a
+// cancelled lead's initial contract. This is the leakage register.
+interface CancellationRow {
+  lead_id: string;
+  change_order_id: string | null;
+  contract_value: number;   // gross value that was signed
+  revenue_lost: number;     // contract_value − retained: the actual leakage
+  retained: number;         // cancellation fee kept
+  refund_due: number;       // deposit still owed back
+}
+
 interface JobRow {
   id: string;
   type: "lead" | "change_order";
@@ -111,6 +122,10 @@ export default function ProductionPage() {
   const [expandedClients, setExpandedClients] = useState<Set<string>>(new Set());
   // v_ar_outstanding keyed by lead_id — the money source of truth for every job row.
   const [arByLead,       setArByLead]       = useState<Record<string, ArData>>({});
+  // v_cancellations — the global leakage register (not filter-scoped).
+  const [cancellations,  setCancellations]  = useState<CancellationRow[]>([]);
+  // Σ non-cancellation revenue_events — every dollar ever signed, the % denominator.
+  const [grossSigned,    setGrossSigned]    = useState(0);
 
   // — Schedule (job start/end date) inline edit —
   const [editingSchedule, setEditingSchedule] = useState<string | null>(null);
@@ -202,6 +217,26 @@ export default function ProductionPage() {
       });
     }
     setArByLead(arMap);
+
+    // Global cancellation leakage KPI — every cancelled unit, and the signed-dollar
+    // total it's measured against. Not scoped to leadIds or to the active filter.
+    const [{ data: cxns }, { data: revEv }] = await Promise.all([
+      supabase.from("v_cancellations").select("lead_id, change_order_id, contract_value, revenue_lost, retained, refund_due"),
+      supabase.from("revenue_events").select("amount, event_type"),
+    ]);
+    setCancellations((cxns || []).map((c: any) => ({
+      lead_id:         c.lead_id,
+      change_order_id: c.change_order_id ?? null,
+      contract_value:  Number(c.contract_value) || 0,
+      revenue_lost:    Number(c.revenue_lost)   || 0,
+      retained:        Number(c.retained)       || 0,
+      refund_due:      Number(c.refund_due)     || 0,
+    })));
+    setGrossSigned(
+      (revEv || [])
+        .filter((e: any) => e.event_type !== "cancellation")
+        .reduce((s: number, e: any) => s + (Number(e.amount) || 0), 0),
+    );
 
     const coIds = changeOrders.map((co: any) => co.id);
     let coPaymentsMap: Record<string, number> = {};
@@ -559,12 +594,52 @@ export default function ProductionPage() {
 
   // Summary cards are computed from exactly what the table shows, so they can never
   // disagree with the visible rows the way the all-jobs card block did.
-  const visibleRows = clientGroups.reduce((n, g) => n + g.rows.length, 0);
   const summary = clientGroups.reduce(
     (a, g) => ({ contract: a.contract + g.contract, collected: a.collected + g.collected, balance: a.balance + g.balance }),
     { contract: 0, collected: 0, balance: 0 },
   );
   const scopeCaption = filter === "all" ? "All jobs" : (FILTER_LABELS[filter] ?? "Filtered jobs");
+
+  // ── The filter-chip count and the row count must describe the same thing: job UNITS
+  // that match the active filter (not every sub-job under the leads on screen). ──
+  const unitMatchesFilter = (j: JobRow): boolean => {
+    if (filterSourceId && j.sourceId !== filterSourceId) return false;
+    switch (filter) {
+      case "active":    return isActive(j.production_stage);
+      case "pending":   return isPending(j.production_stage);
+      case "completed": return !!j.production_stage && j.production_stage.startsWith("Completed");
+      case "cancelled": return isCancelledStage(j.production_stage);
+      case "no_stage":  return !j.production_stage;
+      case "balance":   return (arByLead[j.leadId]?.outstanding ?? 0) > 0.005;
+      default:          return true; // "all"
+    }
+  };
+  const matchedUnits   = jobs.filter(unitMatchesFilter);
+  const matchedClients = new Set(matchedUnits.map(j => j.contactId || j.leadId)).size;
+
+  // ── Cancelled tab: list the cancelled units themselves, flat — never the whole lead. ──
+  const cancelledUnits = jobs.filter(
+    j => isCancelledStage(j.production_stage) && (!filterSourceId || j.sourceId === filterSourceId),
+  );
+  const cxnFor = (u: JobRow) =>
+    cancellations.find(c =>
+      u.type === "change_order"
+        ? c.change_order_id === u.id
+        : c.change_order_id == null && c.lead_id === u.leadId);
+  const shownCxns = cancelledUnits.map(cxnFor).filter((c): c is CancellationRow => !!c);
+  const cxnTab = {
+    contract:  sum(shownCxns.map(c => c.contract_value)),
+    collected: sum(cancelledUnits.map(u => u.totalCollected)),
+    retained:  sum(shownCxns.map(c => c.retained)),
+    refundDue: sum(shownCxns.map(c => c.refund_due)),
+  };
+
+  // ── Global cancellation leakage KPI — v_cancellations, never filter- or source-scoped.
+  // "Cancelled value" is revenue_lost (contract minus any retained fee), read live so it
+  // can't drift from the register. ──
+  const cancelledValue = sum(cancellations.map(c => c.revenue_lost));
+  const cancelledUnitsAll = cancellations.length;
+  const pctOfSigned = grossSigned > 0 ? (cancelledValue / grossSigned) * 100 : 0;
 
   const toggleClientExpand = (groupKey: string) => {
     setExpandedClients(prev => { const next = new Set(prev); next.has(groupKey) ? next.delete(groupKey) : next.add(groupKey); return next; });
@@ -898,26 +973,63 @@ export default function ProductionPage() {
         </button>
       </div>
 
-      {/* ── Money summary — scoped to the current filter and summed from the same rows
-             the table shows, so the cards and the visible rows always agree. Balance
-             comes from v_ar_outstanding (cancelled work excluded, change orders folded in). ── */}
-      <div className="grid grid-cols-3 gap-4">
+      {/* ── Money summary — the first cards are scoped to the current filter and summed
+             from the same rows the table shows. The Cancelled card is a global leakage
+             KPI (v_cancellations) and stays put regardless of filter. ── */}
+      <div className={`grid gap-4 grid-cols-2 sm:grid-cols-3 ${filter === "cancelled" ? "lg:grid-cols-5" : "lg:grid-cols-4"}`}>
+        {filter === "cancelled" ? (
+          <>
+            <div className="rounded-xl border bg-card p-4">
+              <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">Contract Value</p>
+              <p className="text-2xl font-bold mt-1">${cxnTab.contract.toLocaleString()}</p>
+              <p className="text-xs text-muted-foreground mt-1">{scopeCaption} · signed, before retained</p>
+            </div>
+            <div className="rounded-xl border bg-card p-4">
+              <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">Collected</p>
+              <p className="text-2xl font-bold mt-1 text-emerald-600">${cxnTab.collected.toLocaleString()}</p>
+              <p className="text-xs text-muted-foreground mt-1">{scopeCaption}</p>
+            </div>
+            <div className="rounded-xl border bg-card p-4">
+              <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">Retained</p>
+              <p className="text-2xl font-bold mt-1 text-emerald-600">${cxnTab.retained.toLocaleString()}</p>
+              <p className="text-xs text-muted-foreground mt-1">cancellation fees kept</p>
+            </div>
+            <div className="rounded-xl border bg-card p-4">
+              <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">Refund Due</p>
+              <p className={`text-2xl font-bold mt-1 ${cxnTab.refundDue > 0.005 ? "text-amber-600" : "text-emerald-600"}`}>
+                ${cxnTab.refundDue.toLocaleString()}
+              </p>
+              <p className="text-xs text-muted-foreground mt-1">deposits owed back</p>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="rounded-xl border bg-card p-4">
+              <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">Contract Value</p>
+              <p className="text-2xl font-bold mt-1">${summary.contract.toLocaleString()}</p>
+              <p className="text-xs text-muted-foreground mt-1">{scopeCaption} · net of cancellations</p>
+            </div>
+            <div className="rounded-xl border bg-card p-4">
+              <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">Collected</p>
+              <p className="text-2xl font-bold mt-1 text-emerald-600">${summary.collected.toLocaleString()}</p>
+              <p className="text-xs text-muted-foreground mt-1">{scopeCaption}</p>
+            </div>
+            <div className="rounded-xl border bg-card p-4">
+              <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">Balance Due</p>
+              <p className={`text-2xl font-bold mt-1 ${summary.balance > 0.005 ? "text-red-500" : "text-emerald-600"}`}>
+                ${summary.balance.toLocaleString()}
+              </p>
+              <p className="text-xs text-muted-foreground mt-1">{scopeCaption} · from v_ar_outstanding</p>
+            </div>
+          </>
+        )}
+
         <div className="rounded-xl border bg-card p-4">
-          <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">Contract Value</p>
-          <p className="text-2xl font-bold mt-1">${summary.contract.toLocaleString()}</p>
-          <p className="text-xs text-muted-foreground mt-1">{scopeCaption} · {visibleRows} row{visibleRows === 1 ? "" : "s"} · net of cancellations</p>
-        </div>
-        <div className="rounded-xl border bg-card p-4">
-          <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">Collected</p>
-          <p className="text-2xl font-bold mt-1 text-emerald-600">${summary.collected.toLocaleString()}</p>
-          <p className="text-xs text-muted-foreground mt-1">{scopeCaption}</p>
-        </div>
-        <div className="rounded-xl border bg-card p-4">
-          <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">Balance Due</p>
-          <p className={`text-2xl font-bold mt-1 ${summary.balance > 0.005 ? "text-red-500" : "text-emerald-600"}`}>
-            ${summary.balance.toLocaleString()}
+          <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">Cancelled</p>
+          <p className="text-2xl font-bold mt-1 text-red-500">${cancelledValue.toLocaleString()}</p>
+          <p className="text-xs text-muted-foreground mt-1">
+            {cancelledUnitsAll} job{cancelledUnitsAll === 1 ? "" : "s"} · {pctOfSigned.toFixed(1)}% of signed · all time
           </p>
-          <p className="text-xs text-muted-foreground mt-1">{scopeCaption} · from v_ar_outstanding</p>
         </div>
       </div>
 
@@ -1000,7 +1112,9 @@ export default function ProductionPage() {
         {filterSourceId && (
           <button onClick={() => setFilterSourceId("")} className="text-xs text-muted-foreground hover:text-foreground">× Clear</button>
         )}
-        <span className="ml-auto text-xs text-muted-foreground">{visibleRows} jobs</span>
+        <span className="ml-auto text-xs text-muted-foreground">
+          {matchedClients} client{matchedClients === 1 ? "" : "s"} / {matchedUnits.length} job{matchedUnits.length === 1 ? "" : "s"}
+        </span>
       </div>
 
       {/* ── Table ── */}
@@ -1025,6 +1139,12 @@ export default function ProductionPage() {
             <tbody>
               {loading ? (
                 <tr><td colSpan={11} className="px-4 py-8 text-center text-muted-foreground">Loading jobs...</td></tr>
+              ) : filter === "cancelled" ? (
+                // The Cancelled tab lists the cancelled units themselves — one row per
+                // cancelled change order / cancelled lead — never the whole parent lead.
+                cancelledUnits.length === 0
+                  ? <tr><td colSpan={11} className="px-4 py-8 text-center text-muted-foreground">No cancelled jobs.</td></tr>
+                  : cancelledUnits.map(u => renderJobRow(u, false))
               ) : clientGroups.length === 0 ? (
                 <tr><td colSpan={11} className="px-4 py-8 text-center text-muted-foreground">
                   {filter === "active" ? "No active jobs. Set a production stage to see jobs here." : "No jobs found."}
