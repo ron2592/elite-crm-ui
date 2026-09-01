@@ -5,6 +5,9 @@ import { supabase } from "@/lib/supabaseClient";
 import { Lead } from "@/types";
 import LeadDetailDialog from "@/components/leads/LeadDetailDialog";
 import NewJobModal from "@/components/production/NewJobModal";
+import { CancelJobDialog } from "@/components/production/cancel-job-dialog";
+import { ProductionSummaryCards } from "@/components/production/production-summary-cards";
+import { isCancelledStage } from "@/lib/production/cancellation";
 import { useRole } from "@/lib/useRole";
 
 const CALENDAR_STAGES = ["Scheduled to Start", "Job In Progress", "Rough Inspection", "Final Inspection"];
@@ -29,7 +32,8 @@ const stageColors: Record<string, string> = {
 };
 
 // ── Which production stages map to which lead status ──────────────────────────
-const CANCELLED_STAGES = ["Cancelled Before Start", "Cancelled Mid-Job"];
+// "Cancelled" is now identified by one predicate everywhere — isCancelledStage() from
+// the cancellation layer — so a filter chip and the table it filters can never disagree.
 const COMPLETED_STAGES = ["Completed", "Completed with Balance"];
 
 interface JobRow {
@@ -104,6 +108,13 @@ export default function ProductionPage() {
   // ── Lead detail dialog ────────────────────────────────────────────────────
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
   const [dialogOpen,   setDialogOpen]   = useState(false);
+
+  // ── Cancel-job dialog ─────────────────────────────────────────────────────
+  // The ONLY way a job/CO gets cancelled from this page. Picking a "Cancelled …"
+  // stage in the row <select> opens this instead of writing the stage directly,
+  // because cancelling has to reverse the revenue and book any deposit refund in
+  // the same transaction (cancel_job RPC).
+  const [cancelTarget, setCancelTarget] = useState<JobRow | null>(null);
 
   // ── Fetch ─────────────────────────────────────────────────────────────────
   async function fetchJobs() {
@@ -247,8 +258,31 @@ export default function ProductionPage() {
   // ── Stage update — auto-syncs lead status on cancel/complete ──────────────
   const handleStageUpdate = async (row: JobRow, newStage: string) => {
     const key = `${row.type}-${row.id}`;
+
+    // Cancelling is never a plain table update anymore — it has to reverse the revenue
+    // and book any deposit refund in one transaction. Hand off to CancelJobDialog → cancel_job RPC.
+    if (isCancelledStage(newStage)) {
+      setCancelTarget(row);
+      return;
+    }
+
     setUpdating(key);
     const now = new Date().toISOString();
+
+    // Moving a currently-cancelled job/CO back to a live stage — reverse the flags through
+    // uncancel_job so v_cancellations and the cancelled_* columns stay in sync (a plain
+    // stage write would leave the job flagged cancelled forever).
+    if (isCancelledStage(row.production_stage)) {
+      const { error } = await supabase.rpc("uncancel_job", {
+        p_lead_id:         row.leadId,
+        p_change_order_id: row.type === "change_order" ? row.id : null,
+        p_stage:           newStage,
+      });
+      if (error) alert("Could not un-cancel this job: " + error.message);
+      await fetchJobs();
+      setUpdating(null);
+      return;
+    }
 
     if (row.type === "lead") {
       const updates: Record<string, any> = {
@@ -257,9 +291,7 @@ export default function ProductionPage() {
       };
 
       // ✅ Auto-sync lead status based on production stage
-      if (CANCELLED_STAGES.includes(newStage)) {
-        updates.status = "job_cancelled";
-      } else if (COMPLETED_STAGES.includes(newStage)) {
+      if (COMPLETED_STAGES.includes(newStage)) {
         updates.status = "completed";
       } else if (row.leadStatus === "job_cancelled" || row.leadStatus === "completed") {
         // Moving back out of cancelled/completed → restore to closed_won
@@ -388,15 +420,15 @@ export default function ProductionPage() {
   // ── Filter logic ──────────────────────────────────────────────────────────
   const isPending  = (stage: string | null) => stage?.startsWith("Pending") || false;
   const isActive   = (stage: string | null) =>
-    !!stage && !isPending(stage) &&
-    !["Completed","Completed with Balance","Cancelled Before Start","Cancelled Mid-Job"].includes(stage);
+    !!stage && !isPending(stage) && !isCancelledStage(stage) &&
+    !["Completed","Completed with Balance"].includes(stage);
 
   const stageFiltered =
     filter === "all"       ? jobs
     : filter === "pending"   ? jobs.filter(j => isPending(j.production_stage))
     : filter === "active"    ? jobs.filter(j => isActive(j.production_stage))
     : filter === "completed" ? jobs.filter(j => j.production_stage?.startsWith("Completed"))
-    : filter === "cancelled" ? jobs.filter(j => j.leadStatus === "job_cancelled" || j.production_stage?.startsWith("Cancelled"))
+    : filter === "cancelled" ? jobs.filter(j => isCancelledStage(j.production_stage))
     : filter === "no_stage"  ? jobs.filter(j => !j.production_stage)
     : filter === "balance"   ? jobs.filter(j => (j.contract - j.totalCollected) > 0)
     : jobs;
@@ -408,12 +440,7 @@ export default function ProductionPage() {
   const pendingCount   = jobs.filter(j => isPending(j.production_stage)).length;
   const activeCount    = jobs.filter(j => isActive(j.production_stage)).length;
   const noStageCount   = jobs.filter(j => !j.production_stage).length;
-  const cancelledCount = jobs.filter(j => j.leadStatus === "job_cancelled").length;
-
-  const totalContract  = filteredJobs.reduce((s, j) => s + j.contract, 0);
-  const totalCollected = filteredJobs.reduce((s, j) => s + j.totalCollected, 0);
-  const totalRefunded  = filteredJobs.reduce((s, j) => s + j.totalRefunded, 0);
-  const totalBalance   = totalContract - totalCollected;
+  const cancelledCount = jobs.filter(j => isCancelledStage(j.production_stage)).length;
 
   // ── Group jobs by CLIENT (contact_id), not by lead ────────────────────────────────────────
   // A repeat client's original job + all their change orders + any brand-new lead they later
@@ -444,7 +471,7 @@ export default function ProductionPage() {
       const activeN    = rows.filter(r => isActive(r.production_stage)).length;
       const pendingN   = rows.filter(r => isPending(r.production_stage)).length;
       const completedN = rows.filter(r => r.production_stage?.startsWith("Completed")).length;
-      const cancelledN = rows.filter(r => r.leadStatus === "job_cancelled" || r.production_stage?.startsWith("Cancelled")).length;
+      const cancelledN = rows.filter(r => isCancelledStage(r.production_stage)).length;
       const distinctAddresses = Array.from(new Set(rows.map(r => r.address))).length;
       const latestStageDate = rows.reduce((latest: string | null, r) => {
         if (!r.production_stage_updated_at) return latest;
@@ -479,7 +506,7 @@ export default function ProductionPage() {
     const isEditingNote     = editingNotes === rowKey;
     const isEditingThisDate = editingDate === rowKey;
     const isCalendarStage   = CALENDAR_STAGES.includes(job.production_stage || "");
-    const isCancelled       = job.leadStatus === "job_cancelled";
+    const isCancelled       = isCancelledStage(job.production_stage);
     const rowBg             = isCancelled
       ? "bg-red-50/30 dark:bg-red-950/10"
       : isPending(job.production_stage)
@@ -783,30 +810,10 @@ export default function ProductionPage() {
         </button>
       </div>
 
-      {/* ── KPI Cards ── */}
-      <div className="grid grid-cols-3 gap-4">
-        <div className="rounded-xl border bg-card p-4">
-          <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">Total Jobs</p>
-          <p className="text-2xl font-bold mt-1">{filteredJobs.length}</p>
-          {pendingCount > 0 && <p className="text-xs text-slate-500 mt-1">{pendingCount} pending</p>}
-          {cancelledCount > 0 && <p className="text-xs text-red-500 mt-0.5">{cancelledCount} cancelled</p>}
-        </div>
-        <div className="rounded-xl border bg-card p-4">
-          <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">Total Collected</p>
-          <p className="text-2xl font-bold mt-1 text-emerald-600">${totalCollected.toLocaleString()}</p>
-          {totalRefunded > 0 && (
-            <p className="text-xs text-red-500 mt-1">
-              −${totalRefunded.toLocaleString()} refunded · Net: ${(totalCollected - totalRefunded).toLocaleString()}
-            </p>
-          )}
-        </div>
-        <div className="rounded-xl border bg-card p-4">
-          <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">Total Balance Due</p>
-          <p className={`text-2xl font-bold mt-1 ${totalBalance > 0 ? "text-red-500" : "text-emerald-600"}`}>
-            ${totalBalance.toLocaleString()}
-          </p>
-        </div>
-      </div>
+      {/* ── Money summary — one source of truth, net of cancellations and booked refunds.
+             Replaces the old three cards, which double-counted job rows and billed
+             cancelled contract value as an open balance. ── */}
+      <ProductionSummaryCards />
 
       {/* ── Refund Modal ── */}
       {refundDraft && (
@@ -936,6 +943,24 @@ export default function ProductionPage() {
         onLeadUpdated={(leadId) => fetchSingleLead(leadId)}
         onLeadDeleted={() => { setDialogOpen(false); fetchJobs(); }}
       />
+
+      {/* ── Cancel Job Dialog — opened from the row stage <select>; the only cancel path ── */}
+      {cancelTarget && (
+        <CancelJobDialog
+          open
+          onClose={() => setCancelTarget(null)}
+          onDone={fetchJobs}
+          leadId={cancelTarget.leadId}
+          changeOrderId={cancelTarget.type === "change_order" ? cancelTarget.id : null}
+          jobLabel={
+            cancelTarget.type === "change_order"
+              ? `${cancelTarget.clientName} — CO #${cancelTarget.orderNumber}`
+              : cancelTarget.clientName
+          }
+          contractValue={cancelTarget.contract}
+          collectedOnJob={cancelTarget.totalCollected}
+        />
+      )}
     </div>
   );
 }

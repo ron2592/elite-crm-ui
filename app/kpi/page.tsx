@@ -12,6 +12,7 @@ import {
 } from 'lucide-react'
 import KpiInsights, { InsightData } from '@/components/KpiInsights'
 import KpiTabs from '@/components/kpi/KpiTabs'
+import { CancellationPanel } from '@/components/kpi/cancellation-panel'
 
 interface LeadRow {
   id: string; first_name?: string; last_name?: string; lead_name?: string; phone?: string;
@@ -874,6 +875,9 @@ export default function KPIPage() {
               sub={`${kpi.wonCount} won / ${kpi.totalAppts} appts`}
               color={kpi.wonCount > 0 && kpi.totalAppts > 0 && kpi.wonCount / kpi.totalAppts >= 0.3 ? 'text-emerald-600' : 'text-foreground'} />
           </div>
+
+          {/* 2b. CANCELLATIONS — revenue signed and then given back, by source, rep and stage-at-death */}
+          <CancellationPanel from={dateFrom} to={dateTo} />
 
           {/* 3. YTD BLOCK */}
           <YTDBlock ytd={ytd} year={ytdYear} yearOptions={ytdYearOptions} onYearChange={setYtdYear} isCurrentYear={ytdYear === today.getFullYear()} />
