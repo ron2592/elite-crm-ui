@@ -6,7 +6,6 @@ import { Lead } from "@/types";
 import LeadDetailDialog from "@/components/leads/LeadDetailDialog";
 import NewJobModal from "@/components/production/NewJobModal";
 import { CancelJobDialog } from "@/components/production/cancel-job-dialog";
-import { ProductionSummaryCards } from "@/components/production/production-summary-cards";
 import { isCancelledStage } from "@/lib/production/cancellation";
 import { useRole } from "@/lib/useRole";
 
@@ -35,6 +34,25 @@ const stageColors: Record<string, string> = {
 // "Cancelled" is now identified by one predicate everywhere — isCancelledStage() from
 // the cancellation layer — so a filter chip and the table it filters can never disagree.
 const COMPLETED_STAGES = ["Completed", "Completed with Balance"];
+
+const FILTER_LABELS: Record<string, string> = {
+  active: "Active jobs", pending: "Pending jobs", no_stage: "No-stage jobs",
+  completed: "Completed jobs", cancelled: "Cancelled jobs", balance: "Jobs with a balance",
+};
+
+const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
+
+// One row per lead in v_ar_outstanding — the whole job (change orders folded in,
+// cancelled contract value already removed). Only leads with a positive balance appear.
+interface ArData {
+  sold: number;            // net contract value (gross − cancelled)
+  collected: number;       // net of refunds
+  outstanding: number;     // sold − collected — the authoritative Balance
+  gross_sold: number;
+  cancelled_amount: number;
+  gross_collected: number;
+  refunded: number;
+}
 
 interface JobRow {
   id: string;
@@ -91,6 +109,8 @@ export default function ProductionPage() {
   const [filterSourceId, setFilterSourceId] = useState("");
   const [sources,        setSources]        = useState<{ id: string; name: string }[]>([]);
   const [expandedClients, setExpandedClients] = useState<Set<string>>(new Set());
+  // v_ar_outstanding keyed by lead_id — the money source of truth for every job row.
+  const [arByLead,       setArByLead]       = useState<Record<string, ArData>>({});
 
   // — Schedule (job start/end date) inline edit —
   const [editingSchedule, setEditingSchedule] = useState<string | null>(null);
@@ -155,10 +175,33 @@ export default function ProductionPage() {
         .from("change_orders")
         .select("*")
         .eq("status", "won")
+        .is("deleted_at", null)
         .in("lead_id", leadIds)
         .order("order_number", { ascending: true });
       changeOrders = cos || [];
     }
+
+    // Job money (contract / collected / balance including change orders, cancelled value
+    // already netted out) comes from v_ar_outstanding, not from re-adding columns here.
+    let arMap: Record<string, ArData> = {};
+    if (leadIds.length > 0) {
+      const { data: ar } = await supabase
+        .from("v_ar_outstanding")
+        .select("lead_id, sold, collected, outstanding, gross_sold, cancelled_amount, gross_collected, refunded")
+        .in("lead_id", leadIds);
+      (ar || []).forEach((r: any) => {
+        arMap[r.lead_id] = {
+          sold:            Number(r.sold)            || 0,
+          collected:       Number(r.collected)       || 0,
+          outstanding:     Number(r.outstanding)     || 0,
+          gross_sold:      Number(r.gross_sold)      || 0,
+          cancelled_amount:Number(r.cancelled_amount)|| 0,
+          gross_collected: Number(r.gross_collected) || 0,
+          refunded:        Number(r.refunded)        || 0,
+        };
+      });
+    }
+    setArByLead(arMap);
 
     const coIds = changeOrders.map((co: any) => co.id);
     let coPaymentsMap: Record<string, number> = {};
@@ -423,19 +466,20 @@ export default function ProductionPage() {
     !!stage && !isPending(stage) && !isCancelledStage(stage) &&
     !["Completed","Completed with Balance"].includes(stage);
 
-  const stageFiltered =
-    filter === "all"       ? jobs
-    : filter === "pending"   ? jobs.filter(j => isPending(j.production_stage))
-    : filter === "active"    ? jobs.filter(j => isActive(j.production_stage))
-    : filter === "completed" ? jobs.filter(j => j.production_stage?.startsWith("Completed"))
-    : filter === "cancelled" ? jobs.filter(j => isCancelledStage(j.production_stage))
-    : filter === "no_stage"  ? jobs.filter(j => !j.production_stage)
-    : filter === "balance"   ? jobs.filter(j => (j.contract - j.totalCollected) > 0)
-    : jobs;
-
-  const filteredJobs = filterSourceId
-    ? stageFiltered.filter(j => j.sourceId === filterSourceId)
-    : stageFiltered;
+  // A client group is shown when ANY of its rows (lead or change order) matches the
+  // active stage filter and source filter. The "balance" case needs the group's
+  // v_ar_outstanding total, so it's decided after the group totals are computed.
+  const matchesSourceAndStage = (rows: JobRow[]): boolean => {
+    if (filterSourceId && !rows.some(r => r.sourceId === filterSourceId)) return false;
+    switch (filter) {
+      case "pending":   return rows.some(r => isPending(r.production_stage));
+      case "active":    return rows.some(r => isActive(r.production_stage));
+      case "completed": return rows.some(r => !!r.production_stage && r.production_stage.startsWith("Completed"));
+      case "cancelled": return rows.some(r => isCancelledStage(r.production_stage));
+      case "no_stage":  return rows.some(r => !r.production_stage);
+      default:          return true; // "all", "balance"
+    }
+  };
 
   const pendingCount   = jobs.filter(j => isPending(j.production_stage)).length;
   const activeCount    = jobs.filter(j => isActive(j.production_stage)).length;
@@ -446,9 +490,12 @@ export default function ProductionPage() {
   // A repeat client's original job + all their change orders + any brand-new lead they later
   // create at a totally different address (linked via contact_id, matched by phone) all collapse
   // into one row instead of being scattered through the table under separate identities.
+  // Group EVERY job (not the pre-filtered set) so a lead with change orders always
+  // carries them — then filter at the group level. This is why a lead with a single
+  // "Pending - Deposit" change order still gets the expand control under the Active tab.
   const clientGroups = (() => {
     const map = new Map<string, JobRow[]>();
-    filteredJobs.forEach(j => {
+    jobs.forEach(j => {
       const key = j.contactId || j.leadId;
       if (!map.has(key)) map.set(key, []);
       map.get(key)!.push(j);
@@ -465,9 +512,24 @@ export default function ProductionPage() {
         if (a.type !== b.type) return a.type === "lead" ? -1 : 1;
         return (a.orderNumber || 0) - (b.orderNumber || 0);
       });
-      const contract   = rows.reduce((s, r) => s + r.contract, 0);
-      const collected  = rows.reduce((s, r) => s + r.totalCollected, 0);
-      const refunded   = rows.reduce((s, r) => s + r.totalRefunded, 0);
+
+      // Money per lead comes from v_ar_outstanding (whole job, change orders folded in,
+      // cancelled value removed). That view only holds leads that still owe money, so a
+      // missing row means outstanding = 0 — never recompute a balance from row figures.
+      const leadIds = Array.from(new Set(rows.map(r => r.leadId)));
+      const perLead = leadIds.map(id => {
+        const ar = arByLead[id];
+        if (ar) return { contract: ar.sold, collected: ar.collected, balance: ar.outstanding, refunded: ar.refunded };
+        const lr = rows.filter(r => r.leadId === id);
+        const c  = lr.reduce((s, r) => s + r.contract, 0);
+        const cl = lr.reduce((s, r) => s + r.totalCollected, 0);
+        return { contract: c, collected: cl, balance: 0, refunded: lr.reduce((s, r) => s + r.totalRefunded, 0) };
+      });
+      const contract   = sum(perLead.map(p => p.contract));
+      const collected  = sum(perLead.map(p => p.collected));
+      const refunded   = sum(perLead.map(p => p.refunded));
+      const balance    = sum(perLead.map(p => p.balance));
+
       const activeN    = rows.filter(r => isActive(r.production_stage)).length;
       const pendingN   = rows.filter(r => isPending(r.production_stage)).length;
       const completedN = rows.filter(r => r.production_stage?.startsWith("Completed")).length;
@@ -479,28 +541,48 @@ export default function ProductionPage() {
         return latest;
       }, null as string | null);
       return {
-        groupKey, rows: sortedRows,
+        groupKey, rows: sortedRows, allRows: rows,
         clientName: sortedRows[0].clientName, address: sortedRows[0].address,
         multipleAddresses: distinctAddresses > 1,
         sourceName: sortedRows[0].sourceName, salesperson: sortedRows[0].salesperson,
-        contract, collected, refunded, balance: contract - collected,
+        contract, collected, refunded, balance,
         activeN, pendingN, completedN, cancelledN, latestStageDate,
       };
-    }).sort((a, b) => {
+    })
+    .filter(g => matchesSourceAndStage(g.allRows) && (filter !== "balance" || g.balance > 0.005))
+    .sort((a, b) => {
       const aT = a.latestStageDate ? new Date(a.latestStageDate).getTime() : 0;
       const bT = b.latestStageDate ? new Date(b.latestStageDate).getTime() : 0;
       return bT - aT;
     });
   })();
 
+  // Summary cards are computed from exactly what the table shows, so they can never
+  // disagree with the visible rows the way the all-jobs card block did.
+  const visibleRows = clientGroups.reduce((n, g) => n + g.rows.length, 0);
+  const summary = clientGroups.reduce(
+    (a, g) => ({ contract: a.contract + g.contract, collected: a.collected + g.collected, balance: a.balance + g.balance }),
+    { contract: 0, collected: 0, balance: 0 },
+  );
+  const scopeCaption = filter === "all" ? "All jobs" : (FILTER_LABELS[filter] ?? "Filtered jobs");
+
   const toggleClientExpand = (groupKey: string) => {
     setExpandedClients(prev => { const next = new Set(prev); next.has(groupKey) ? next.delete(groupKey) : next.add(groupKey); return next; });
   };
 
   // ── Single job row (used both standalone and nested inside an expanded client group) ────
-  const renderJobRow = (job: JobRow, nested: boolean = false) => {
-    const balance           = job.contract - job.totalCollected;
-    const netKept           = job.totalCollected - job.totalRefunded;
+  // `totals` overrides the row's own money with whole-job figures from v_ar_outstanding —
+  // passed only when this row is standing in for a lead (a top-level row, never a nested child).
+  const renderJobRow = (
+    job: JobRow,
+    nested: boolean = false,
+    totals?: { contract: number; collected: number; balance: number; refunded: number },
+  ) => {
+    const contract          = totals ? totals.contract  : job.contract;
+    const collected         = totals ? totals.collected : job.totalCollected;
+    const refunded          = totals ? totals.refunded  : job.totalRefunded;
+    const balance           = totals ? totals.balance   : contract - collected;
+    const netKept           = collected - refunded;
     const rowKey            = `${job.type}-${job.id}`;
     const isUpdating        = updating === rowKey;
     const isEditingNote     = editingNotes === rowKey;
@@ -550,29 +632,33 @@ export default function ProductionPage() {
 
         <td className="px-4 py-3 text-muted-foreground whitespace-nowrap">{job.salesperson || "—"}</td>
 
-        {/* Contract */}
+        {/* Contract — struck through when cancelled; that's the only cancelled-money cue */}
         <td className="px-4 py-3 text-right font-medium whitespace-nowrap">
           <span className={isCancelled ? "line-through text-muted-foreground" : ""}>
-            ${job.contract.toLocaleString()}
+            ${contract.toLocaleString()}
           </span>
         </td>
 
         {/* Collected — shows refund if any */}
         <td className="px-4 py-3 text-right whitespace-nowrap">
-          <span className="font-medium text-emerald-600">${job.totalCollected.toLocaleString()}</span>
-          {job.totalRefunded > 0 && (
-            <div className="text-xs text-red-500">−${job.totalRefunded.toLocaleString()} refund</div>
+          <span className="font-medium text-emerald-600">${collected.toLocaleString()}</span>
+          {refunded > 0 && (
+            <div className="text-xs text-red-500">−${refunded.toLocaleString()} refund</div>
           )}
-          {job.totalRefunded > 0 && (
+          {refunded > 0 && (
             <div className="text-xs font-semibold text-emerald-700">Net: ${netKept.toLocaleString()}</div>
           )}
         </td>
 
-        {/* Balance */}
+        {/* Balance — cancelled work is never owed, so show a muted dash, never a red number */}
         <td className="px-4 py-3 text-right whitespace-nowrap">
-          <span className={`font-bold ${balance > 0 ? "text-red-500" : "text-emerald-600"}`}>
-            ${balance.toLocaleString()}
-          </span>
+          {isCancelled ? (
+            <span className="text-muted-foreground">—</span>
+          ) : (
+            <span className={`font-bold ${balance > 0 ? "text-red-500" : "text-emerald-600"}`}>
+              ${balance.toLocaleString()}
+            </span>
+          )}
         </td>
 
         {/* Production Stage */}
@@ -772,7 +858,9 @@ export default function ProductionPage() {
             {group.refunded > 0 && <div className="text-xs text-red-500">−${group.refunded.toLocaleString()} refund</div>}
           </td>
           <td className="px-4 py-3 text-right whitespace-nowrap">
-            <span className={`font-bold ${group.balance > 0 ? "text-red-500" : "text-emerald-600"}`}>${group.balance.toLocaleString()}</span>
+            {group.balance > 0.005
+              ? <span className="font-bold text-red-500">${group.balance.toLocaleString()}</span>
+              : <span className="text-muted-foreground">—</span>}
           </td>
           <td className="px-4 py-3">
             <div className="flex items-center gap-1 flex-wrap">
@@ -810,10 +898,28 @@ export default function ProductionPage() {
         </button>
       </div>
 
-      {/* ── Money summary — one source of truth, net of cancellations and booked refunds.
-             Replaces the old three cards, which double-counted job rows and billed
-             cancelled contract value as an open balance. ── */}
-      <ProductionSummaryCards />
+      {/* ── Money summary — scoped to the current filter and summed from the same rows
+             the table shows, so the cards and the visible rows always agree. Balance
+             comes from v_ar_outstanding (cancelled work excluded, change orders folded in). ── */}
+      <div className="grid grid-cols-3 gap-4">
+        <div className="rounded-xl border bg-card p-4">
+          <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">Contract Value</p>
+          <p className="text-2xl font-bold mt-1">${summary.contract.toLocaleString()}</p>
+          <p className="text-xs text-muted-foreground mt-1">{scopeCaption} · {visibleRows} row{visibleRows === 1 ? "" : "s"} · net of cancellations</p>
+        </div>
+        <div className="rounded-xl border bg-card p-4">
+          <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">Collected</p>
+          <p className="text-2xl font-bold mt-1 text-emerald-600">${summary.collected.toLocaleString()}</p>
+          <p className="text-xs text-muted-foreground mt-1">{scopeCaption}</p>
+        </div>
+        <div className="rounded-xl border bg-card p-4">
+          <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">Balance Due</p>
+          <p className={`text-2xl font-bold mt-1 ${summary.balance > 0.005 ? "text-red-500" : "text-emerald-600"}`}>
+            ${summary.balance.toLocaleString()}
+          </p>
+          <p className="text-xs text-muted-foreground mt-1">{scopeCaption} · from v_ar_outstanding</p>
+        </div>
+      </div>
 
       {/* ── Refund Modal ── */}
       {refundDraft && (
@@ -894,7 +1000,7 @@ export default function ProductionPage() {
         {filterSourceId && (
           <button onClick={() => setFilterSourceId("")} className="text-xs text-muted-foreground hover:text-foreground">× Clear</button>
         )}
-        <span className="ml-auto text-xs text-muted-foreground">{filteredJobs.length} jobs</span>
+        <span className="ml-auto text-xs text-muted-foreground">{visibleRows} jobs</span>
       </div>
 
       {/* ── Table ── */}
@@ -919,12 +1025,20 @@ export default function ProductionPage() {
             <tbody>
               {loading ? (
                 <tr><td colSpan={11} className="px-4 py-8 text-center text-muted-foreground">Loading jobs...</td></tr>
-              ) : filteredJobs.length === 0 ? (
+              ) : clientGroups.length === 0 ? (
                 <tr><td colSpan={11} className="px-4 py-8 text-center text-muted-foreground">
                   {filter === "active" ? "No active jobs. Set a production stage to see jobs here." : "No jobs found."}
                 </td></tr>
               ) : clientGroups.map(group =>
-                  group.rows.length > 1 ? renderClientGroupRow(group) : renderJobRow(group.rows[0])
+                  group.rows.length > 1
+                    ? renderClientGroupRow(group)
+                    : renderJobRow(
+                        group.rows[0],
+                        false,
+                        // Whole-job totals from v_ar_outstanding (or 0 when the job owes
+                        // nothing) so the row's Balance always matches the summary card.
+                        { contract: group.contract, collected: group.collected, balance: group.balance, refunded: group.refunded },
+                      )
                 )}
             </tbody>
           </table>
