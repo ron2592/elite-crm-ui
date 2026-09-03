@@ -184,6 +184,470 @@ function YTDBlock({ ytd, year, yearOptions, onYearChange, isCurrentYear }: {
   )
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Data-quality strip — reads v_kpi_health and surfaces ONLY the BROKEN metrics,
+// so nobody reads a 0% closing rate (or a zeroed overdue-alert count) as real.
+// One muted line by default; expands to the per-metric detail + what it means.
+interface KpiHealthRow {
+  kpi: string
+  health: 'OK' | 'PARTIAL' | 'BROKEN'
+  detail: string
+  what_it_means: string
+  sort_order: number
+}
+
+function KpiHealthStrip() {
+  const [rows, setRows] = useState<KpiHealthRow[] | null>(null)
+  const [open, setOpen] = useState(false)
+
+  useEffect(() => {
+    supabase
+      .from('v_kpi_health')
+      .select('kpi,health,detail,what_it_means,sort_order')
+      .then(({ data }) => setRows((data as KpiHealthRow[] | null) ?? []))
+  }, [])
+
+  if (!rows) return null
+  const broken = rows
+    .filter(r => r.health === 'BROKEN')
+    .sort((a, b) => a.sort_order - b.sort_order)
+  if (broken.length === 0) return null
+
+  return (
+    <div className="rounded-lg border border-amber-300/60 dark:border-amber-800/40 bg-amber-50/60 dark:bg-amber-950/10 px-4 py-2.5">
+      <button onClick={() => setOpen(v => !v)} className="w-full flex items-start justify-between gap-3 text-left">
+        <p className="text-xs text-amber-800 dark:text-amber-300">
+          <span className="font-semibold">
+            {broken.length} metric{broken.length === 1 ? '' : 's'} on this page{' '}
+            {broken.length === 1 ? 'is' : 'are'} not trustworthy yet
+          </span>
+          <span className="text-amber-700 dark:text-amber-400/80"> — {broken.map(b => b.kpi).join(', ')}</span>
+        </p>
+        {open
+          ? <ChevronUp className="h-3.5 w-3.5 text-amber-700 dark:text-amber-400 shrink-0 mt-0.5" />
+          : <ChevronDown className="h-3.5 w-3.5 text-amber-700 dark:text-amber-400 shrink-0 mt-0.5" />}
+      </button>
+
+      {open && (
+        <ul className="mt-2 space-y-2 border-t border-amber-200/60 dark:border-amber-800/30 pt-2">
+          {broken.map(b => (
+            <li key={b.kpi} className="text-xs">
+              <p className="font-semibold text-amber-800 dark:text-amber-300">{b.kpi}</p>
+              <p className="text-amber-700 dark:text-amber-400/90">{b.detail}</p>
+              <p className="text-muted-foreground mt-0.5">{b.what_it_means}</p>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Marketing ROI by source — reads the rebuilt v_ytd_kpi_by_source (YTD, one row
+// per lead source). Rules:
+//  • the three ROI figures are always shown side by side, never one alone;
+//  • a negative net_sold or roi_on_sold is always shown with the
+//    "signed − cancelled" split that explains the sign;
+//  • non-paid channels have no spend, so every spend-derived cell reads
+//    "n/a — no ad spend" rather than blank or zero.
+interface YtdSourceRow {
+  source_id: string
+  lead_source: string
+  category: string | null
+  is_paid_channel: boolean
+  ytd_spend: number
+  ytd_leads: number
+  ytd_appts: number
+  appt_rate_pct: number | null
+  closed_jobs: number
+  cancelled_jobs: number
+  cost_per_lead: number | null
+  cost_per_appointment: number | null
+  cost_per_closed_job: number | null
+  gross_sold: number
+  cancelled_value: number
+  net_sold: number
+  recorded_revenue: number
+  refunded: number
+  roi_on_gross_sold: number | null
+  roi_on_sold: number | null
+  roi_on_collected: number | null
+}
+
+const roiFmt = (n: number) => `${n.toFixed(2)}×`
+
+function MarketingRoiBySource() {
+  const [rows, setRows] = useState<YtdSourceRow[] | null>(null)
+
+  useEffect(() => {
+    const n = (v: any): number | null => (v == null ? null : Number(v))
+    supabase
+      .from('v_ytd_kpi_by_source')
+      .select('source_id,lead_source,category,is_paid_channel,ytd_spend,ytd_leads,ytd_appts,appt_rate_pct,closed_jobs,cancelled_jobs,cost_per_lead,cost_per_appointment,cost_per_closed_job,gross_sold,cancelled_value,net_sold,recorded_revenue,refunded,roi_on_gross_sold,roi_on_sold,roi_on_collected')
+      .then(({ data }) => {
+        const mapped: YtdSourceRow[] = ((data as any[]) || []).map(r => ({
+          source_id: r.source_id,
+          lead_source: r.lead_source,
+          category: r.category ?? null,
+          is_paid_channel: !!r.is_paid_channel,
+          ytd_spend: Number(r.ytd_spend) || 0,
+          ytd_leads: Number(r.ytd_leads) || 0,
+          ytd_appts: Number(r.ytd_appts) || 0,
+          appt_rate_pct: n(r.appt_rate_pct),
+          closed_jobs: Number(r.closed_jobs) || 0,
+          cancelled_jobs: Number(r.cancelled_jobs) || 0,
+          cost_per_lead: n(r.cost_per_lead),
+          cost_per_appointment: n(r.cost_per_appointment),
+          cost_per_closed_job: n(r.cost_per_closed_job),
+          gross_sold: Number(r.gross_sold) || 0,
+          cancelled_value: Number(r.cancelled_value) || 0,
+          net_sold: Number(r.net_sold) || 0,
+          recorded_revenue: Number(r.recorded_revenue) || 0,
+          refunded: Number(r.refunded) || 0,
+          roi_on_gross_sold: n(r.roi_on_gross_sold),
+          roi_on_sold: n(r.roi_on_sold),
+          roi_on_collected: n(r.roi_on_collected),
+        }))
+        mapped.sort((a, b) =>
+          Number(b.is_paid_channel) - Number(a.is_paid_channel) ||
+          b.ytd_spend - a.ytd_spend ||
+          b.ytd_leads - a.ytd_leads,
+        )
+        setRows(mapped)
+      })
+  }, [])
+
+  if (!rows) {
+    return (
+      <Section title="Marketing ROI by Source · Year to Date" defaultOpen>
+        <div className="flex items-center gap-2 text-sm text-muted-foreground py-4">
+          <Loader2 className="h-4 w-4 animate-spin" /> Loading…
+        </div>
+      </Section>
+    )
+  }
+
+  const paidCount = rows.filter(r => r.is_paid_channel).length
+
+  // A spend-derived cell (cost-per-* or an ROI). Non-paid channels never have a
+  // real value here — show the explicit "n/a" rather than blank or 0.
+  const spendCell = (val: number | null, isPaid: boolean, kind: 'money' | 'roi') => {
+    if (!isPaid) return <span className="italic text-muted-foreground">n/a — no ad spend</span>
+    if (val == null) return <span className="text-muted-foreground">—</span>
+    if (kind === 'money') return <span>{fmt$(val)}</span>
+    return <span className={val < 0 ? 'font-semibold text-red-500' : 'font-semibold'}>{roiFmt(val)}</span>
+  }
+
+  // The "why is this negative" line: gross signed minus what cancelled.
+  const splitHint = (r: YtdSourceRow) => (
+    <span className="block text-[11px] font-normal text-muted-foreground">
+      {fmt$(r.gross_sold)} signed − {fmt$(r.cancelled_value)} cancelled
+    </span>
+  )
+
+  return (
+    <Section title="Marketing ROI by Source · Year to Date" badge={`${paidCount} paid channels`} defaultOpen>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-border text-left text-xs text-muted-foreground font-semibold">
+              <th className="pb-2 pr-3 whitespace-nowrap">Source</th>
+              <th className="pb-2 pr-3 whitespace-nowrap text-right">Spend</th>
+              <th className="pb-2 pr-3 whitespace-nowrap text-right">Leads</th>
+              <th className="pb-2 pr-3 whitespace-nowrap text-right">Appts</th>
+              <th className="pb-2 pr-3 whitespace-nowrap text-right">Closed</th>
+              <th className="pb-2 pr-3 whitespace-nowrap text-right">Cost / Lead</th>
+              <th className="pb-2 pr-3 whitespace-nowrap text-right">Cost / Appt</th>
+              <th className="pb-2 pr-3 whitespace-nowrap text-right">Cost / Job</th>
+              <th className="pb-2 pr-3 whitespace-nowrap text-right">Gross Sold</th>
+              <th className="pb-2 pr-3 whitespace-nowrap text-right">Net Sold</th>
+              <th className="pb-2 pr-3 whitespace-nowrap text-right">Recorded Rev</th>
+              <th className="pb-2 pr-3 whitespace-nowrap text-right border-l border-border pl-3">ROI on signed work</th>
+              <th className="pb-2 pr-3 whitespace-nowrap text-right">ROI after cancellations</th>
+              <th className="pb-2 pr-3 whitespace-nowrap text-right">ROI on cash collected</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(r => {
+              const negNet = r.net_sold < 0
+              const negRoiSold = r.is_paid_channel && r.roi_on_sold != null && r.roi_on_sold < 0
+              return (
+                <tr key={r.source_id || r.lead_source} className={`border-b border-border/50 ${r.is_paid_channel ? '' : 'text-muted-foreground/90'}`}>
+                  <td className="py-2.5 pr-3 whitespace-nowrap font-medium text-foreground">
+                    {r.lead_source}
+                    {!r.is_paid_channel && (
+                      <span className="ml-2 text-[10px] uppercase tracking-wide text-muted-foreground">no ad spend</span>
+                    )}
+                  </td>
+                  <td className="py-2.5 pr-3 text-right whitespace-nowrap">{r.is_paid_channel ? fmt$(r.ytd_spend) : '—'}</td>
+                  <td className="py-2.5 pr-3 text-right whitespace-nowrap">{r.ytd_leads}</td>
+                  <td className="py-2.5 pr-3 text-right whitespace-nowrap">
+                    {r.ytd_appts}
+                    {r.appt_rate_pct != null && (
+                      <span className="text-[11px] text-muted-foreground ml-1">({r.appt_rate_pct.toFixed(1)}%)</span>
+                    )}
+                  </td>
+                  <td className="py-2.5 pr-3 text-right whitespace-nowrap">
+                    {r.closed_jobs}
+                    {r.cancelled_jobs > 0 && (
+                      <span className="text-[11px] text-red-500 ml-1">−{r.cancelled_jobs} cxl</span>
+                    )}
+                  </td>
+                  <td className="py-2.5 pr-3 text-right whitespace-nowrap">{spendCell(r.cost_per_lead, r.is_paid_channel, 'money')}</td>
+                  <td className="py-2.5 pr-3 text-right whitespace-nowrap">{spendCell(r.cost_per_appointment, r.is_paid_channel, 'money')}</td>
+                  <td className="py-2.5 pr-3 text-right whitespace-nowrap">{spendCell(r.cost_per_closed_job, r.is_paid_channel, 'money')}</td>
+                  <td className="py-2.5 pr-3 text-right whitespace-nowrap">{fmt$(r.gross_sold)}</td>
+                  <td className="py-2.5 pr-3 text-right whitespace-nowrap">
+                    <span className={negNet ? 'font-semibold text-red-500' : ''}>{fmt$(r.net_sold)}</span>
+                    {negNet && splitHint(r)}
+                  </td>
+                  <td className="py-2.5 pr-3 text-right whitespace-nowrap">{fmt$(r.recorded_revenue)}</td>
+                  <td className="py-2.5 pr-3 text-right whitespace-nowrap border-l border-border pl-3">
+                    {spendCell(r.roi_on_gross_sold, r.is_paid_channel, 'roi')}
+                  </td>
+                  <td className="py-2.5 pr-3 text-right whitespace-nowrap">
+                    {spendCell(r.roi_on_sold, r.is_paid_channel, 'roi')}
+                    {negRoiSold && splitHint(r)}
+                  </td>
+                  <td className="py-2.5 pr-3 text-right whitespace-nowrap">{spendCell(r.roi_on_collected, r.is_paid_channel, 'roi')}</td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+      <p className="mt-3 text-xs text-muted-foreground">
+        <span className="font-semibold text-foreground">signed</span> = did the channel produce sales ·{' '}
+        <span className="font-semibold text-foreground">after cancellations</span> = what survived ·{' '}
+        <span className="font-semibold text-foreground">collected</span> = what reached the bank.
+      </p>
+    </Section>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Marketing Performance (monthly, per source) — reads monthly_source_kpi, which
+// is already period-scoped (one row per month per source) and already carries
+// every figure shown here: closed_jobs EXCLUDES cancellations, total_revenue is
+// NET of them, cancellation_rate / conversion rates / acquisition costs / closing
+// rate are all precomputed at the view layer. Nothing is recomputed in TS — MTD
+// is the current-month row, "vs" is the previous month's row, and the only
+// arithmetic is A − B of two view values for the comparison deltas.
+interface MonthlySourceKpi {
+  period_start: string
+  source_id: string | null
+  source_name: string
+  total_leads: number
+  actual_charged_leads: number
+  appointments: number
+  closed_jobs: number
+  lost_jobs: number
+  cancelled_jobs: number
+  total_revenue: number
+  gross_revenue: number
+  cancelled_value: number
+  cancellation_rate: number
+  ad_spend: number
+  appointment_conversion_rate: number
+  sales_closing_rate: number
+  average_job_size: number
+  appointment_acquisition_cost: number
+  job_acquisition_cost: number
+}
+
+const monthKey = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`
+const monthLabel = (iso: string) => {
+  const [y, m] = iso.split('-').map(Number)
+  return `${MONTHS[m - 1]} ${y}`
+}
+const monthShort = (iso: string) => MONTHS[Number(iso.split('-')[1]) - 1]
+const pct1 = (n: number) => `${(n * 100).toFixed(1)}%`
+
+function MarketingPerformanceMonthly() {
+  const [rows, setRows] = useState<MonthlySourceKpi[] | null>(null)
+  const [showCompare, setShowCompare] = useState(false)
+
+  useEffect(() => {
+    const now = new Date()
+    const from = monthKey(new Date(now.getFullYear(), now.getMonth() - 3, 1))
+    const num = (v: any) => (v == null ? 0 : Number(v))
+    supabase
+      .from('monthly_source_kpi')
+      .select('period_start,source_id,source_name,total_leads,actual_charged_leads,appointments,closed_jobs,lost_jobs,cancelled_jobs,total_revenue,gross_revenue,cancelled_value,cancellation_rate,ad_spend,appointment_conversion_rate,sales_closing_rate,average_job_size,appointment_acquisition_cost,job_acquisition_cost')
+      .gte('period_start', from)
+      .then(({ data }) => {
+        setRows(((data as any[]) || []).map(r => ({
+          period_start: String(r.period_start).slice(0, 10),
+          source_id: r.source_id ?? null,
+          source_name: r.source_name || 'Unknown',
+          total_leads: num(r.total_leads),
+          actual_charged_leads: num(r.actual_charged_leads),
+          appointments: num(r.appointments),
+          closed_jobs: num(r.closed_jobs),
+          lost_jobs: num(r.lost_jobs),
+          cancelled_jobs: num(r.cancelled_jobs),
+          total_revenue: num(r.total_revenue),
+          gross_revenue: num(r.gross_revenue),
+          cancelled_value: num(r.cancelled_value),
+          cancellation_rate: num(r.cancellation_rate),
+          ad_spend: num(r.ad_spend),
+          appointment_conversion_rate: num(r.appointment_conversion_rate),
+          sales_closing_rate: num(r.sales_closing_rate),
+          average_job_size: num(r.average_job_size),
+          appointment_acquisition_cost: num(r.appointment_acquisition_cost),
+          job_acquisition_cost: num(r.job_acquisition_cost),
+        })))
+      })
+  }, [])
+
+  if (!rows) {
+    return (
+      <Section title="Marketing Performance" defaultOpen>
+        <div className="flex items-center gap-2 text-sm text-muted-foreground py-4">
+          <Loader2 className="h-4 w-4 animate-spin" /> Loading…
+        </div>
+      </Section>
+    )
+  }
+
+  const months = Array.from(new Set(rows.map(r => r.period_start))).sort().reverse()
+  const currentMonth = monthKey(new Date())
+  // MTD = the current-month row. If nothing has landed this month yet, fall back to
+  // the most recent month that has data so the section isn't blank.
+  const displayMonth = months.includes(currentMonth) ? currentMonth : (months[0] ?? currentMonth)
+  const isFallback = displayMonth !== currentMonth
+  const compareMonth = months.find(m => m < displayMonth) ?? null
+
+  const displayRows = rows
+    .filter(r => r.period_start === displayMonth)
+    .sort((a, b) => b.ad_spend - a.ad_spend || b.total_leads - a.total_leads)
+  const prevBySource: Record<string, MonthlySourceKpi> = {}
+  if (compareMonth) {
+    rows.filter(r => r.period_start === compareMonth)
+      .forEach(r => { prevBySource[r.source_id || r.source_name] = r })
+  }
+
+  const anyCancellations = displayRows.some(r => r.cancelled_jobs > 0 || r.cancelled_value > 0)
+
+  return (
+    <Section
+      title="Marketing Performance"
+      badge={`${monthLabel(displayMonth)}${isFallback ? ' · latest data' : ' · month to date'}`}
+      defaultOpen
+    >
+      {isFallback && (
+        <p className="mb-3 text-xs text-amber-700 dark:text-amber-400">
+          No activity recorded for {monthLabel(currentMonth)} yet — showing {monthLabel(displayMonth)}.
+        </p>
+      )}
+
+      {compareMonth && (
+        <button
+          onClick={() => setShowCompare(v => !v)}
+          className="mb-3 text-xs px-2.5 py-1 rounded-md border border-border hover:bg-muted text-muted-foreground"
+        >
+          {showCompare ? 'Hide comparison' : `Compare vs ${monthLabel(compareMonth)}`}
+        </button>
+      )}
+
+      {displayRows.length === 0 ? (
+        <p className="text-sm text-muted-foreground text-center py-4">No marketing activity recorded for this month.</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-border text-left text-xs text-muted-foreground font-semibold">
+                <th className="pb-2 pr-3 whitespace-nowrap">Source</th>
+                <th className="pb-2 pr-3 whitespace-nowrap text-right">Leads</th>
+                <th className="pb-2 pr-3 whitespace-nowrap text-right">Charged</th>
+                <th className="pb-2 pr-3 whitespace-nowrap text-right">Appts</th>
+                <th className="pb-2 pr-3 whitespace-nowrap text-right">Appt Conv</th>
+                <th className="pb-2 pr-3 whitespace-nowrap text-right">Closed</th>
+                <th className="pb-2 pr-3 whitespace-nowrap text-right">Lost</th>
+                <th className="pb-2 pr-3 whitespace-nowrap text-right">Cancelled</th>
+                <th className="pb-2 pr-3 whitespace-nowrap text-right">Close %<sup>*</sup></th>
+                <th className="pb-2 pr-3 whitespace-nowrap text-right">Revenue</th>
+                <th className="pb-2 pr-3 whitespace-nowrap text-right">Spend</th>
+                <th className="pb-2 pr-3 whitespace-nowrap text-right">Appt Cost</th>
+                <th className="pb-2 pr-3 whitespace-nowrap text-right">Job Cost</th>
+                <th className="pb-2 pr-3 whitespace-nowrap text-right">Avg Job</th>
+              </tr>
+            </thead>
+            <tbody>
+              {displayRows.map(r => {
+                const prev = compareMonth ? prevBySource[r.source_id || r.source_name] : undefined
+                const leadDelta = prev ? r.total_leads - prev.total_leads : null
+                const revDelta = prev ? r.total_revenue - prev.total_revenue : null
+                const hasCxl = r.cancelled_jobs > 0 || r.cancelled_value > 0
+                return (
+                  <tr key={r.source_id || r.source_name} className="border-b border-border/50 hover:bg-muted/20">
+                    <td className="py-2.5 pr-3 whitespace-nowrap font-medium">{r.source_name}</td>
+                    <td className="py-2.5 pr-3 text-right whitespace-nowrap">
+                      {r.total_leads}
+                      {showCompare && leadDelta !== null && (
+                        <span className={`block text-[11px] font-normal ${leadDelta > 0 ? 'text-emerald-600' : leadDelta < 0 ? 'text-red-500' : 'text-muted-foreground'}`}>
+                          {leadDelta > 0 ? '+' : ''}{leadDelta} vs {monthShort(compareMonth!)}
+                        </span>
+                      )}
+                    </td>
+                    <td className="py-2.5 pr-3 text-right whitespace-nowrap text-muted-foreground">{r.actual_charged_leads}</td>
+                    <td className="py-2.5 pr-3 text-right whitespace-nowrap">{r.appointments}</td>
+                    <td className="py-2.5 pr-3 text-right whitespace-nowrap text-muted-foreground">{pct1(r.appointment_conversion_rate)}</td>
+                    <td className="py-2.5 pr-3 text-right whitespace-nowrap">
+                      <span className="px-2 py-0.5 rounded-full text-xs bg-emerald-100 text-emerald-700 font-bold">{r.closed_jobs}</span>
+                    </td>
+                    <td className="py-2.5 pr-3 text-right whitespace-nowrap text-muted-foreground">{r.lost_jobs}</td>
+                    <td className="py-2.5 pr-3 text-right whitespace-nowrap">
+                      {r.cancelled_jobs > 0
+                        ? <span className="text-red-500 font-medium">{r.cancelled_jobs}<span className="text-[11px] font-normal ml-1">({pct1(r.cancellation_rate)})</span></span>
+                        : <span className="text-muted-foreground">—</span>}
+                    </td>
+                    <td
+                      className="py-2.5 pr-3 text-right whitespace-nowrap text-muted-foreground italic"
+                      title="Sales closing rate reads 0% because estimate_sent is not populated yet — not real performance."
+                    >
+                      {pct1(r.sales_closing_rate)}<sup>*</sup>
+                    </td>
+                    <td className="py-2.5 pr-3 text-right whitespace-nowrap">
+                      <span className="font-bold text-emerald-600">{fmt$(r.total_revenue)}</span>
+                      {hasCxl && (
+                        <span className="block text-[11px] font-normal text-muted-foreground">
+                          {fmt$(r.gross_revenue)} gross − {fmt$(r.cancelled_value)} cancelled
+                        </span>
+                      )}
+                      {showCompare && revDelta !== null && (
+                        <span className={`block text-[11px] font-normal ${revDelta > 0 ? 'text-emerald-600' : revDelta < 0 ? 'text-red-500' : 'text-muted-foreground'}`}>
+                          {revDelta >= 0 ? '+' : '−'}{fmt$(Math.abs(revDelta))} vs {monthShort(compareMonth!)}
+                        </span>
+                      )}
+                    </td>
+                    <td className="py-2.5 pr-3 text-right whitespace-nowrap text-muted-foreground">{r.ad_spend > 0 ? fmt$(r.ad_spend) : '—'}</td>
+                    <td className="py-2.5 pr-3 text-right whitespace-nowrap text-muted-foreground">{r.appointment_acquisition_cost > 0 ? fmt$(r.appointment_acquisition_cost) : '—'}</td>
+                    <td className="py-2.5 pr-3 text-right whitespace-nowrap text-muted-foreground">{r.job_acquisition_cost > 0 ? fmt$(r.job_acquisition_cost) : '—'}</td>
+                    <td className="py-2.5 pr-3 text-right whitespace-nowrap text-muted-foreground">{r.average_job_size > 0 ? fmt$(r.average_job_size) : '—'}</td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <p className="mt-3 text-xs text-muted-foreground">
+        <sup>*</sup> <span className="font-semibold text-foreground">Close %</span> reads 0% for every source —{' '}
+        <code className="text-[11px]">estimate_sent</code> is not being populated yet, so its denominator is empty. This is a
+        data-collection gap, not real performance (see the data-quality banner at the top of the page).
+      </p>
+      {anyCancellations && (
+        <p className="mt-1 text-xs text-muted-foreground">
+          Revenue is net of cancellations; gross and the cancelled amount are shown wherever a source had a cancellation this month.
+        </p>
+      )}
+    </Section>
+  )
+}
+
 export default function KPIPage() {
   const today  = new Date()
   const router = useRouter()
@@ -213,12 +677,6 @@ export default function KPIPage() {
   const [trend,        setTrend]        = useState<{ label: string; contracted: number; actual: number; leads: number }[]>([])
   const [loading,      setLoading]      = useState(true)
   const [ytd,          setYtd]          = useState<YTDData | null>(null)
-
-  const [compareMonth, setCompareMonth] = useState<number | null>(null)
-  const [compareYear,  setCompareYear]  = useState<number>(today.getFullYear())
-  const [compareLeads, setCompareLeads] = useState<LeadRow[]>([])
-  const [compareSpend, setCompareSpend] = useState<SpendRow[]>([])
-  const [compareRevEvents, setCompareRevEvents] = useState<{ lead_id: string; source_id: string | null; event_type: 'initial_contract' | 'change_order'; event_date: string; amount: number; record_type: 'change_order' | 'repeat_job' | null; contact_id: string | null; is_repeat_business: boolean }[]>([])
 
   const [showSpendForm,    setShowSpendForm]    = useState(false)
   const [spendForm,        setSpendForm]        = useState({ source_id: '', amount: '', period_start: todayStr(), period_end: todayStr() })
@@ -411,27 +869,6 @@ export default function KPIPage() {
     })
   }
 
-  useEffect(() => {
-    if (compareMonth === null) { setCompareLeads([]); setCompareSpend([]); setCompareRevEvents([]); return; }
-    const start   = new Date(compareYear, compareMonth, 1).toISOString()
-    const end     = new Date(compareYear, compareMonth + 1, 1).toISOString()
-    const spStart = start.split('T')[0]
-    const spEnd   = new Date(compareYear, compareMonth + 1, 1).toISOString().split('T')[0]
-    const revStart = new Date(compareYear, compareMonth, 1).toISOString().split('T')[0]
-    const revEnd   = new Date(compareYear, compareMonth + 1, 0).toISOString().split('T')[0]
-    Promise.all([
-      supabase.from('leads').select('id,status,contact_type,initial_contract_value,source_id,lead_sources(name)').gte('created_at', start).lt('created_at', end).eq('archived', false),
-      supabase.from('marketing_spend').select('id,source_id,amount_spent,lead_sources(name)').gte('period_start', spStart).lt('period_start', spEnd),
-      // Same fix as the main period: revenue for the comparison month comes from revenue_events
-      // (dated by when it was won), not from leads created that month.
-      supabase.from('revenue_events').select('lead_id,source_id,event_type,event_date,amount,record_type,contact_id,is_repeat_business').gte('event_date', revStart).lte('event_date', revEnd),
-    ]).then(([lr, sr, rr]) => {
-      setCompareLeads((lr.data as any[]) || [])
-      setCompareSpend((sr.data as any[]) || [])
-      setCompareRevEvents((rr.data as any[]) || [])
-    })
-  }, [compareMonth, compareYear])
-
   const filtered = useMemo(() => leads.filter(l => !filterSrc || l.source_id === filterSrc), [leads, filterSrc])
 
   const kpi = useMemo(() => {
@@ -514,37 +951,6 @@ export default function KPIPage() {
     return { total, inPerson, phoneQ, totalAppts, wonCount, contracted, coVolume, initialJobRevenue, additionalJobRevenue, revenueDetail, totalRev, actual, lsaCharged, lsaCredited, lsaNotCharged, lsaInReview, totalSpend, apptAcqCost, projAcqCost, bySrc }
   }, [filtered, payments, coPayments, spend, revenueEvents, sources, filterSrc, revLeadNames, paidSourceIds])
 
-  const compareBySrc = useMemo(() => {
-    if (!compareLeads.length && !compareRevEvents.length) return {}
-    const bySrc: Record<string, { name: string; total: number; inPerson: number; won: number; contracted: number; spend: number }> = {}
-    compareLeads.forEach((l: any) => {
-      const key  = l.source_id || 'unknown'
-      const name = (l.lead_sources as any)?.name || 'Unknown'
-      if (!bySrc[key]) bySrc[key] = { name, total: 0, inPerson: 0, won: 0, contracted: 0, spend: 0 }
-      bySrc[key].total++
-      if (l.contact_type === 'in_person') bySrc[key].inPerson++
-      if (WON_STAGES.includes(l.status)) bySrc[key].won++
-    })
-    // Revenue comes from revenue_events (dated by when won), same fix as the main period —
-    // a source with a change order won this comparison month on an older lead still shows up.
-    // Same paid-only, no-repeat-business scope as the main period, so the comparison numbers stay
-    // apples-to-apples with what's shown above.
-    compareRevEvents.forEach((e: any) => {
-      if (!paidSourceIds.has(e.source_id || '') || e.is_repeat_business) return
-      const key = e.source_id || 'unknown'
-      if (!bySrc[key]) {
-        const name = sources.find(s => s.id === e.source_id)?.name || 'Unknown'
-        bySrc[key] = { name, total: 0, inPerson: 0, won: 0, contracted: 0, spend: 0 }
-      }
-      bySrc[key].contracted += Number(e.amount || 0)
-    })
-    compareSpend.forEach((s: any) => {
-      const key = s.source_id || 'unknown'
-      if (bySrc[key]) bySrc[key].spend += Number(s.amount_spent || 0)
-    })
-    return bySrc
-  }, [compareLeads, compareRevEvents, compareSpend, sources, paidSourceIds])
-
   const spendBySrc = useMemo(() => {
     const map: Record<string, any> = {}
     spend.forEach(row => {
@@ -569,8 +975,6 @@ export default function KPIPage() {
     inPerson: acc.inPerson + s.inPerson, phoneQ: acc.phoneQ + s.phoneQ,
     won: acc.won + s.won, contracted: acc.contracted + s.contracted,
   }), { total: 0, lsaCharged: 0, inPerson: 0, phoneQ: 0, won: 0, contracted: 0 })
-  const paidApptAcqCost = paidTotals.inPerson > 0 && kpi.totalSpend > 0 ? kpi.totalSpend / paidTotals.inPerson : 0
-  const paidProjAcqCost = paidTotals.won > 0 && kpi.totalSpend > 0 ? kpi.totalSpend / paidTotals.won : 0
 
   const insightsData: InsightData = useMemo(() => ({
     totalLeads: paidTotals.total, totalAppts: paidTotals.inPerson, totalPhoneQ: paidTotals.phoneQ,
@@ -600,7 +1004,6 @@ export default function KPIPage() {
   }, [spend, filterSrc, kpi.bySrc])
 
   const grandTotalSpend = spendGrouped.reduce((s: number, g: any) => s + g.total, 0)
-  const maxRev = Math.max(...paidSrcList.map(s => s.contracted), 1)
 
   async function handleAddSpend() {
     if (!spendForm.amount || Number(spendForm.amount) <= 0) return
@@ -621,20 +1024,16 @@ export default function KPIPage() {
     setDeletingSpendId(null); fetchAll()
   }
 
-  const compareOptions = useMemo(() => {
-    const opts: { label: string; m: number; y: number }[] = []
-    for (let i = 1; i <= 24; i++) {
-      const d = new Date(today.getFullYear(), today.getMonth() - i, 1)
-      opts.push({ label: `${MONTHS[d.getMonth()]} ${d.getFullYear()}`, m: d.getMonth(), y: d.getFullYear() })
-    }
-    return opts
-  }, [])
-
   return (
     <div className="p-6 max-w-6xl mx-auto space-y-5">
 
       {/* Header */}
       <KpiTabs />
+
+      {/* Data-quality warning — BROKEN metrics from v_kpi_health, so nobody acts on a
+          number the underlying data can't support yet. */}
+      <KpiHealthStrip />
+
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-2xl font-bold">KPI Dashboard</h1>
@@ -882,133 +1281,16 @@ export default function KPIPage() {
           {/* 3. YTD BLOCK */}
           <YTDBlock ytd={ytd} year={ytdYear} yearOptions={ytdYearOptions} onYearChange={setYtdYear} isCurrentYear={ytdYear === today.getFullYear()} />
 
-          {/* 4. SOURCE PERFORMANCE — paid/marketing channels only. Referrals and repeat clients
-              don't belong in a CAC/ROI table since there's no spend behind them to measure —
-              see the Organic & Repeat Revenue tab (KPI Views ▾) for those. */}
-          <Section title="Marketing Performance" badge={`${paidSrcList.length} paid sources`} defaultOpen>
-            {paidSrcList.length === 0 ? (
-              <p className="text-sm text-muted-foreground text-center py-4">No paid-source leads for this period.</p>
-            ) : (
-              <>
-                <div className="flex items-center gap-3 mb-4 flex-wrap">
-                  <p className="text-xs text-muted-foreground font-semibold uppercase tracking-wide">Compare with:</p>
-                  <select
-                    value={compareMonth !== null ? `${compareYear}-${compareMonth}` : ''}
-                    onChange={e => {
-                      if (!e.target.value) { setCompareMonth(null); return; }
-                      const [y, m] = e.target.value.split('-').map(Number)
-                      setCompareYear(y); setCompareMonth(m);
-                    }}
-                    className="rounded-md border border-border bg-background px-2 py-1.5 text-xs focus:outline-none text-muted-foreground">
-                    <option value="">— No comparison —</option>
-                    {compareOptions.map(o => (
-                      <option key={`${o.y}-${o.m}`} value={`${o.y}-${o.m}`}>{o.label}</option>
-                    ))}
-                  </select>
-                  {compareMonth !== null && (
-                    <span className="text-xs text-primary font-medium">
-                      vs {MONTHS[compareMonth]} {compareYear}
-                    </span>
-                  )}
-                </div>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="border-b border-border">
-                        {['Source','Leads','Charged','Appts','Phone Q','Closed','Close %','Revenue','Spend','Appt Cost','Proj Cost'].map(h => (
-                          <th key={h} className="text-left text-xs text-muted-foreground font-semibold pb-2 pr-3 whitespace-nowrap">{h}</th>
-                        ))}
-                        {compareMonth !== null && (
-                          <th className="text-left text-xs text-primary font-semibold pb-2 pr-3 whitespace-nowrap border-l border-primary/20 pl-3">
-                            vs {MONTHS[compareMonth]}
-                          </th>
-                        )}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {paidSrcList.map((src, i) => {
-                        const srcKey   = src.id
-                        const srcSpend = spendBySrc.filter(s => s.source_id === srcKey).reduce((sum, s) => sum + s.amount, 0)
-                        const apptCost = src.inPerson > 0 && srcSpend > 0 ? srcSpend / src.inPerson : 0
-                        const projCost = src.won > 0 && srcSpend > 0 ? srcSpend / src.won : 0
-                        const srcAppts = src.inPerson + src.phoneQ
-                        const cr       = srcAppts > 0 ? Math.round((src.won / srcAppts) * 100) : 0
-                        const crColor  = cr >= 40 ? 'text-emerald-600 font-bold' : cr >= 20 ? 'text-yellow-600 font-bold' : 'text-red-500 font-bold'
-                        const cmp      = compareBySrc[srcKey]
-                        const leadDelta = cmp ? src.total - cmp.total : null
-                        return (
-                          <tr key={src.name} className="border-b border-border/50 hover:bg-muted/20">
-                            <td className="py-3 pr-3">
-                              <div className="flex items-center gap-2">
-                                <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: SRC_COLORS[i % SRC_COLORS.length] }} />
-                                <span className="font-semibold">{src.name}</span>
-                              </div>
-                            </td>
-                            <td className="py-3 pr-3 font-semibold">{src.total}</td>
-                            <td className="py-3 pr-3 text-muted-foreground">{src.lsaCharged}</td>
-                            <td className="py-3 pr-3 font-semibold">{src.inPerson}</td>
-                            <td className="py-3 pr-3 text-muted-foreground">{src.phoneQ}</td>
-                            <td className="py-3 pr-3"><span className="px-2 py-0.5 rounded-full text-xs bg-emerald-100 text-emerald-700 font-bold">{src.won}</span></td>
-                            <td className={`py-3 pr-3 ${crColor}`}>{srcAppts > 0 ? cr + '%' : '—'}</td>
-                            <td className="py-3 pr-3 font-bold text-emerald-600">{src.contracted > 0 ? fmt$(src.contracted) : '—'}</td>
-                            <td className="py-3 pr-3 text-muted-foreground">{srcSpend > 0 ? fmt$(srcSpend) : '—'}</td>
-                            <td className="py-3 pr-3 text-muted-foreground">{apptCost > 0 ? fmt$(apptCost) : '—'}</td>
-                            <td className="py-3 pr-3 text-muted-foreground">{projCost > 0 ? fmt$(projCost) : '—'}</td>
-                            {compareMonth !== null && (
-                              <td className="py-3 pr-3 border-l border-primary/20 pl-3">
-                                {leadDelta !== null ? (
-                                  <span className={`text-xs font-semibold ${leadDelta > 0 ? 'text-emerald-600' : leadDelta < 0 ? 'text-red-500' : 'text-muted-foreground'}`}>
-                                    {leadDelta > 0 ? '+' : ''}{leadDelta} leads
-                                    {cmp && <span className="text-muted-foreground font-normal ml-1">({cmp.total} prior)</span>}
-                                  </span>
-                                ) : <span className="text-xs text-muted-foreground">New</span>}
-                              </td>
-                            )}
-                          </tr>
-                        )
-                      })}
-                      <tr className="bg-muted/30 font-bold border-t-2 border-border">
-                        <td className="py-2.5 pr-3 text-xs uppercase text-muted-foreground tracking-wide">Total</td>
-                        <td className="py-2.5 pr-3">{paidTotals.total}</td>
-                        <td className="py-2.5 pr-3">{paidTotals.lsaCharged}</td>
-                        <td className="py-2.5 pr-3">{paidTotals.inPerson}</td>
-                        <td className="py-2.5 pr-3">{paidTotals.phoneQ}</td>
-                        <td className="py-2.5 pr-3">{paidTotals.won}</td>
-                        <td className="py-2.5 pr-3">{closeRatePct(paidTotals.won, paidTotals.inPerson + paidTotals.phoneQ)}</td>
-                        <td className="py-2.5 pr-3 text-emerald-600">{fmt$(paidTotals.contracted)}</td>
-                        <td className="py-2.5 pr-3">{fmt$(kpi.totalSpend)}</td>
-                        <td className="py-2.5 pr-3">{paidApptAcqCost > 0 ? fmt$(paidApptAcqCost) : '—'}</td>
-                        <td className="py-2.5 pr-3">{paidProjAcqCost > 0 ? fmt$(paidProjAcqCost) : '—'}</td>
-                        {compareMonth !== null && (
-                          <td className="py-2.5 pr-3 border-l border-primary/20 pl-3">
-                            <span className={`text-xs font-semibold ${paidTotals.total > compareLeads.length ? 'text-emerald-600' : 'text-red-500'}`}>
-                              {paidTotals.total > compareLeads.length ? '+' : ''}{paidTotals.total - compareLeads.length} total
-                            </span>
-                          </td>
-                        )}
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-                {paidSrcList.some(s => s.contracted > 0) && (
-                  <div className="mt-4 pt-4 border-t border-border">
-                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Revenue by source</p>
-                    <div className="space-y-2">
-                      {paidSrcList.filter(s => s.contracted > 0).map((src, i) => (
-                        <div key={src.name} className="flex items-center gap-3">
-                          <span className="text-xs text-muted-foreground w-28 truncate shrink-0">{src.name}</span>
-                          <div className="flex-1 h-2 bg-muted rounded-full overflow-hidden">
-                            <div className="h-full rounded-full" style={{ background: SRC_COLORS[i % SRC_COLORS.length], width: `${(src.contracted / maxRev) * 100}%` }} />
-                          </div>
-                          <span className="text-xs font-bold w-14 text-right">{fmt$(src.contracted)}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </>
-            )}
-          </Section>
+          {/* 4. MARKETING PERFORMANCE — one row per source per month, straight from
+              monthly_source_kpi. That view already excludes cancelled jobs from
+              closed_jobs and nets cancellations out of total_revenue, so this is no
+              longer a second in-page computation that can disagree with the rest. */}
+          <MarketingPerformanceMonthly />
+
+          {/* 4b. MARKETING ROI BY SOURCE — canonical YTD figures straight from
+              v_ytd_kpi_by_source: three ROI lenses, cancellation-aware revenue,
+              and explicit "n/a" for channels with no ad spend. */}
+          <MarketingRoiBySource />
 
           {/* 5. KPI INSIGHTS */}
           <KpiInsights label="KPI Performance Analysis" data={insightsData} />
