@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, Fragment } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabaseClient'
 import { Printer, Loader2, Users, Repeat, ChevronDown, ChevronUp } from 'lucide-react'
@@ -30,7 +30,9 @@ function Section({ title, badge, defaultOpen = true, children }: {
 interface RevEvent {
   lead_id: string; source_id: string | null; event_type: 'initial_contract' | 'change_order'
   event_date: string; amount: number; contact_id: string | null; is_repeat_business: boolean
+  change_order_id: string | null
 }
+interface EventLine { client: string; what: string; date: string; amount: number }
 interface LeadRow {
   id: string; first_name?: string; last_name?: string; lead_name?: string; phone?: string;
   source_id: string | null; contact_type: string | null; lsa_status: string | null; status: string;
@@ -66,6 +68,12 @@ export default function OrganicRevenuePage() {
   const [sources,      setSources]      = useState<LeadSource[]>([])
   const [paidSourceIds, setPaidSourceIds] = useState<Set<string>>(new Set())
   const [contacts,     setContacts]     = useState<Record<string, Contact>>({})
+  // Name lookup for every lead referenced by a revenue event — covers repeat/CO
+  // work on leads created before this period (e.g. JCC Bayone, a 2024 lead), which
+  // aren't in the date-scoped `leads` list above.
+  const [leadNames,    setLeadNames]    = useState<Record<string, string>>({})
+  // order_number + description for every change_order referenced by an event.
+  const [coInfo,       setCoInfo]       = useState<Record<string, { n: number; desc: string }>>({})
 
   const periodLabel = useMemo(() => {
     if (dateFrom === dateTo) return fmtDate(dateFrom)
@@ -88,7 +96,7 @@ export default function OrganicRevenuePage() {
     const rangeEnd   = new Date(dateTo + 'T23:59:59').toISOString()
 
     const [revRes, leadsRes, srcRes, spendSrcRes] = await Promise.all([
-      supabase.from('revenue_events').select('lead_id,source_id,event_type,event_date,amount,contact_id,is_repeat_business')
+      supabase.from('revenue_events').select('lead_id,source_id,event_type,event_date,amount,contact_id,is_repeat_business,change_order_id')
         .gte('event_date', dateFrom).lte('event_date', dateTo),
       supabase.from('leads').select('id,first_name,last_name,lead_name,phone,source_id,contact_type,lsa_status,status,initial_contract_value,created_at,metadata,lead_sources(name)')
         .gte('created_at', rangeStart).lte('created_at', rangeEnd).eq('archived', false),
@@ -104,60 +112,100 @@ export default function OrganicRevenuePage() {
     setSources(srcRes.data || [])
     setPaidSourceIds(new Set((spendSrcRes.data || []).map((r: any) => r.source_id).filter(Boolean)))
 
-    const repeatContactIds = Array.from(new Set(events.filter(e => e.is_repeat_business && e.contact_id).map(e => e.contact_id)))
-    if (repeatContactIds.length > 0) {
-      const { data: contactRows } = await supabase.from('contacts').select('id,full_name,phone').in('id', repeatContactIds)
-      const map: Record<string, Contact> = {}
-      ;(contactRows || []).forEach((c: any) => { map[c.id] = c })
-      setContacts(map)
-    } else {
-      setContacts({})
-    }
+    // Attribution lookups for the per-client detail rows: contacts, lead names
+    // (for out-of-range leads), and change-order number/description.
+    const contactIds = Array.from(new Set(events.map(e => e.contact_id).filter(Boolean)))
+    const leadIds    = Array.from(new Set(events.map(e => e.lead_id).filter(Boolean)))
+    const coIds      = Array.from(new Set(events.map(e => e.change_order_id).filter(Boolean)))
+
+    const [contactRes, leadNameRes, coRes] = await Promise.all([
+      contactIds.length ? supabase.from('contacts').select('id,full_name,phone').in('id', contactIds) : Promise.resolve({ data: [] as any[] }),
+      leadIds.length    ? supabase.from('leads').select('id,lead_name,first_name,last_name').in('id', leadIds) : Promise.resolve({ data: [] as any[] }),
+      coIds.length      ? supabase.from('change_orders').select('id,order_number,description').in('id', coIds) : Promise.resolve({ data: [] as any[] }),
+    ])
+
+    const cMap: Record<string, Contact> = {}
+    ;(contactRes.data || []).forEach((c: any) => { cMap[c.id] = c })
+    setContacts(cMap)
+
+    const nMap: Record<string, string> = {}
+    ;(leadNameRes.data || []).forEach((l: any) => {
+      nMap[l.id] = l.lead_name || `${l.first_name || ''} ${l.last_name || ''}`.trim() || 'Unknown client'
+    })
+    setLeadNames(nMap)
+
+    const coMap: Record<string, { n: number; desc: string }> = {}
+    ;(coRes.data || []).forEach((co: any) => { coMap[co.id] = { n: co.order_number, desc: co.description || '' } })
+    setCoInfo(coMap)
+
     setLoading(false)
   }
 
-  const organicSourceIds = useMemo(() => new Set(sources.filter(s => !paidSourceIds.has(s.id)).map(s => s.id)), [sources, paidSourceIds])
+  // Sources whose NAME marks them as repeat business (the lead was manually tagged
+  // "Repeat Client"). That tag — not just the auto-matched is_repeat_business flag —
+  // is how returning clients actually get recorded here; the flag is never set on a
+  // change order signed against an existing lead, which is why the card read $0.00
+  // while JCC Bayone's $43,475 CO sat in the table below it.
+  const repeatSourceIds = useMemo(
+    () => new Set(sources.filter(s => /repeat/i.test(s.name)).map(s => s.id)),
+    [sources],
+  )
+  const isRepeatEvent = (e: RevEvent) => e.is_repeat_business || (!!e.source_id && repeatSourceIds.has(e.source_id))
 
-  // Repeat Business Revenue: is_repeat_business is the real, contact-matched signal (phone/name/email
-  // matching, not a manual source tag) — a client who already worked with you before, regardless of
-  // what their original lead source was, or whether this new job is at a different address entirely.
-  const repeatEvents = useMemo(() => revEvents.filter(e => e.is_repeat_business), [revEvents])
-  const repeatTotal  = useMemo(() => repeatEvents.reduce((s, e) => s + Number(e.amount || 0), 0), [repeatEvents])
+  // Organic = never had spend AND not a repeat-business source. Repeat revenue is
+  // its own section; it must not also be counted as an organic source.
+  const organicSourceIds = useMemo(
+    () => new Set(sources.filter(s => !paidSourceIds.has(s.id) && !repeatSourceIds.has(s.id)).map(s => s.id)),
+    [sources, paidSourceIds, repeatSourceIds],
+  )
 
-  const repeatByClient = useMemo(() => {
-    const map: Record<string, { name: string; phone: string | null; jobs: number; revenue: number }> = {}
-    repeatEvents.forEach(e => {
-      const key = e.contact_id || e.lead_id
-      const c = e.contact_id ? contacts[e.contact_id] : null
-      if (!map[key]) map[key] = { name: c?.full_name || 'Unknown client', phone: c?.phone || null, jobs: 0, revenue: 0 }
-      map[key].jobs++
-      map[key].revenue += Number(e.amount || 0)
-    })
-    return Object.values(map).sort((a, b) => b.revenue - a.revenue)
-  }, [repeatEvents, contacts])
+  // Per-event attribution line: who it was, what it was, when, how much.
+  const describe = (e: RevEvent): EventLine => {
+    const client = leadNames[e.lead_id] || (e.contact_id ? contacts[e.contact_id]?.full_name : '') || 'Unknown client'
+    let what = 'Initial contract'
+    if (e.event_type === 'change_order') {
+      const co = e.change_order_id ? coInfo[e.change_order_id] : null
+      what = co ? `CO #${co.n}${co.desc ? ` · ${co.desc}` : ''}` : 'Change order'
+    }
+    return { client, what, date: fmtDate(e.event_date), amount: Number(e.amount || 0) }
+  }
 
-  // Organic source performance: sources that have never had marketing spend logged (referrals,
-  // organic Google/Maps traffic, etc.) — no spend/CAC columns since there's nothing to divide by.
+  const repeatEvents = useMemo(
+    () => revEvents.filter(isRepeatEvent).slice().sort((a, b) => b.event_date.localeCompare(a.event_date)),
+    [revEvents, repeatSourceIds],
+  )
+  const repeatTotal = useMemo(() => repeatEvents.reduce((s, e) => s + Number(e.amount || 0), 0), [repeatEvents])
+  const repeatLines = useMemo(() => repeatEvents.map(describe), [repeatEvents, leadNames, contacts, coInfo])
+
+  // Organic source performance: sources that have never had marketing spend logged
+  // (referrals, organic Google/Maps traffic, etc.) — no spend/CAC columns since
+  // there's nothing to divide by.
   const organicLeads = useMemo(() => leads.filter(l => l.source_id && organicSourceIds.has(l.source_id)), [leads, organicSourceIds])
-  const organicRevEvents = useMemo(() => revEvents.filter(e => e.source_id && organicSourceIds.has(e.source_id)), [revEvents, organicSourceIds])
+  const organicRevEvents = useMemo(
+    () => revEvents.filter(e => e.source_id && organicSourceIds.has(e.source_id) && !isRepeatEvent(e))
+                   .slice().sort((a, b) => b.event_date.localeCompare(a.event_date)),
+    [revEvents, organicSourceIds, repeatSourceIds],
+  )
 
   const organicBySrc = useMemo(() => {
-    const map: Record<string, { name: string; leads: number; inPerson: number; won: number; revenue: number }> = {}
+    const map: Record<string, { name: string; leads: number; inPerson: number; won: number; revenue: number; lines: EventLine[] }> = {}
+    const ensure = (key: string) => {
+      if (!map[key]) map[key] = { name: sources.find(s => s.id === key)?.name || 'Unknown', leads: 0, inPerson: 0, won: 0, revenue: 0, lines: [] }
+      return map[key]
+    }
     organicLeads.forEach(l => {
-      const key = l.source_id as string
-      const name = sources.find(s => s.id === key)?.name || 'Unknown'
-      if (!map[key]) map[key] = { name, leads: 0, inPerson: 0, won: 0, revenue: 0 }
-      map[key].leads++
-      if (l.contact_type === 'in_person') map[key].inPerson++
-      if (WON_STAGES.includes(l.status)) map[key].won++
+      const g = ensure(l.source_id as string)
+      g.leads++
+      if (l.contact_type === 'in_person') g.inPerson++
+      if (WON_STAGES.includes(l.status)) g.won++
     })
     organicRevEvents.forEach(e => {
-      const key = e.source_id as string
-      if (!map[key]) { const name = sources.find(s => s.id === key)?.name || 'Unknown'; map[key] = { name, leads: 0, inPerson: 0, won: 0, revenue: 0 } }
-      map[key].revenue += Number(e.amount || 0)
+      const g = ensure(e.source_id as string)
+      g.revenue += Number(e.amount || 0)
+      g.lines.push(describe(e))
     })
     return Object.values(map).sort((a, b) => b.revenue - a.revenue)
-  }, [organicLeads, organicRevEvents, sources])
+  }, [organicLeads, organicRevEvents, sources, leadNames, contacts, coInfo])
 
   const organicTotal = organicBySrc.reduce((s, r) => s + r.revenue, 0)
 
@@ -202,31 +250,31 @@ export default function OrganicRevenuePage() {
                 <Repeat className="h-5 w-5 text-purple-600" />
                 <div>
                   <p className="text-base font-bold text-purple-700">Repeat Business Revenue</p>
-                  <p className="text-xs text-muted-foreground mt-0.5">{periodLabel} · clients who already worked with you before, matched automatically by phone/name/email — regardless of source or job address</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">{periodLabel} · returning clients — matched automatically by phone/name/email, or tagged as a repeat client on the lead. Includes change orders on an existing job.</p>
                 </div>
               </div>
               <p className="text-3xl font-bold text-purple-700">{fmt$(repeatTotal)}</p>
             </div>
             <div className="px-6 py-4">
-              {repeatByClient.length === 0 ? (
+              {repeatLines.length === 0 ? (
                 <p className="text-sm text-muted-foreground text-center py-2">No repeat-client revenue in this period.</p>
               ) : (
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="border-b border-border">
-                        {['Client', 'Phone', 'Jobs', 'Revenue'].map(h => (
+                        {['Client', 'What it was', 'Date', 'Amount'].map(h => (
                           <th key={h} className="text-left text-xs text-muted-foreground font-semibold pb-2 pr-3 whitespace-nowrap">{h}</th>
                         ))}
                       </tr>
                     </thead>
                     <tbody>
-                      {repeatByClient.map((c, i) => (
+                      {repeatLines.map((l, i) => (
                         <tr key={i} className="border-b border-border/40">
-                          <td className="py-2.5 pr-3 font-semibold">{c.name}</td>
-                          <td className="py-2.5 pr-3 text-muted-foreground text-xs">{c.phone || '—'}</td>
-                          <td className="py-2.5 pr-3">{c.jobs}</td>
-                          <td className="py-2.5 pr-3 font-bold text-purple-700">{fmt$(c.revenue)}</td>
+                          <td className="py-2.5 pr-3 font-semibold whitespace-nowrap">{l.client}</td>
+                          <td className="py-2.5 pr-3 text-muted-foreground">{l.what}</td>
+                          <td className="py-2.5 pr-3 text-muted-foreground text-xs whitespace-nowrap">{l.date}</td>
+                          <td className="py-2.5 pr-3 font-bold text-purple-700 whitespace-nowrap">{fmt$(l.amount)}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -265,14 +313,24 @@ export default function OrganicRevenuePage() {
                       {organicBySrc.map((src, i) => {
                         const cr = src.leads > 0 ? Math.round((src.won / src.leads) * 100) : 0
                         return (
-                          <tr key={i} className="border-b border-border/40">
-                            <td className="py-2.5 pr-3 font-semibold">{src.name}</td>
-                            <td className="py-2.5 pr-3">{src.leads}</td>
-                            <td className="py-2.5 pr-3">{src.inPerson}</td>
-                            <td className="py-2.5 pr-3"><span className="px-2 py-0.5 rounded-full text-xs bg-emerald-100 text-emerald-700 font-bold">{src.won}</span></td>
-                            <td className="py-2.5 pr-3">{src.leads > 0 ? cr + '%' : '—'}</td>
-                            <td className="py-2.5 pr-3 font-bold text-emerald-600">{src.revenue > 0 ? fmt$(src.revenue) : '—'}</td>
-                          </tr>
+                          <Fragment key={i}>
+                            <tr className="border-b border-border/40">
+                              <td className="py-2.5 pr-3 font-semibold">{src.name}</td>
+                              <td className="py-2.5 pr-3">{src.leads}</td>
+                              <td className="py-2.5 pr-3">{src.inPerson}</td>
+                              <td className="py-2.5 pr-3"><span className="px-2 py-0.5 rounded-full text-xs bg-emerald-100 text-emerald-700 font-bold">{src.won}</span></td>
+                              <td className="py-2.5 pr-3">{src.leads > 0 ? cr + '%' : '—'}</td>
+                              <td className="py-2.5 pr-3 font-bold text-emerald-600">{src.revenue > 0 ? fmt$(src.revenue) : '—'}</td>
+                            </tr>
+                            {src.lines.map((l, j) => (
+                              <tr key={`d${i}-${j}`} className="border-b border-border/20 bg-muted/[0.04]">
+                                <td colSpan={5} className="py-1.5 pl-6 pr-3 text-xs text-muted-foreground">
+                                  <span className="font-medium text-foreground">{l.client}</span> · {l.what} · {l.date}
+                                </td>
+                                <td className="py-1.5 pr-3 text-xs font-semibold text-emerald-700 whitespace-nowrap">{fmt$(l.amount)}</td>
+                              </tr>
+                            ))}
+                          </Fragment>
                         )
                       })}
                     </tbody>

@@ -841,7 +841,9 @@ export default function KPIPage() {
       if (tMap[k]) tMap[k].contracted += Number(e.amount || 0)
     })
     ;[...(tPay.data || []), ...(tCoPay.data || [])].forEach((p: any) => {
-      const d = new Date(p.paid_at)
+      // paid_at is stored at UTC midnight; parse the calendar date with no timezone
+      // conversion so a payment on the 1st isn't binned into the prior month.
+      const d = new Date(String(p.paid_at).slice(0, 10) + 'T00:00:00')
       const k = `${MONTHS[d.getMonth()]} ${String(d.getFullYear()).slice(2)}`
       if (tMap[k]) tMap[k].actual += Number(p.amount || 0)
     })

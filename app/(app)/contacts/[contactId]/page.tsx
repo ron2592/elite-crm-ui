@@ -3,6 +3,7 @@
 import { Fragment, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
+import { fmtStoredDate } from "@/lib/utils";
 import { Lead } from "@/types";
 import LeadDetailDialog from "@/components/leads/LeadDetailDialog";
 import { ChevronLeft, ChevronDown, ChevronUp, Phone, Mail, MapPin, Briefcase, Loader2, ExternalLink, Pencil } from "lucide-react";
@@ -317,7 +318,7 @@ export default function ClientProfilePage({ params }: { params: { contactId: str
                                     return (
                                       <tr key={co.id} className="border-b border-border/30">
                                         <td className="px-3 py-2 text-muted-foreground">#{co.order_number}</td>
-                                        <td className="px-3 py-2 text-muted-foreground whitespace-nowrap">{co.date_added ? new Date(co.date_added).toLocaleDateString("en-US", { month: "2-digit", day: "2-digit", year: "numeric" }) : "—"}</td>
+                                        <td className="px-3 py-2 text-muted-foreground whitespace-nowrap">{co.date_added ? fmtStoredDate(co.date_added, { month: "2-digit", day: "2-digit", year: "numeric" }) : "—"}</td>
                                         <td className="px-3 py-2">{co.description || "—"}</td>
                                         <td className="px-3 py-2 text-muted-foreground">{co.job_type || "—"}</td>
                                         <td className="px-3 py-2">

@@ -7,6 +7,7 @@ import LeadDetailDialog from "@/components/leads/LeadDetailDialog";
 import NewJobModal from "@/components/production/NewJobModal";
 import { CancelJobDialog } from "@/components/production/cancel-job-dialog";
 import { isCancelledStage } from "@/lib/production/cancellation";
+import { fmtStoredDate } from "@/lib/utils";
 import { useRole } from "@/lib/useRole";
 
 const CALENDAR_STAGES = ["Scheduled to Start", "Job In Progress", "Rough Inspection", "Final Inspection"];
@@ -809,9 +810,9 @@ export default function ProductionPage() {
               className="cursor-pointer group">
               {job.jobStartDate || job.jobEndDate ? (
                 <p className="text-xs group-hover:text-primary transition-colors">
-                  {job.jobStartDate ? new Date(job.jobStartDate + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "?"}
+                  {job.jobStartDate ? fmtStoredDate(job.jobStartDate, { month: "short", day: "numeric" }) : "?"}
                   {" - "}
-                  {job.jobEndDate ? new Date(job.jobEndDate + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "?"}
+                  {job.jobEndDate ? fmtStoredDate(job.jobEndDate, { month: "short", day: "numeric" }) : "?"}
                 </p>
               ) : (
                 <p className="text-xs text-muted-foreground/50 group-hover:text-primary">+ Set schedule</p>

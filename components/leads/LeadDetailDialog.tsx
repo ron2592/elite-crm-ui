@@ -49,6 +49,16 @@ function toLocalDate(iso: string | null): string {
   return new Date(iso).toISOString().split("T")[0];
 }
 
+// Stored payment/contract dates (paid_at, etc.) are saved as UTC midnight.
+// `new Date(iso).toLocaleDateString()` converts to local first, which lands a day
+// early anywhere west of UTC and can push a payment into the wrong month at a
+// boundary. Format the stored calendar date directly — noon-local never crosses
+// a day boundary in any timezone.
+function fmtStoredDate(value: string | null | undefined): string {
+  if (!value) return "";
+  return new Date(value.slice(0, 10) + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+
 function parseLeadName(leadName: string): { first: string; last: string } {
   const trimmed = (leadName || "").trim();
   if (!trimmed) return { first: "", last: "" };
@@ -905,7 +915,7 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
                       <div key={payment.id} className={`rounded-md border p-2.5 flex items-center justify-between ${payment.payment_method === "Sunlight Financial" || payment.payment_method === "Upgrade" ? "border-orange-300 bg-orange-50 dark:bg-orange-950/20" : "border-border bg-muted/20"}`}>
                         <div>
                           <div className="flex items-center gap-2"><span className="text-sm font-bold text-emerald-600">${Number(payment.amount).toLocaleString()}</span><span className="text-xs px-1.5 py-0.5 rounded bg-secondary text-secondary-foreground">{payment.payment_type}</span><span className={`text-xs px-1.5 py-0.5 rounded ${payment.payment_method === "Sunlight Financial" || payment.payment_method === "Upgrade" ? "bg-orange-100 text-orange-700" : "bg-secondary text-secondary-foreground"}`}>{payment.payment_method}</span></div>
-                          <p className="text-xs text-muted-foreground mt-0.5">{new Date(payment.paid_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}{payment.notes && ` · ${payment.notes}`}</p>
+                          <p className="text-xs text-muted-foreground mt-0.5">{fmtStoredDate(payment.paid_at)}{payment.notes && ` · ${payment.notes}`}</p>
                         </div>
                         {isManager && (
                           <button onClick={() => handleDeletePayment(payment.id, Number(payment.amount))} className="text-muted-foreground hover:text-red-500 transition-colors ml-2"><X className="h-3.5 w-3.5" /></button>
@@ -1018,7 +1028,7 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
                               <div key={p.id} className="rounded-md border border-border bg-muted/20 p-2.5 flex items-center justify-between">
                                 <div>
                                   <div className="flex items-center gap-2"><span className="text-sm font-bold text-emerald-600">${Number(p.amount).toLocaleString()}</span><span className="text-xs px-1.5 py-0.5 rounded bg-secondary text-secondary-foreground">{p.payment_type}</span><span className="text-xs px-1.5 py-0.5 rounded bg-secondary text-secondary-foreground">{p.payment_method}</span></div>
-                                  <p className="text-xs text-muted-foreground mt-0.5">{new Date(p.paid_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}{p.notes && ` · ${p.notes}`}</p>
+                                  <p className="text-xs text-muted-foreground mt-0.5">{fmtStoredDate(p.paid_at)}{p.notes && ` · ${p.notes}`}</p>
                                 </div>
                                 {isManager && (
                                   <button onClick={() => handleDeleteCOPayment(p.id)} className="text-muted-foreground hover:text-red-500 transition-colors ml-2"><X className="h-3.5 w-3.5" /></button>
