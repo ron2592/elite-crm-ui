@@ -28,10 +28,21 @@ interface SpendRow {
   lead_sources: { name: string } | null;
 }
 interface LeadSource { id: string; name: string }
-interface YTDData {
-  totalLeads: number; totalInPerson: number; totalWon: number;
-  totalSpend: number; totalRevenue: number; apptConvRate: number;
-  cpa: number; apptAcqCost: number; roi: number; year: number;
+// Year-to-Date block totals — aggregated ONLY from v_ytd_kpi_by_source rows where
+// is_paid_channel = true, so ad spend is never divided into organic / referral /
+// repeat-client leads, appointments, clients or cash it did not produce.
+// clientsWon = closed_jobs from the view, which counts leads (one per client),
+// NOT change-order units — a customer is acquired once; the change orders they
+// later sign are revenue, never an entry in an acquisition denominator.
+interface YtdPaidTotals {
+  spend: number
+  leads: number
+  appts: number
+  clientsWon: number
+  collected: number
+  grossSold: number
+  netSold: number
+  cancelledChannels: string[]   // paid channels with cancelled_value > 0
 }
 
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
@@ -108,75 +119,113 @@ function MetricCard({ label, value, sub, color = '' }: {
   )
 }
 
-function YTDBlock({ ytd, year, yearOptions, onYearChange, isCurrentYear }: {
-  ytd: YTDData | null; year: number; yearOptions: number[]; onYearChange: (y: number) => void; isCurrentYear: boolean
-}) {
-  if (!ytd) return (
+// Year-to-Date, PAID CHANNELS ONLY. Fetches v_ytd_kpi_by_source (current calendar
+// year, one row per lead source), keeps only is_paid_channel rows, and sums them.
+// Paid on BOTH sides of every ratio: paid spend over paid leads / appts / clients /
+// signed / collected — never paid spend over an all-source count. That all-source
+// mix is what inflated Marketing ROI to 10.6x. The view is hard-scoped to the
+// current year, so there is no year picker; past-year YTD is not something this
+// canonical view answers.
+function YtdPaidBlock() {
+  const [t, setT] = useState<YtdPaidTotals | null>(null)
+
+  useEffect(() => {
+    supabase
+      .from('v_ytd_kpi_by_source')
+      .select('lead_source,is_paid_channel,ytd_spend,ytd_leads,ytd_appts,closed_jobs,recorded_revenue,gross_sold,net_sold,cancelled_value')
+      .then(({ data }) => {
+        const paid = ((data as any[]) || []).filter(r => r.is_paid_channel)
+        const s = (f: (r: any) => any) => paid.reduce((acc, r) => acc + (Number(f(r)) || 0), 0)
+        setT({
+          spend: s(r => r.ytd_spend),
+          leads: s(r => r.ytd_leads),
+          appts: s(r => r.ytd_appts),
+          clientsWon: s(r => r.closed_jobs),
+          collected: s(r => r.recorded_revenue),
+          grossSold: s(r => r.gross_sold),
+          netSold: s(r => r.net_sold),
+          cancelledChannels: paid.filter(r => Number(r.cancelled_value) > 0).map(r => r.lead_source),
+        })
+      })
+  }, [])
+
+  if (!t) return (
     <div className="rounded-xl border border-border p-4 flex items-center justify-center gap-2 text-muted-foreground text-sm">
       <Loader2 className="h-4 w-4 animate-spin" /> Loading year-to-date metrics…
     </div>
   )
-  const hasData = ytd.totalSpend > 0 && ytd.totalWon > 0
+
+  const year = new Date().getFullYear()
+  const hasData = t.spend > 0 && t.clientsWon > 0
+  const costPerLead    = t.leads > 0 ? t.spend / t.leads : 0
+  const costPerAppt    = t.appts > 0 ? t.spend / t.appts : 0
+  const costPerClient  = t.clientsWon > 0 ? t.spend / t.clientsWon : 0
+  const avgClientValue = t.clientsWon > 0 ? t.grossSold / t.clientsWon : 0
+  const roiOnSigned    = t.spend > 0 ? t.grossSold / t.spend : 0
+  const roiOnCollected = t.spend > 0 ? t.collected / t.spend : 0
+  const roiAfterCxl    = t.spend > 0 ? t.netSold / t.spend : 0
+  // Paid ad spend as a share of every dollar of paid-channel work signed. Scales
+  // with the job — a $40k job carries ~$0.36×40k, not a flat per-estimate load.
+  const costShareCents = t.grossSold > 0 ? Math.round((t.spend / t.grossSold) * 100) : 0
+
+  const acq: { label: string; value: string; sub: string }[] = [
+    { label: 'Cost / Lead',       value: costPerLead > 0 ? fmt$(costPerLead) : '—',       sub: `${t.leads} leads` },
+    { label: 'Cost / Appointment', value: costPerAppt > 0 ? fmt$(costPerAppt) : '—',       sub: `${t.appts} appts` },
+    { label: 'Cost / Client Won', value: costPerClient > 0 ? fmt$(costPerClient) : '—',    sub: `${t.clientsWon} clients` },
+    { label: 'Avg Client Value',  value: avgClientValue > 0 ? fmt$(avgClientValue) : '—',  sub: 'signed / client' },
+  ]
+
   return (
     <div className="rounded-xl border border-border overflow-hidden">
       <div className="flex items-center justify-between px-5 py-3 bg-muted/20 border-b border-border">
         <div className="flex items-center gap-2">
           <TrendingUp className="h-4 w-4 text-primary" />
           <div>
-            <p className="text-sm font-bold">Year-to-Date · {ytd.year}</p>
+            <p className="text-sm font-bold">Year-to-Date · {year}</p>
             <p className="text-xs text-muted-foreground">
-              {isCurrentYear ? 'Jan 1 – today' : `Jan 1 – Dec 31, ${ytd.year}`} · For job pricing decisions
-              {!hasData && <span className="ml-1 text-amber-500">· No spend/jobs logged for {ytd.year}</span>}
+              Jan 1 – today · For job pricing decisions
+              {!hasData && <span className="ml-1 text-amber-500">· No paid spend / clients logged for {year}</span>}
             </p>
           </div>
         </div>
-        <select value={year} onChange={e => onYearChange(Number(e.target.value))}
-          className="text-xs px-2.5 py-1 rounded-full bg-primary/10 text-primary font-semibold border border-primary/20 focus:outline-none cursor-pointer">
-          {yearOptions.map(y => <option key={y} value={y}>{y} YTD</option>)}
-        </select>
+        <span className="text-xs px-2.5 py-1 rounded-full bg-primary/10 text-primary font-semibold border border-primary/20 whitespace-nowrap">
+          Paid channels only
+        </span>
       </div>
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 divide-y sm:divide-y-0 sm:divide-x divide-border bg-card">
-        <div className="px-6 py-5">
-          <p className="text-xs text-muted-foreground font-semibold uppercase tracking-wide mb-1">Total Leads</p>
-          <p className="text-3xl font-bold mt-1">{ytd.totalLeads}</p>
-          <p className="text-xs text-muted-foreground mt-1">{ytd.totalWon} won · {ytd.totalInPerson} in-person</p>
-          <p className="text-[11px] text-muted-foreground/60 mt-2 italic">{isCurrentYear ? 'Jan 1 – today' : `Jan 1 – Dec 31, ${ytd.year}`}</p>
-        </div>
-        <div className="px-6 py-5">
-          <p className="text-xs text-muted-foreground font-semibold uppercase tracking-wide mb-1">Cost Per Acquisition</p>
-          <p className={`text-3xl font-bold mt-1 ${!ytd.cpa ? 'text-muted-foreground' : ytd.cpa <= 700 ? 'text-emerald-600' : ytd.cpa <= 1200 ? 'text-amber-500' : 'text-red-500'}`}>
-            {ytd.cpa > 0 ? fmt$(ytd.cpa) : '—'}
-          </p>
-          <p className="text-xs text-muted-foreground mt-1">
-            {ytd.cpa > 0 ? `${fmt$(ytd.totalSpend)} spend ÷ ${ytd.totalWon} jobs` : 'Log spend + close jobs to calculate'}
-          </p>
-          <p className="text-[11px] text-primary/70 mt-2 font-medium">💡 Minimum to include in every estimate</p>
-        </div>
-        <div className="px-6 py-5">
-          <p className="text-xs text-muted-foreground font-semibold uppercase tracking-wide mb-1">Appt Conversion Rate</p>
-          <p className={`text-3xl font-bold mt-1 ${!ytd.apptConvRate ? 'text-muted-foreground' : ytd.apptConvRate >= 0.20 ? 'text-emerald-600' : ytd.apptConvRate >= 0.10 ? 'text-amber-500' : 'text-red-500'}`}>
-            {ytd.apptConvRate > 0 ? Math.round(ytd.apptConvRate * 100) + '%' : '—'}
-          </p>
-          <p className="text-xs text-muted-foreground mt-1">{ytd.totalInPerson} in-person / {ytd.totalLeads} leads YTD</p>
-          <p className="text-[11px] text-muted-foreground/60 mt-2 italic">Target: ≥ 20% · Below 10% = lead quality issue</p>
-        </div>
-        <div className="px-6 py-5">
-          <p className="text-xs text-muted-foreground font-semibold uppercase tracking-wide mb-1">Marketing ROI</p>
-          <p className={`text-3xl font-bold mt-1 ${!ytd.roi ? 'text-muted-foreground' : ytd.roi >= 5 ? 'text-emerald-600' : ytd.roi >= 2 ? 'text-amber-500' : 'text-red-500'}`}>
-            {ytd.roi > 0 ? ytd.roi.toFixed(1) + 'x' : '—'}
-          </p>
-          <p className="text-xs text-muted-foreground mt-1">
-            {ytd.roi > 0 ? `Every $1 spent → $${ytd.roi.toFixed(1)} collected` : 'Log spend to calculate'}
-          </p>
-          <p className="text-[11px] text-muted-foreground/60 mt-2 italic">Target: ≥ 5x · Below 2x = review spend allocation</p>
-        </div>
+
+      <div className="grid grid-cols-2 lg:grid-cols-4 divide-x divide-y lg:divide-y-0 divide-border bg-card">
+        {acq.map(a => (
+          <div key={a.label} className="px-6 py-5">
+            <p className="text-xs text-muted-foreground font-semibold uppercase tracking-wide mb-1">{a.label}</p>
+            <p className="text-3xl font-bold mt-1">{a.value}</p>
+            <p className="text-xs text-muted-foreground mt-1">{a.sub}</p>
+          </div>
+        ))}
       </div>
-      {ytd.cpa > 0 && (
+
+      <div className="px-6 py-5 border-t border-border bg-card">
+        <p className="text-xs text-muted-foreground font-semibold uppercase tracking-wide mb-1">Marketing ROI</p>
+        <div className="flex items-baseline gap-2">
+          <p className={`text-3xl font-bold ${!roiOnSigned ? 'text-muted-foreground' : roiOnSigned >= 5 ? 'text-emerald-600' : roiOnSigned >= 2 ? 'text-amber-500' : 'text-red-500'}`}>
+            {roiOnSigned > 0 ? roiOnSigned.toFixed(2) + 'x' : '—'}
+          </p>
+          <span className="text-xs text-muted-foreground">on signed work</span>
+        </div>
+        {roiOnCollected > 0 && (
+          <p className="text-xs text-muted-foreground mt-1">{roiOnCollected.toFixed(2)}x on cash collected</p>
+        )}
+        {t.cancelledChannels.length > 0 && (
+          <p className="text-xs text-amber-700 dark:text-amber-400 mt-1">
+            {roiAfterCxl.toFixed(2)}x after cancellations · {t.cancelledChannels.join(', ')}
+          </p>
+        )}
+      </div>
+
+      {costShareCents > 0 && (
         <div className="px-5 py-3 bg-amber-50/50 dark:bg-amber-950/10 border-t border-amber-200/50 dark:border-amber-800/30">
           <p className="text-xs text-amber-800 dark:text-amber-300">
-            <span className="font-semibold">Pricing floor:</span>{' '}
-            Every estimate needs at least <span className="font-bold">{fmt$(ytd.cpa)}</span> built in before profit.
-            {!hasData && <span className="ml-1 text-amber-600 font-medium">Import missing historical jobs to improve accuracy.</span>}
+            <span className="font-semibold">Marketing costs {costShareCents}¢</span> of every $1 of paid-channel work signed —
+            build that share into the price, not a flat amount per estimate.
           </p>
         </div>
       )}
@@ -187,13 +236,24 @@ function YTDBlock({ ytd, year, yearOptions, onYearChange, isCurrentYear }: {
 // ─────────────────────────────────────────────────────────────────────────────
 // Data-quality strip — reads v_kpi_health and surfaces ONLY the BROKEN metrics,
 // so nobody reads a 0% closing rate (or a zeroed overdue-alert count) as real.
-// One muted line by default; expands to the per-metric detail + what it means.
+// One muted line, collapsed by default; expands to the metric name + one plain
+// sentence each. The view's own `detail` / `what_it_means` text names raw columns
+// (next_follow_up_at, estimate_sent, assigned_to) that mean nothing to a reader
+// of this page, so we render our own plain copy keyed by the metric name below
+// and never show the raw view text.
 interface KpiHealthRow {
   kpi: string
   health: 'OK' | 'PARTIAL' | 'BROKEN'
-  detail: string
-  what_it_means: string
   sort_order: number
+}
+
+const HEALTH_PLAIN: Record<string, string> = {
+  'Overdue follow-up alerts':
+    "Follow-up dates aren't being filled in as leads are worked, so this always shows zero.",
+  'Sales closing rate':
+    "Estimates sent aren't being recorded yet, so there's nothing to measure closings against and it reads 0%.",
+  'Salesperson accountability':
+    "Salesperson assignment is kept as free-typed text rather than a fixed pick, so one rep can show up as two.",
 }
 
 function KpiHealthStrip() {
@@ -203,7 +263,7 @@ function KpiHealthStrip() {
   useEffect(() => {
     supabase
       .from('v_kpi_health')
-      .select('kpi,health,detail,what_it_means,sort_order')
+      .select('kpi,health,sort_order')
       .then(({ data }) => setRows((data as KpiHealthRow[] | null) ?? []))
   }, [])
 
@@ -214,27 +274,26 @@ function KpiHealthStrip() {
   if (broken.length === 0) return null
 
   return (
-    <div className="rounded-lg border border-amber-300/60 dark:border-amber-800/40 bg-amber-50/60 dark:bg-amber-950/10 px-4 py-2.5">
-      <button onClick={() => setOpen(v => !v)} className="w-full flex items-start justify-between gap-3 text-left">
-        <p className="text-xs text-amber-800 dark:text-amber-300">
-          <span className="font-semibold">
-            {broken.length} metric{broken.length === 1 ? '' : 's'} on this page{' '}
-            {broken.length === 1 ? 'is' : 'are'} not trustworthy yet
-          </span>
-          <span className="text-amber-700 dark:text-amber-400/80"> — {broken.map(b => b.kpi).join(', ')}</span>
-        </p>
-        {open
-          ? <ChevronUp className="h-3.5 w-3.5 text-amber-700 dark:text-amber-400 shrink-0 mt-0.5" />
-          : <ChevronDown className="h-3.5 w-3.5 text-amber-700 dark:text-amber-400 shrink-0 mt-0.5" />}
+    <div className="text-xs text-muted-foreground">
+      <button
+        onClick={() => setOpen(v => !v)}
+        className="inline-flex items-center gap-1 hover:text-foreground transition-colors"
+      >
+        <span>
+          {broken.length} metric{broken.length === 1 ? '' : 's'} on this page{' '}
+          {broken.length === 1 ? "isn't" : "aren't"} reliable yet
+        </span>
+        <span className="underline underline-offset-2">{open ? 'hide' : 'see why'}</span>
+        {open ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
       </button>
 
       {open && (
-        <ul className="mt-2 space-y-2 border-t border-amber-200/60 dark:border-amber-800/30 pt-2">
+        <ul className="mt-2 space-y-1.5 border-l-2 border-border pl-3">
           {broken.map(b => (
-            <li key={b.kpi} className="text-xs">
-              <p className="font-semibold text-amber-800 dark:text-amber-300">{b.kpi}</p>
-              <p className="text-amber-700 dark:text-amber-400/90">{b.detail}</p>
-              <p className="text-muted-foreground mt-0.5">{b.what_it_means}</p>
+            <li key={b.kpi}>
+              <span className="font-medium text-foreground">{b.kpi}</span>
+              {' — '}
+              {HEALTH_PLAIN[b.kpi] ?? 'This metric depends on data that is not being captured yet.'}
             </li>
           ))}
         </ul>
@@ -649,7 +708,6 @@ function MarketingPerformanceMonthly() {
 }
 
 export default function KPIPage() {
-  const today  = new Date()
   const router = useRouter()
 
   const [dateFrom,        setDateFrom]        = useState(firstOfMonthStr())
@@ -667,6 +725,14 @@ export default function KPIPage() {
   // current date range too (e.g. an old repeat-client lead whose change order was just won),
   // so the "Additional Job Revenue" breakdown below can always show a real client name.
   const [revLeadNames,  setRevLeadNames]  = useState<Record<string, string>>({})
+  // Lead-level signed value = initial_contract_value + every won change order
+  // (KPI Definitions rule 3: initial alone is never "contract value"). Keyed by
+  // lead id, lifetime — a CO signed in a later month still counts on its lead's row.
+  const [signedByLead, setSignedByLead] = useState<Record<string, number>>({})
+  // Cash actually received in the period, per source — from v_cash_events (refunds
+  // already netted). Used to show a PAID-SOURCE-ONLY "Collected" figure; the
+  // all-source payments/coPayments totals include organic + repeat-client cash.
+  const [cashEvents,   setCashEvents]   = useState<{ source_id: string | null; amount: number; event_date: string }[]>([])
   const [spend,        setSpend]        = useState<SpendRow[]>([])
   const [sources,      setSources]      = useState<LeadSource[]>([])
   // All-time (not date-range-scoped) set of source_ids that have EVER had marketing spend logged.
@@ -676,7 +742,6 @@ export default function KPIPage() {
   const [paidSourceIds, setPaidSourceIds] = useState<Set<string>>(new Set())
   const [trend,        setTrend]        = useState<{ label: string; contracted: number; actual: number; leads: number }[]>([])
   const [loading,      setLoading]      = useState(true)
-  const [ytd,          setYtd]          = useState<YTDData | null>(null)
 
   const [showSpendForm,    setShowSpendForm]    = useState(false)
   const [spendForm,        setSpendForm]        = useState({ source_id: '', amount: '', period_start: todayStr(), period_end: todayStr() })
@@ -691,13 +756,6 @@ export default function KPIPage() {
     if (dateFrom === dateTo) return fmtDate(dateFrom)
     return `${fmtDate(dateFrom)} – ${fmtDate(dateTo)}`
   }, [dateFrom, dateTo])
-
-  const [ytdYear, setYtdYear] = useState<number>(today.getFullYear())
-  const ytdYearOptions = useMemo(() => {
-    const opts: number[] = []
-    for (let y = today.getFullYear(); y >= today.getFullYear() - 4; y--) opts.push(y)
-    return opts
-  }, [])
 
   function setThisWeek() {
     const now = new Date()
@@ -719,7 +777,6 @@ export default function KPIPage() {
   }
 
   useEffect(() => { fetchAll() }, [rangeStart, rangeEnd])
-  useEffect(() => { fetchYtd(ytdYear) }, [ytdYear])
   useEffect(() => {
     supabase.from('marketing_spend').select('source_id').then(({ data }) => {
       setPaidSourceIds(new Set((data || []).map((r: any) => r.source_id).filter(Boolean)))
@@ -731,7 +788,7 @@ export default function KPIPage() {
     const spendStart = dateFrom
     const spendEnd   = dateTo
 
-    const [leadsRes, paymentsRes, coPaymentsRes, spendRes, srcRes, revEventsRes] = await Promise.all([
+    const [leadsRes, paymentsRes, coPaymentsRes, spendRes, srcRes, revEventsRes, cashRes] = await Promise.all([
       supabase.from('leads')
         .select('id,first_name,last_name,lead_name,phone,status,contact_type,lsa_status,initial_contract_value,created_at,source_id,metadata,lead_sources(name)')
         .gte('created_at', rangeStart).lte('created_at', rangeEnd).eq('archived', false),
@@ -747,6 +804,10 @@ export default function KPIPage() {
       // This is what lets a change order won this period on an old repeat-client lead (e.g. JCC
       // Bayone, lead from 2024) show up here instead of being buried under the lead's intake date.
       supabase.from('revenue_events').select('lead_id,source_id,event_type,event_date,amount,record_type,contact_id,is_repeat_business')
+        .gte('event_date', dateFrom).lte('event_date', dateTo),
+      // Cash received in the period, carrying source_id so "Collected" can be
+      // scoped to paid channels (refunds are already netted in v_cash_events).
+      supabase.from('v_cash_events').select('source_id,amount,event_date')
         .gte('event_date', dateFrom).lte('event_date', dateTo),
     ])
 
@@ -790,6 +851,7 @@ export default function KPIPage() {
     setPayments(paymentsRes.data || [])
     setCoPayments(coPaymentsRes.data || [])
     setRevenueEvents((revEventsRes.data as any[]) || [])
+    setCashEvents((cashRes.data as any[]) || [])
     setSpend((spendRes.data as any[]) || [])
     setSources(srcRes.data || [])
     setLoading(false)
@@ -809,64 +871,25 @@ export default function KPIPage() {
     } else {
       setRevLeadNames({})
     }
-  }
 
-  // YTD is its own independent lookup, keyed by ytdYear — NOT tied to the main From/To filter
-  // above, so you can check e.g. 2025's YTD performance while looking at a July 2026 KPI window.
-  async function fetchYtd(year: number) {
-    const isCurrentYear = year === today.getFullYear()
-    const ytdStart    = new Date(year, 0, 1).toISOString()
-    // For the current year, "to date" means right now. For a past year, it means the full year
-    // (Dec 31) — otherwise a past year's YTD would silently include real 2026 data past its own
-    // year boundary.
-    const ytdEnd      = isCurrentYear ? new Date().toISOString() : new Date(year + 1, 0, 1).toISOString()
-    const ytdSpendEnd = isCurrentYear ? todayStr() : `${year}-12-31`
-
-    const [ytdLeadsRes, ytdSpendRes, ytdPayRes, ytdCoPayRes, ytdWonEventsRes, ytdPaidSrcRes] = await Promise.all([
-      supabase.from('leads').select('id,status,contact_type,initial_contract_value')
-        .gte('created_at', ytdStart).lt('created_at', ytdEnd).eq('archived', false),
-      supabase.from('marketing_spend').select('amount_spent')
-        .gte('period_start', `${year}-01-01`).lte('period_start', ytdSpendEnd),
-      supabase.from('payments').select('amount')
-        .gte('paid_at', ytdStart).lt('paid_at', ytdEnd).gt('amount', 0),
-      // YTD revenue = cash actually collected, so it needs change_order_payments too — previously
-      // this only queried payments, silently excluding every dollar ever collected on a change order.
-      supabase.from('change_order_payments').select('amount')
-        .gte('paid_at', ytdStart).lt('paid_at', ytdEnd).gt('amount', 0),
-      // "Jobs Won" for CPA purposes needs to count by when the job actually closed, not by when the
-      // originating lead first came in -- a job that came in 2024 and closed in 2026 (e.g. JCC
-      // Bayone) was previously invisible to 2026's YTD Won/CPA entirely, because the old query only
-      // looked at leads.created_at. revenue_events.event_date already resolves this the right way
-      // (COALESCE(closed_at, created_at)) for the main Total Revenue figures above -- this reuses
-      // the same source so YTD stays consistent with it. Repeat-client wins are excluded here since
-      // they had no marketing spend behind them and would artificially deflate CPA.
-      supabase.from('revenue_events').select('event_type,is_repeat_business,source_id')
-        .eq('event_type', 'initial_contract').eq('is_repeat_business', false)
-        .gte('event_date', `${year}-01-01`).lte('event_date', ytdSpendEnd),
-      // Fetched fresh here (not read from the page's paidSourceIds state) so this stays correct
-      // regardless of load-order timing. Same rule as everywhere else on this page: a job only
-      // counts toward Cost Per Acquisition if it came from a source with real marketing spend
-      // behind it -- an organic/"Manual" job costs nothing to acquire and would otherwise dilute CPA.
-      supabase.from('marketing_spend').select('source_id'),
-    ])
-
-    const ytdLeads    = (ytdLeadsRes.data || []) as any[]
-    const ytdSpendAmt = (ytdSpendRes.data || []).reduce((s: number, r: any) => s + Number(r.amount_spent || 0), 0)
-    const ytdRevenue  = (ytdPayRes.data  || []).reduce((s: number, r: any) => s + Number(r.amount || 0), 0)
-                      + (ytdCoPayRes.data || []).reduce((s: number, r: any) => s + Number(r.amount || 0), 0)
-    const ytdIP       = ytdLeads.filter((l: any) => l.contact_type === 'in_person').length
-    const ytdPaidIds  = new Set((ytdPaidSrcRes.data || []).map((r: any) => r.source_id).filter(Boolean))
-    const ytdWon      = (ytdWonEventsRes.data || []).filter((e: any) => ytdPaidIds.has(e.source_id)).length
-
-    setYtd({
-      totalLeads: ytdLeads.length, totalInPerson: ytdIP, totalWon: ytdWon,
-      totalSpend: ytdSpendAmt, totalRevenue: ytdRevenue,
-      apptConvRate: ytdLeads.length > 0 ? ytdIP / ytdLeads.length : 0,
-      cpa:         ytdWon > 0 && ytdSpendAmt > 0 ? ytdSpendAmt / ytdWon : 0,
-      apptAcqCost: ytdIP > 0 && ytdSpendAmt > 0 ? ytdSpendAmt / ytdIP : 0,
-      roi:         ytdSpendAmt > 0 && ytdRevenue > 0 ? ytdRevenue / ytdSpendAmt : 0,
-      year,
-    })
+    // Rule 3 (KPI Definitions): the lead-level Contract Value column must be
+    // initial + change orders, not initial alone. Sum non-cancellation
+    // revenue_events per shown lead, lifetime (not date-scoped).
+    const shownLeadIds = ((leadsRes.data as any[]) || []).map(l => l.id)
+    if (shownLeadIds.length > 0) {
+      const { data: reRows } = await supabase
+        .from('revenue_events')
+        .select('lead_id,amount,event_type')
+        .in('lead_id', shownLeadIds)
+      const signed: Record<string, number> = {}
+      ;(reRows || []).forEach((e: any) => {
+        if (e.event_type === 'cancellation') return
+        signed[e.lead_id] = (signed[e.lead_id] || 0) + Number(e.amount || 0)
+      })
+      setSignedByLead(signed)
+    } else {
+      setSignedByLead({})
+    }
   }
 
   const filtered = useMemo(() => leads.filter(l => !filterSrc || l.source_id === filterSrc), [leads, filterSrc])
@@ -919,13 +942,24 @@ export default function KPIPage() {
     const coVolume    = additionalJobRevenue
 
     const actual        = payments.reduce((s, p) => s + Number(p.amount || 0), 0) + coPayments.reduce((s, p) => s + Number(p.amount || 0), 0)
+    // Paid-channel cash only: this page is Marketing Performance, so organic /
+    // referral / repeat-client cash (tracked on the Organic & Repeat page) must
+    // not appear. v_cash_events carries source_id and already nets refunds.
+    const paidCollected = cashEvents
+      .filter(c => paidSourceIds.has(c.source_id || '') && (!filterSrc || c.source_id === filterSrc))
+      .reduce((s, c) => s + Number(c.amount || 0), 0)
     const lsaCharged    = filtered.filter(l => l.lsa_status === 'charged' || l.lsa_status === 'submitted').length
     const lsaCredited   = filtered.filter(l => l.lsa_status === 'credited').length
     const lsaNotCharged = filtered.filter(l => l.lsa_status === 'not_charged' || !l.lsa_status).length
     const lsaInReview   = filtered.filter(l => l.lsa_status === 'in_review').length
     const totalSpend    = spend.filter(s => !filterSrc || s.source_id === filterSrc).reduce((s, r) => s + Number(r.amount_spent || 0), 0)
-    const apptAcqCost   = inPerson > 0 && totalSpend > 0 ? totalSpend / inPerson : 0
-    const projAcqCost   = wonCount > 0 && totalSpend > 0 ? totalSpend / wonCount : 0
+    // KPI Definitions rule 1: paid spend only ever divides a paid-sourced count.
+    // The denominators here are the appts / clients from channels that actually had
+    // ad spend behind them — never the all-source totals above.
+    const paidInPerson  = filtered.filter(l => l.contact_type === 'in_person' && paidSourceIds.has(l.source_id || '')).length
+    const paidWonCount   = filtered.filter(l => WON_STAGES.includes(l.status) && paidSourceIds.has(l.source_id || '')).length
+    const apptAcqCost   = paidInPerson > 0 && totalSpend > 0 ? totalSpend / paidInPerson : 0
+    const projAcqCost   = paidWonCount > 0 && totalSpend > 0 ? totalSpend / paidWonCount : 0
     const bySrc: Record<string, { id: string; name: string; total: number; inPerson: number; phoneQ: number; won: number; contracted: number; lsaCharged: number }> = {}
     filtered.forEach(l => {
       const key  = l.source_id || 'unknown'
@@ -948,8 +982,8 @@ export default function KPIPage() {
       }
       bySrc[key].contracted += Number(e.amount || 0)
     })
-    return { total, inPerson, phoneQ, totalAppts, wonCount, contracted, coVolume, initialJobRevenue, additionalJobRevenue, revenueDetail, totalRev, actual, lsaCharged, lsaCredited, lsaNotCharged, lsaInReview, totalSpend, apptAcqCost, projAcqCost, bySrc }
-  }, [filtered, payments, coPayments, spend, revenueEvents, sources, filterSrc, revLeadNames, paidSourceIds])
+    return { total, inPerson, phoneQ, totalAppts, wonCount, contracted, coVolume, initialJobRevenue, additionalJobRevenue, revenueDetail, totalRev, actual, paidCollected, lsaCharged, lsaCredited, lsaNotCharged, lsaInReview, totalSpend, apptAcqCost, projAcqCost, bySrc }
+  }, [filtered, payments, coPayments, spend, revenueEvents, cashEvents, sources, filterSrc, revLeadNames, paidSourceIds])
 
   const spendBySrc = useMemo(() => {
     const map: Record<string, any> = {}
@@ -973,15 +1007,18 @@ export default function KPIPage() {
   const paidTotals = paidSrcList.reduce((acc, s) => ({
     total: acc.total + s.total, lsaCharged: acc.lsaCharged + s.lsaCharged,
     inPerson: acc.inPerson + s.inPerson, phoneQ: acc.phoneQ + s.phoneQ,
-    won: acc.won + s.won, contracted: acc.contracted + s.contracted,
-  }), { total: 0, lsaCharged: 0, inPerson: 0, phoneQ: 0, won: 0, contracted: 0 })
+    won: acc.won + s.won,
+  }), { total: 0, lsaCharged: 0, inPerson: 0, phoneQ: 0, won: 0 })
 
   const insightsData: InsightData = useMemo(() => ({
     totalLeads: paidTotals.total, totalAppts: paidTotals.inPerson, totalPhoneQ: paidTotals.phoneQ,
-    totalWon: paidTotals.won, totalContracted: paidTotals.contracted,
+    // Revenue = initial contracts + change orders (paid, non-repeat). Change orders
+    // are always revenue — never feed the insights engine the initial-only figure.
+    totalWon: paidTotals.won, totalContracted: kpi.totalRev,
     totalSpend: kpi.totalSpend, period: periodLabel, viewMode: 'weekly',
     sources: paidSrcList.map(src => {
       const srcSpendRow = spendBySrc.find(s => s.source_id === src.id)
+      // src.contracted from kpi.bySrc already sums initial + change-order events.
       return { name: src.name, leads: src.total, inPerson: src.inPerson, won: src.won, contracted: src.contracted, spend: srcSpendRow?.amount || 0 }
     }),
     trend: trend.map(t => ({ label: t.label, contracted: t.contracted, leads: t.leads })),
@@ -1235,7 +1272,7 @@ export default function KPIPage() {
               </ExpandMetric>
             </div>
             <div className="rounded-lg border border-border bg-card overflow-hidden">
-              <ExpandMetric label="Total Revenue" value={fmt$(kpi.totalRev)} color="text-emerald-600">
+              <ExpandMetric label="Total revenue" value={fmt$(kpi.totalRev)} color="text-emerald-600">
                 <div className="space-y-3">
                   <div className="flex gap-5 text-sm">
                     <span className="text-muted-foreground">New Job <span className="font-bold text-foreground">{fmt$(kpi.initialJobRevenue)}</span></span>
@@ -1259,16 +1296,19 @@ export default function KPIPage() {
                       ))}
                     </div>
                   )}
-                  <div className="flex justify-between text-sm border-t border-border pt-2"><span className="text-muted-foreground">Collected (actual)</span><span className="font-bold text-emerald-600">{fmt$(kpi.actual)}</span></div>
+                  <div className="flex justify-between text-sm border-t border-border pt-2"><span className="text-muted-foreground">Collected</span><span className="font-bold text-emerald-600">{fmt$(kpi.paidCollected)}</span></div>
+                  <p className="text-[11px] text-muted-foreground leading-snug">
+                    Signed and collected measure different things — jobs are paid over the months after signing, so these will not match.
+                  </p>
                 </div>
               </ExpandMetric>
             </div>
             <MetricCard label="Appt Acquisition Cost"
               value={kpi.apptAcqCost > 0 ? fmt$(kpi.apptAcqCost) : '—'}
-              sub={kpi.totalSpend > 0 ? 'spend ÷ in-person appts' : 'log spend to calculate'} />
+              sub={kpi.totalSpend > 0 ? 'spend ÷ paid-channel appts' : 'log spend to calculate'} />
             <MetricCard label="Marketing Proj. Acq. Cost"
               value={kpi.projAcqCost > 0 ? fmt$(kpi.projAcqCost) : '—'}
-              sub={kpi.totalSpend > 0 ? 'spend ÷ jobs closed' : 'log spend to calculate'} />
+              sub={kpi.totalSpend > 0 ? 'spend ÷ paid-channel clients won' : 'log spend to calculate'} />
             <MetricCard label="Sales Closing Ratio"
               value={closeRatePct(kpi.wonCount, kpi.totalAppts)}
               sub={`${kpi.wonCount} won / ${kpi.totalAppts} appts`}
@@ -1278,8 +1318,10 @@ export default function KPIPage() {
           {/* 2b. CANCELLATIONS — revenue signed and then given back, by source, rep and stage-at-death */}
           <CancellationPanel from={dateFrom} to={dateTo} />
 
-          {/* 3. YTD BLOCK */}
-          <YTDBlock ytd={ytd} year={ytdYear} yearOptions={ytdYearOptions} onYearChange={setYtdYear} isCurrentYear={ytdYear === today.getFullYear()} />
+          {/* 3. YTD BLOCK — paid channels only, straight from v_ytd_kpi_by_source
+              (is_paid_channel rows summed). Ad spend is only ever divided into the
+              leads / appts / jobs / cash the ads produced. */}
+          <YtdPaidBlock />
 
           {/* 4. MARKETING PERFORMANCE — one row per source per month, straight from
               monthly_source_kpi. That view already excludes cancelled jobs from
@@ -1356,6 +1398,11 @@ export default function KPIPage() {
                       const stageLabel  = lead.status.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase())
                       const date        = new Date(lead.created_at).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' })
                       const jobClosed   = isWon ? (lead.metadata?.job_type || '—') : '—'
+                      // Rule 3: signed value = initial + change orders. Fall back to
+                      // initial_contract_value only when the lead has no revenue_events yet.
+                      const initialVal  = Number(lead.initial_contract_value) || 0
+                      const signedVal   = signedByLead[lead.id] ?? initialVal
+                      const coDelta     = (signedByLead[lead.id] ?? initialVal) - initialVal
                       return (
                         <tr key={lead.id} className={`border-b border-border/40 hover:bg-muted/20 ${i % 2 === 0 ? '' : 'bg-muted/10'}`}>
                           <td className="py-2.5 pr-3 font-semibold whitespace-nowrap">{name}</td>
@@ -1366,7 +1413,14 @@ export default function KPIPage() {
                           <td className="py-2.5 pr-3 text-muted-foreground text-xs">{lsaStatus}</td>
                           <td className={`py-2.5 pr-3 text-xs ${stageColor}`}>{stageLabel}</td>
                           <td className="py-2.5 pr-3 text-xs">{isWon ? <span className="px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 font-medium">{jobClosed}</span> : <span className="text-muted-foreground">—</span>}</td>
-                          <td className="py-2.5 pr-3 font-semibold text-emerald-600">{lead.initial_contract_value > 0 ? fmt$(lead.initial_contract_value) : '—'}</td>
+                          <td className="py-2.5 pr-3 font-semibold text-emerald-600 whitespace-nowrap">
+                            {signedVal > 0 ? fmt$(signedVal) : '—'}
+                            {coDelta > 0.005 && (
+                              <span className="block text-[11px] font-normal text-muted-foreground">
+                                incl. {fmt$(coDelta)} change orders
+                              </span>
+                            )}
+                          </td>
                           <td className="py-2.5 pr-3 text-muted-foreground text-xs">{date}</td>
                         </tr>
                       )
