@@ -186,10 +186,10 @@ export default function DashboardPage() {
 
       {/* KPI Cards */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <KpiCard title="Total Leads" value={stats.loaded ? String(stats.totalLeads) : "..."} change="+12%" trend="up" icon={Users} iconColor="text-blue-600" iconBg="bg-blue-50" delay={0} />
-        <KpiCard title="Appointments Set" value={stats.loaded ? String(stats.appointments) : "..."} change="+4%" trend="up" icon={CalendarCheck} iconColor="text-violet-600" iconBg="bg-violet-50" delay={75} />
-        <KpiCard title="Close Rate" value={stats.loaded ? `${stats.closeRate}%` : "..."} change="-2%" trend="down" icon={TrendingUp} iconColor="text-amber-600" iconBg="bg-amber-50" delay={150} />
-        <KpiCard title={`Actual Revenue · ${MONTH_NAMES[selectedMonth].slice(0, 3)}`} value={stats.loaded ? `$${stats.actualRevenue.toLocaleString()}` : "..."} change="+18%" trend="up" icon={DollarSign} iconColor="text-emerald-600" iconBg="bg-emerald-50" delay={225} />
+        <KpiCard title="Total Leads" value={stats.loaded ? String(stats.totalLeads) : "..."} icon={Users} iconColor="text-blue-600" iconBg="bg-blue-50" delay={0} />
+        <KpiCard title="Appointments Set" value={stats.loaded ? String(stats.appointments) : "..."} icon={CalendarCheck} iconColor="text-violet-600" iconBg="bg-violet-50" delay={75} />
+        <KpiCard title="Close Rate" value={stats.loaded ? `${stats.closeRate}%` : "..."} icon={TrendingUp} iconColor="text-amber-600" iconBg="bg-amber-50" delay={150} />
+        <KpiCard title={`Actual Revenue · ${MONTH_NAMES[selectedMonth].slice(0, 3)}`} value={stats.loaded ? `$${stats.actualRevenue.toLocaleString()}` : "..."} icon={DollarSign} iconColor="text-emerald-600" iconBg="bg-emerald-50" delay={225} />
       </div>
 
       {/* Contracted Revenue */}

@@ -6,16 +6,12 @@ import { useState, useEffect } from "react";
 import {
   LayoutDashboard,
   Users,
-  CalendarDays,
   CheckSquare,
-  Activity,
   Settings,
   ChevronRight,
   HardHat,
   BarChart2,
   LogOut,
-  Archive,
-  FileText,
   List,
   Command,
   PanelLeftClose,
@@ -30,13 +26,9 @@ const navItems = [
   { href: "/dashboard",      label: "Dashboard",      icon: LayoutDashboard },
   { href: "/leads",          label: "Leads Pipeline", icon: Users,    exact: true },
   { href: "/contacts",       label: "Contacts",       icon: List },
-  { href: "/leads/archived", label: "Archived",       icon: Archive },
   { href: "/production",     label: "Production",     icon: HardHat },
-  { href: "/estimates",      label: "Estimates",      icon: FileText },
   { href: "/kpi",            label: "KPI",            icon: BarChart2 },
-  { href: "/calendar",       label: "Calendar",       icon: CalendarDays },
   { href: "/tasks",          label: "Tasks",          icon: CheckSquare },
-  { href: "/activities",     label: "Activities",     icon: Activity },
 ];
 
 const bottomItems = [
