@@ -8,6 +8,7 @@ import KpiCard from "@/components/dashboard/KpiCard";
 import RevenueChart from "@/components/dashboard/RevenueChart";
 import PipelineSummary from "@/components/dashboard/PipelineSummary";
 import RecentLeads from "@/components/dashboard/RecentLeads";
+import NeedsAttentionStrip from "@/components/dashboard/NeedsAttentionStrip";
 
 const OPEN_STAGES = ["new", "contacted", "appointment_set", "estimate_sent"];
 const WON_STAGES  = ["closed_won", "won", "completed", "completed_with_balance"];
@@ -152,6 +153,8 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-6 max-w-7xl">
+      <NeedsAttentionStrip />
+
       {/* Month selector */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
