@@ -39,6 +39,7 @@ const COMPLETED_STAGES = ["Completed", "Completed with Balance"];
 const FILTER_LABELS: Record<string, string> = {
   active: "Active jobs", pending: "Pending jobs", no_stage: "No-stage jobs",
   completed: "Completed jobs", cancelled: "Cancelled jobs", balance: "Jobs with a balance",
+  callbacks: "Jobs with an open callback",
 };
 
 const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
@@ -90,6 +91,56 @@ interface JobRow {
   leadStatus: string;
   rawLead?: any;
 }
+
+// ── Work vs money (v_job_money, job_callbacks, job_adjustments) ──────────────
+// Money status is CALCULATED by the database, never picked from the stage dropdown.
+interface MoneyData {
+  status: string;          // paid_in_full | balance_due | held_for_callback | deposit_pending | not_yet_due | overpaid
+  balance: number;         // owed after discounts / credits / refunds / write-offs
+  adjustments: number;     // total adjustments on the job
+  held: number;            // amount the customer is holding until a callback is done
+  openCallbacks: number;
+}
+
+interface CallbackRow {
+  id: string;
+  lead_id: string;
+  description: string;
+  holdback_amount: number;
+  status: string;
+  opened_at: string;
+  due_at: string | null;
+}
+
+interface AdjustmentRow {
+  id: string;
+  lead_id: string;
+  adj_type: string;
+  amount: number;
+  reason: string;
+  adjusted_at: string;
+}
+
+const MONEY_LABELS: Record<string, { label: string; classes: string }> = {
+  paid_in_full:      { label: "Paid in full",      classes: "bg-green-100 text-green-700" },
+  balance_due:       { label: "Balance due",       classes: "bg-red-100 text-red-700" },
+  held_for_callback: { label: "Held for callback", classes: "bg-amber-100 text-amber-700" },
+  deposit_pending:   { label: "Deposit pending",   classes: "bg-slate-100 text-slate-600" },
+  not_yet_due:       { label: "Not yet due",       classes: "bg-slate-100 text-slate-600" },
+  overpaid:          { label: "Overpaid",          classes: "bg-purple-100 text-purple-700" },
+};
+
+const ADJ_LABELS: Record<string, string> = {
+  discount:  "Discount",
+  credit:    "Credit / goodwill",
+  refund:    "Refund (already returned)",
+  write_off: "Write-off",
+};
+
+const todayISO = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
 
 // ── Refund modal state ────────────────────────────────────────────────────────
 interface RefundDraft {
@@ -151,6 +202,16 @@ export default function ProductionPage() {
   // because cancelling has to reverse the revenue and book any deposit refund in
   // the same transaction (cancel_job RPC).
   const [cancelTarget, setCancelTarget] = useState<JobRow | null>(null);
+
+  // ── Money status, callbacks, adjustments (per lead) ───────────────────────
+  const [moneyByLead,       setMoneyByLead]       = useState<Record<string, MoneyData>>({});
+  const [callbacksByLead,   setCallbacksByLead]   = useState<Record<string, CallbackRow[]>>({});
+  const [adjustmentsByLead, setAdjustmentsByLead] = useState<Record<string, AdjustmentRow[]>>({});
+  const [callbackTarget,    setCallbackTarget]    = useState<JobRow | null>(null);
+  const [callbackDraft,     setCallbackDraft]     = useState({ description: "", holdback: "", due: "" });
+  const [adjustTarget,      setAdjustTarget]      = useState<JobRow | null>(null);
+  const [adjustDraft,       setAdjustDraft]       = useState({ type: "discount", amount: "", reason: "", date: todayISO() });
+  const [savingWorkMoney,   setSavingWorkMoney]   = useState(false);
 
   // ── Fetch ─────────────────────────────────────────────────────────────────
   async function fetchJobs() {
@@ -218,6 +279,44 @@ export default function ProductionPage() {
       });
     }
     setArByLead(arMap);
+
+    // Money status, open callbacks and adjustments — calculated in the database.
+    if (leadIds.length > 0) {
+      const [{ data: money }, { data: cbs }, { data: adjs }] = await Promise.all([
+        supabase
+          .from("v_job_money")
+          .select("lead_id, money_status, balance, adjustments, held_amount, open_callbacks")
+          .in("lead_id", leadIds),
+        supabase
+          .from("job_callbacks")
+          .select("id, lead_id, description, holdback_amount, status, opened_at, due_at")
+          .in("status", ["open", "scheduled"])
+          .in("lead_id", leadIds)
+          .order("opened_at", { ascending: true }),
+        supabase
+          .from("job_adjustments")
+          .select("id, lead_id, adj_type, amount, reason, adjusted_at")
+          .in("lead_id", leadIds)
+          .order("adjusted_at", { ascending: true }),
+      ]);
+      const mMap: Record<string, MoneyData> = {};
+      (money || []).forEach((m: any) => {
+        mMap[m.lead_id] = {
+          status:        m.money_status,
+          balance:       Number(m.balance)        || 0,
+          adjustments:   Number(m.adjustments)    || 0,
+          held:          Number(m.held_amount)    || 0,
+          openCallbacks: Number(m.open_callbacks) || 0,
+        };
+      });
+      const cbMap: Record<string, CallbackRow[]> = {};
+      (cbs || []).forEach((c: any) => { (cbMap[c.lead_id] ||= []).push({ ...c, holdback_amount: Number(c.holdback_amount) || 0 }); });
+      const adjMap: Record<string, AdjustmentRow[]> = {};
+      (adjs || []).forEach((a: any) => { (adjMap[a.lead_id] ||= []).push({ ...a, amount: Number(a.amount) || 0 }); });
+      setMoneyByLead(mMap);
+      setCallbacksByLead(cbMap);
+      setAdjustmentsByLead(adjMap);
+    }
 
     // Global cancellation leakage KPI — every cancelled unit, and the signed-dollar
     // total it's measured against. Not scoped to leadIds or to the active filter.
@@ -463,6 +562,56 @@ export default function ProductionPage() {
     fetchJobs();
   };
 
+  // ── Callbacks: return visits / punch list after completion ────────────────
+  const handleAddCallback = async () => {
+    if (!callbackTarget || !callbackDraft.description.trim()) return;
+    setSavingWorkMoney(true);
+    const { error } = await supabase.from("job_callbacks").insert({
+      lead_id:         callbackTarget.leadId,
+      description:     callbackDraft.description.trim(),
+      holdback_amount: Math.max(0, Number(callbackDraft.holdback || 0)),
+      due_at:          callbackDraft.due || null,
+      opened_at:       todayISO(),
+    });
+    setSavingWorkMoney(false);
+    if (error) { alert("Could not save the callback: " + error.message); return; }
+    setCallbackDraft({ description: "", holdback: "", due: "" });
+    await fetchJobs();
+  };
+
+  const handleCallbackDone = async (cb: CallbackRow) => {
+    if (!confirm(`Mark this callback as done?\n\n${cb.description}`)) return;
+    setSavingWorkMoney(true);
+    const { error } = await supabase
+      .from("job_callbacks")
+      .update({ status: "done", completed_at: todayISO(), updated_at: new Date().toISOString() })
+      .eq("id", cb.id);
+    setSavingWorkMoney(false);
+    if (error) { alert("Could not update the callback: " + error.message); return; }
+    await fetchJobs();
+  };
+
+  // ── Adjustments: lower what the customer owes. They never change cash collected. ──
+  const handleAddAdjustment = async () => {
+    const amount = Number(adjustDraft.amount || 0);
+    if (!adjustTarget || amount <= 0 || !adjustDraft.reason.trim()) return;
+    setSavingWorkMoney(true);
+    const { data: auth } = await supabase.auth.getUser();
+    const { error } = await supabase.from("job_adjustments").insert({
+      lead_id:     adjustTarget.leadId,
+      adj_type:    adjustDraft.type,
+      amount,
+      reason:      adjustDraft.reason.trim(),
+      adjusted_at: adjustDraft.date || todayISO(),
+      created_by:  auth?.user?.email ?? null,
+    });
+    setSavingWorkMoney(false);
+    if (error) { alert("Could not save the adjustment: " + error.message); return; }
+    setAdjustDraft({ type: "discount", amount: "", reason: "", date: todayISO() });
+    setAdjustTarget(null);
+    await fetchJobs();
+  };
+
   const handleEditClient = async (row: JobRow) => {
     const { data } = await supabase
       .from("leads")
@@ -505,9 +654,20 @@ export default function ProductionPage() {
   // A client group is shown when ANY of its rows (lead or change order) matches the
   // active stage filter and source filter. The "balance" case needs the group's
   // v_ar_outstanding total, so it's decided after the group totals are computed.
+  // Balance owed on a lead AFTER discounts / credits / refunds / write-offs (v_job_money).
+  // Falls back to v_ar_outstanding for leads the money view doesn't cover (cancelled leads).
+  const leadBalance = (leadId: string): number => {
+    const m = moneyByLead[leadId];
+    if (m) return Math.max(m.balance, 0);
+    return arByLead[leadId]?.outstanding ?? 0;
+  };
+  const leadHasCallback = (leadId: string): boolean => (callbacksByLead[leadId]?.length ?? 0) > 0;
+  const callbackLeadCount = Object.keys(callbacksByLead).filter(id => leadHasCallback(id)).length;
+
   const matchesSourceAndStage = (rows: JobRow[]): boolean => {
     if (filterSourceId && !rows.some(r => r.sourceId === filterSourceId)) return false;
     switch (filter) {
+      case "callbacks": return rows.some(r => leadHasCallback(r.leadId));
       case "pending":   return rows.some(r => isPending(r.production_stage));
       case "active":    return rows.some(r => isActive(r.production_stage));
       case "completed": return rows.some(r => !!r.production_stage && r.production_stage.startsWith("Completed"));
@@ -555,16 +715,23 @@ export default function ProductionPage() {
       const leadIds = Array.from(new Set(rows.map(r => r.leadId)));
       const perLead = leadIds.map(id => {
         const ar = arByLead[id];
-        if (ar) return { contract: ar.sold, collected: ar.collected, balance: ar.outstanding, refunded: ar.refunded };
+        const m  = moneyByLead[id];
+        const extra = { balance: leadBalance(id), adjustments: m?.adjustments ?? 0, held: m?.held ?? 0 };
+        if (ar) return { contract: ar.sold, collected: ar.collected, refunded: ar.refunded, ...extra };
         const lr = rows.filter(r => r.leadId === id);
         const c  = lr.reduce((s, r) => s + r.contract, 0);
         const cl = lr.reduce((s, r) => s + r.totalCollected, 0);
-        return { contract: c, collected: cl, balance: 0, refunded: lr.reduce((s, r) => s + r.totalRefunded, 0) };
+        return { contract: c, collected: cl, refunded: lr.reduce((s, r) => s + r.totalRefunded, 0), ...extra };
       });
       const contract   = sum(perLead.map(p => p.contract));
       const collected  = sum(perLead.map(p => p.collected));
       const refunded   = sum(perLead.map(p => p.refunded));
       const balance    = sum(perLead.map(p => p.balance));
+      const adjustments = sum(perLead.map(p => p.adjustments));
+      const held        = sum(perLead.map(p => p.held));
+      const callbacksN  = leadIds.reduce((n, id) => n + (callbacksByLead[id]?.length ?? 0), 0);
+      // One lead → its money status; several leads → no single status.
+      const moneyStatus = leadIds.length === 1 ? (moneyByLead[leadIds[0]]?.status ?? null) : null;
 
       const activeN    = rows.filter(r => isActive(r.production_stage)).length;
       const pendingN   = rows.filter(r => isPending(r.production_stage)).length;
@@ -581,7 +748,7 @@ export default function ProductionPage() {
         clientName: sortedRows[0].clientName, address: sortedRows[0].address,
         multipleAddresses: distinctAddresses > 1,
         sourceName: sortedRows[0].sourceName, salesperson: sortedRows[0].salesperson,
-        contract, collected, refunded, balance,
+        contract, collected, refunded, balance, adjustments, held, callbacksN, moneyStatus,
         activeN, pendingN, completedN, cancelledN, latestStageDate,
       };
     })
@@ -596,8 +763,8 @@ export default function ProductionPage() {
   // Summary cards are computed from exactly what the table shows, so they can never
   // disagree with the visible rows the way the all-jobs card block did.
   const summary = clientGroups.reduce(
-    (a, g) => ({ contract: a.contract + g.contract, collected: a.collected + g.collected, balance: a.balance + g.balance }),
-    { contract: 0, collected: 0, balance: 0 },
+    (a, g) => ({ contract: a.contract + g.contract, collected: a.collected + g.collected, balance: a.balance + g.balance, held: a.held + g.held, adjustments: a.adjustments + g.adjustments }),
+    { contract: 0, collected: 0, balance: 0, held: 0, adjustments: 0 },
   );
   const scopeCaption = filter === "all" ? "All jobs" : (FILTER_LABELS[filter] ?? "Filtered jobs");
 
@@ -611,7 +778,8 @@ export default function ProductionPage() {
       case "completed": return !!j.production_stage && j.production_stage.startsWith("Completed");
       case "cancelled": return isCancelledStage(j.production_stage);
       case "no_stage":  return !j.production_stage;
-      case "balance":   return (arByLead[j.leadId]?.outstanding ?? 0) > 0.005;
+      case "balance":   return leadBalance(j.leadId) > 0.005;
+      case "callbacks": return j.type === "lead" && leadHasCallback(j.leadId);
       default:          return true; // "all"
     }
   };
@@ -652,7 +820,8 @@ export default function ProductionPage() {
   const renderJobRow = (
     job: JobRow,
     nested: boolean = false,
-    totals?: { contract: number; collected: number; balance: number; refunded: number },
+    totals?: { contract: number; collected: number; balance: number; refunded: number;
+               adjustments?: number; held?: number; moneyStatus?: string | null },
   ) => {
     const contract          = totals ? totals.contract  : job.contract;
     const collected         = totals ? totals.collected : job.totalCollected;
@@ -684,6 +853,12 @@ export default function ProductionPage() {
             )}
             {isCancelled && (
               <span className="text-xs px-1.5 py-0.5 rounded bg-red-100 text-red-700 font-medium shrink-0">Cancelled</span>
+            )}
+            {job.type === "lead" && leadHasCallback(job.leadId) && (
+              <span className="text-xs px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 font-medium shrink-0"
+                title={(callbacksByLead[job.leadId] || []).map(c => c.description).join("\n")}>
+                Callback
+              </span>
             )}
             <div>
               <button onClick={() => handleEditClient(job)}
@@ -731,9 +906,24 @@ export default function ProductionPage() {
           {isCancelled ? (
             <span className="text-muted-foreground">—</span>
           ) : (
-            <span className={`font-bold ${balance > 0 ? "text-red-500" : "text-emerald-600"}`}>
-              ${balance.toLocaleString()}
-            </span>
+            <>
+              <span className={`font-bold ${balance > 0.005 ? "text-red-500" : "text-emerald-600"}`}>
+                ${balance.toLocaleString()}
+              </span>
+              {totals?.moneyStatus && MONEY_LABELS[totals.moneyStatus] && (
+                <div className="mt-1">
+                  <span className={`text-[11px] px-1.5 py-0.5 rounded-full font-medium ${MONEY_LABELS[totals.moneyStatus].classes}`}>
+                    {MONEY_LABELS[totals.moneyStatus].label}
+                  </span>
+                </div>
+              )}
+              {(totals?.adjustments ?? 0) > 0.005 && (
+                <div className="text-xs text-muted-foreground">−${(totals!.adjustments!).toLocaleString()} adjusted</div>
+              )}
+              {(totals?.held ?? 0) > 0.005 && (
+                <div className="text-xs text-amber-600">${(totals!.held!).toLocaleString()} held for callback</div>
+              )}
+            </>
           )}
         </td>
 
@@ -763,7 +953,10 @@ export default function ProductionPage() {
             </optgroup>
             <optgroup label="Closed">
               <option value="Completed">Completed</option>
-              <option value="Completed with Balance">Completed with Balance</option>
+              {/* Retired: money status is now calculated. Still shown for jobs that carry the old label. */}
+              {job.production_stage === "Completed with Balance" && (
+                <option value="Completed with Balance">Completed with Balance (old)</option>
+              )}
               <option value="Cancelled Before Start">Cancelled Before Start</option>
               <option value="Cancelled Mid-Job">Cancelled Mid-Job</option>
             </optgroup>
@@ -888,6 +1081,20 @@ export default function ProductionPage() {
                 Delete
               </button>
             )}
+            {job.type === "lead" && !isCancelled && (
+              <button
+                onClick={() => { setCallbackTarget(job); setCallbackDraft({ description: "", holdback: "", due: "" }); }}
+                className="text-xs px-2 py-1 rounded border border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100 transition-colors whitespace-nowrap">
+                Callback{leadHasCallback(job.leadId) ? ` (${callbacksByLead[job.leadId].length})` : ""}
+              </button>
+            )}
+            {isManager && job.type === "lead" && !isCancelled && (
+              <button
+                onClick={() => { setAdjustTarget(job); setAdjustDraft({ type: "discount", amount: "", reason: "", date: todayISO() }); }}
+                className="text-xs px-2 py-1 rounded border border-border hover:bg-muted transition-colors text-muted-foreground whitespace-nowrap">
+                Adjust $
+              </button>
+            )}
             {isCancelled && job.totalCollected > 0 && (
               <button
                 onClick={() => { setRefundDraft({ leadId: job.leadId, clientName: job.clientName, collected: job.totalCollected }); setRefundAmount(""); }}
@@ -909,6 +1116,7 @@ export default function ProductionPage() {
     if (group.completedN) statusChips.push({ label: `${group.completedN} Completed`, classes: "bg-green-100 text-green-700" });
     if (group.pendingN)   statusChips.push({ label: `${group.pendingN} Pending`,   classes: "bg-slate-100 text-slate-600" });
     if (group.cancelledN) statusChips.push({ label: `${group.cancelledN} Cancelled`, classes: "bg-red-100 text-red-700" });
+    if (group.callbacksN) statusChips.push({ label: `${group.callbacksN} Callback`, classes: "bg-amber-100 text-amber-700" });
 
     return (
       <>
@@ -937,6 +1145,15 @@ export default function ProductionPage() {
             {group.balance > 0.005
               ? <span className="font-bold text-red-500">${group.balance.toLocaleString()}</span>
               : <span className="text-muted-foreground">—</span>}
+            {group.moneyStatus && MONEY_LABELS[group.moneyStatus] && (
+              <div className="mt-1">
+                <span className={`text-[11px] px-1.5 py-0.5 rounded-full font-medium ${MONEY_LABELS[group.moneyStatus].classes}`}>
+                  {MONEY_LABELS[group.moneyStatus].label}
+                </span>
+              </div>
+            )}
+            {group.adjustments > 0.005 && <div className="text-xs text-muted-foreground">−${group.adjustments.toLocaleString()} adjusted</div>}
+            {group.held > 0.005 && <div className="text-xs text-amber-600">${group.held.toLocaleString()} held for callback</div>}
           </td>
           <td className="px-4 py-3">
             <div className="flex items-center gap-1 flex-wrap">
@@ -1020,7 +1237,10 @@ export default function ProductionPage() {
               <p className={`text-2xl font-bold mt-1 ${summary.balance > 0.005 ? "text-red-500" : "text-emerald-600"}`}>
                 ${summary.balance.toLocaleString()}
               </p>
-              <p className="text-xs text-muted-foreground mt-1">{scopeCaption} · from v_ar_outstanding</p>
+              <p className="text-xs text-muted-foreground mt-1">
+                {scopeCaption} · after discounts &amp; refunds
+                {summary.held > 0.005 && <> · ${summary.held.toLocaleString()} held for callbacks</>}
+              </p>
             </div>
           </>
         )}
@@ -1078,6 +1298,142 @@ export default function ProductionPage() {
         </div>
       )}
 
+      {/* ── Callback Modal — return visits / punch list / back jobs ── */}
+      {callbackTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="bg-background rounded-xl border border-border shadow-xl p-6 w-[26rem] space-y-4">
+            <div>
+              <p className="font-semibold">Callbacks</p>
+              <p className="text-xs text-muted-foreground mt-0.5">{callbackTarget.clientName}</p>
+            </div>
+
+            {(callbacksByLead[callbackTarget.leadId] || []).length > 0 && (
+              <div className="space-y-2">
+                {(callbacksByLead[callbackTarget.leadId] || []).map(cb => (
+                  <div key={cb.id} className="rounded-md border border-amber-200 bg-amber-50/50 p-2 text-xs flex items-start justify-between gap-2">
+                    <div>
+                      <p className="font-medium">{cb.description}</p>
+                      <p className="text-muted-foreground">
+                        Opened {fmtStoredDate(cb.opened_at, { month: "short", day: "numeric", year: "numeric" })}
+                        {cb.due_at && <> · due {fmtStoredDate(cb.due_at, { month: "short", day: "numeric" })}</>}
+                        {cb.holdback_amount > 0 && <> · ${cb.holdback_amount.toLocaleString()} held</>}
+                      </p>
+                    </div>
+                    <button onClick={() => handleCallbackDone(cb)} disabled={savingWorkMoney}
+                      className="shrink-0 px-2 py-1 rounded bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-40">
+                      Done
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="space-y-2 border-t pt-3">
+              <p className="text-xs font-medium">Add a callback</p>
+              <textarea value={callbackDraft.description} rows={2} autoFocus
+                onChange={e => setCallbackDraft({ ...callbackDraft, description: e.target.value })}
+                placeholder="What needs to be done? e.g. Replace damaged screen"
+                className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40 resize-none" />
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-[11px] text-muted-foreground block mb-1">Amount customer is holding ($)</label>
+                  <input type="number" min={0} value={callbackDraft.holdback} placeholder="0"
+                    onChange={e => setCallbackDraft({ ...callbackDraft, holdback: e.target.value })}
+                    className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" />
+                </div>
+                <div>
+                  <label className="text-[11px] text-muted-foreground block mb-1">Due date</label>
+                  <input type="date" value={callbackDraft.due}
+                    onChange={e => setCallbackDraft({ ...callbackDraft, due: e.target.value })}
+                    className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" />
+                </div>
+              </div>
+            </div>
+
+            <div className="flex gap-2">
+              <button onClick={handleAddCallback} disabled={savingWorkMoney || !callbackDraft.description.trim()}
+                className="flex-1 rounded-md bg-amber-600 text-white px-3 py-2 text-sm font-medium hover:bg-amber-700 disabled:opacity-40 transition-colors">
+                {savingWorkMoney ? "Saving…" : "Add Callback"}
+              </button>
+              <button onClick={() => setCallbackTarget(null)}
+                className="px-3 py-2 rounded-md border border-border text-sm hover:bg-muted transition-colors">
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Adjust Balance Modal — discounts, credits, refunds, write-offs ── */}
+      {adjustTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="bg-background rounded-xl border border-border shadow-xl p-6 w-[26rem] space-y-4">
+            <div>
+              <p className="font-semibold">Adjust Balance</p>
+              <p className="text-xs text-muted-foreground mt-0.5">{adjustTarget.clientName}</p>
+              <p className="text-xs text-muted-foreground">
+                Lowers what the customer owes. It does not change cash collected —
+                log money that came in or went out under Payments.
+              </p>
+            </div>
+
+            {(adjustmentsByLead[adjustTarget.leadId] || []).length > 0 && (
+              <div className="space-y-1 text-xs">
+                <p className="font-medium">Already recorded</p>
+                {(adjustmentsByLead[adjustTarget.leadId] || []).map(a => (
+                  <div key={a.id} className="flex justify-between gap-2 text-muted-foreground">
+                    <span>{ADJ_LABELS[a.adj_type] ?? a.adj_type} · {a.reason}</span>
+                    <span className="whitespace-nowrap">−${a.amount.toLocaleString()}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="space-y-2 border-t pt-3">
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-[11px] text-muted-foreground block mb-1">Type</label>
+                  <select value={adjustDraft.type} onChange={e => setAdjustDraft({ ...adjustDraft, type: e.target.value })}
+                    className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40">
+                    {Object.entries(ADJ_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-[11px] text-muted-foreground block mb-1">Amount ($)</label>
+                  <input type="number" min={0} value={adjustDraft.amount} placeholder="0.00" autoFocus
+                    onChange={e => setAdjustDraft({ ...adjustDraft, amount: e.target.value })}
+                    className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" />
+                </div>
+              </div>
+              <div>
+                <label className="text-[11px] text-muted-foreground block mb-1">Reason (required)</label>
+                <input value={adjustDraft.reason} placeholder="e.g. Door discount / tree damage on property"
+                  onChange={e => setAdjustDraft({ ...adjustDraft, reason: e.target.value })}
+                  className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" />
+              </div>
+              <div>
+                <label className="text-[11px] text-muted-foreground block mb-1">Date</label>
+                <input type="date" value={adjustDraft.date}
+                  onChange={e => setAdjustDraft({ ...adjustDraft, date: e.target.value })}
+                  className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" />
+              </div>
+            </div>
+
+            <div className="flex gap-2">
+              <button onClick={handleAddAdjustment}
+                disabled={savingWorkMoney || Number(adjustDraft.amount || 0) <= 0 || !adjustDraft.reason.trim()}
+                className="flex-1 rounded-md bg-primary text-primary-foreground px-3 py-2 text-sm font-medium hover:bg-primary/90 disabled:opacity-40 transition-colors">
+                {savingWorkMoney ? "Saving…" : "Save Adjustment"}
+              </button>
+              <button onClick={() => setAdjustTarget(null)}
+                className="px-3 py-2 rounded-md border border-border text-sm hover:bg-muted transition-colors">
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── New Job Modal ── */}
       <NewJobModal open={showNewJobModal} onOpenChange={setShowNewJobModal} onCreated={fetchJobs} />
 
@@ -1090,6 +1446,7 @@ export default function ProductionPage() {
           { key: "completed", label: "Completed",  badge: null           },
           { key: "cancelled", label: "Cancelled",  badge: cancelledCount },
           { key: "balance",   label: "Has Balance",badge: null           },
+          { key: "callbacks", label: "Callbacks",  badge: callbackLeadCount },
           { key: "all",       label: "All Jobs",   badge: null           },
         ].map(f => (
           <button key={f.key} onClick={() => setFilter(f.key)}
@@ -1158,7 +1515,8 @@ export default function ProductionPage() {
                         false,
                         // Whole-job totals from v_ar_outstanding (or 0 when the job owes
                         // nothing) so the row's Balance always matches the summary card.
-                        { contract: group.contract, collected: group.collected, balance: group.balance, refunded: group.refunded },
+                        { contract: group.contract, collected: group.collected, balance: group.balance, refunded: group.refunded,
+                          adjustments: group.adjustments, held: group.held, moneyStatus: group.moneyStatus },
                       )
                 )}
             </tbody>
