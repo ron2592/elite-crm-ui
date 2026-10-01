@@ -198,13 +198,22 @@ export default function LeadsPage() {
   }
 
   async function fetchLeads() {
-    const { data, error } = await supabase
-      .from("leads")
-      .select("*, lead_sources(name, id)")
-      .neq("archived", true)
-      .order("created_at", { ascending: false });
-
-    if (error) { console.error("fetchLeads error:", error.message); return; }
+    // Supabase returns at most 1,000 rows per request, so page through until a short
+    // page comes back. Past 1,000 leads the oldest ones were silently missing here.
+    const PAGE = 1000;
+    let data: any[] = [];
+    for (let from = 0; ; from += PAGE) {
+      const { data: page, error } = await supabase
+        .from("leads")
+        .select("*, lead_sources(name, id)")
+        .neq("archived", true)
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, from + PAGE - 1);
+      if (error) { console.error("fetchLeads error:", error.message); return; }
+      data = data.concat(page || []);
+      if (!page || page.length < PAGE) break;
+    }
 
     const normalized = (data || []).map((l: any) => ({
       ...l, status: normalizeStatus(l.status ?? "new"),
