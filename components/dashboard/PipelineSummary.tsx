@@ -6,44 +6,49 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 
 const stageColors = ["bg-blue-500", "bg-indigo-500", "bg-violet-500", "bg-amber-500", "bg-emerald-500"];
 
-const stageMap: Record<string, string> = {
-  new: "New",
-  open: "New",
-  contacted: "Contacted",
-  appointment_set: "Appt Set",
-  estimate_sent: "Estimate",
-  closed_won: "Won",
-  won: "Won",
-};
+// Each stage is its own filtered, count-exact query — never a single unfiltered fetch of
+// the whole `leads` table. Supabase caps unfiltered fetches at 1000 rows; with 1103 leads
+// that fetch was silently clipped, and JS then counted only what made it across the wire
+// (New showed 273 of 305, Won 2 of 25). Every stage here has well under 1000 rows, so no
+// query is at risk of that cap, and `count: "exact"` asks Postgres for the row count
+// directly rather than trusting `data.length` on the client.
+const STAGE_FILTERS: { stage: string; apply: (q: any) => any }[] = [
+  { stage: "New",       apply: (q) => q.in("status", ["new", "new_lead"]) },
+  { stage: "Contacted", apply: (q) => q.eq("status", "contacted") },
+  { stage: "Appt Set",  apply: (q) => q.eq("status", "appointment_set") },
+  { stage: "Estimate",  apply: (q) => q.eq("status", "estimate_sent") },
+  {
+    stage: "Won",
+    apply: (q) => q.in("status", ["closed_won", "completed", "completed_with_balance", "won"]).is("cancelled_at", null),
+  },
+];
 
 export default function PipelineSummary() {
   const [pipelineData, setPipelineData] = useState<{ stage: string; count: number; value: number }[]>([]);
 
   useEffect(() => {
     async function fetchData() {
-      const { data: leads } = await supabase
-        .from("leads")
-        .select("status, closed_amount, estimated_amount, initial_contract_value");
+      const results = await Promise.all(
+        STAGE_FILTERS.map(({ apply }) =>
+          apply(
+            supabase
+              .from("leads")
+              .select("closed_amount, estimated_amount, initial_contract_value", { count: "exact" })
+              .neq("archived", true)
+          )
+        )
+      );
 
-      const stages: Record<string, { count: number; value: number }> = {
-        New: { count: 0, value: 0 },
-        Contacted: { count: 0, value: 0 },
-        "Appt Set": { count: 0, value: 0 },
-        Estimate: { count: 0, value: 0 },
-        Won: { count: 0, value: 0 },
-      };
-
-      (leads || []).forEach((lead: any) => {
-        const stageName = stageMap[lead.status];
-        if (stageName && stages[stageName]) {
-          stages[stageName].count += 1;
-          stages[stageName].value += Number(
-            lead.closed_amount || lead.estimated_amount || lead.initial_contract_value || 0
-          );
-        }
+      const data = STAGE_FILTERS.map(({ stage }, i) => {
+        const { data: rows, count } = results[i];
+        const value = (rows || []).reduce(
+          (sum: number, l: any) => sum + Number(l.closed_amount || l.estimated_amount || l.initial_contract_value || 0),
+          0
+        );
+        return { stage, count: count ?? 0, value };
       });
 
-      setPipelineData(Object.entries(stages).map(([stage, vals]) => ({ stage, ...vals })));
+      setPipelineData(data);
     }
     fetchData();
   }, []);
@@ -54,7 +59,7 @@ export default function PipelineSummary() {
     <Card>
       <CardHeader className="pb-3">
         <CardTitle className="text-base">Pipeline Summary</CardTitle>
-        <CardDescription>Leads by stage this month</CardDescription>
+        <CardDescription>Leads by stage</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         {pipelineData.map((stage, idx) => (
