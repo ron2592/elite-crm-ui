@@ -13,6 +13,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import LeadDetailDialog from "@/components/leads/LeadDetailDialog";
+import NeedsAttentionStrip from "@/components/dashboard/NeedsAttentionStrip";
 import { ChevronDown, ChevronRight, X, Loader2, ArrowRight } from "lucide-react";
 
 // ---------- types ----------
@@ -103,6 +104,7 @@ export default function ManagementSummaryPage() {
   const [rows, setRows] = useState<RecordRow[]>([]);
   const [rowsLoading, setRowsLoading] = useState(false);
   const [showOther, setShowOther] = useState(false);
+  const [showActions, setShowActions] = useState(false);
   const [openAlert, setOpenAlert] = useState<string | null>(null);
   const [selectedLead, setSelectedLead] = useState<any | null>(null);
   const [leadOpen, setLeadOpen] = useState(false);
@@ -190,6 +192,7 @@ export default function ManagementSummaryPage() {
       sub: now.followups_overdue_30d > 0 ? `${now.followups_overdue_30d} are over 30 days late. Most are likely dead and should be closed.` : "Past their follow-up date.",
       onClick: () => setDrill({ title: "Follow-ups overdue", metrics: ["followups_overdue"] }) },
   ] : [];
+  const urgentCount = actions.filter(a => a.urgent).length;
 
   return (
     <div className="space-y-6 max-w-5xl">
@@ -279,13 +282,54 @@ export default function ManagementSummaryPage() {
         )}
       </section>
 
-      {/* 3. Action */}
+      {/* 3. Sources */}
       <section className="rounded-xl border border-border bg-card overflow-hidden">
-        <div className="px-5 pt-5 pb-2">
-          <h2 className="font-semibold">Needs action</h2>
-          <p className="text-xs text-muted-foreground">Right now, whatever dates are picked above. Click a line to see who.</p>
+        <div className="px-5 pt-5 pb-2 flex items-baseline justify-between gap-2">
+          <h2 className="font-semibold">Where the leads came from</h2>
+          <button onClick={() => router.push("/kpi")} className="text-xs text-primary font-medium">Full KPI report →</button>
         </div>
-        <div className="divide-y divide-border">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-xs text-muted-foreground border-b border-border">
+              <th className="px-5 py-2 text-left font-medium">Source</th>
+              <th className="px-3 py-2 text-right font-medium">Leads</th>
+              <th className="px-3 py-2 text-right font-medium">Jobs won</th>
+              <th className="px-3 py-2 text-right font-medium">Ad spend</th>
+              <th className="px-5 py-2 text-right font-medium">Cost per job</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border">
+            {(data?.marketing.sources || []).map(s => (
+              <tr key={s.source_id} className="hover:bg-muted/30 cursor-pointer" onClick={() => setDrill({ title: `${s.source} leads`, metrics: ["funnel_leads"], usePeriod: true, sourceId: s.source_id })}>
+                <td className="px-5 py-2 font-medium">{s.source}</td>
+                <td className="px-3 py-2 text-right">{s.leads}</td>
+                <td className="px-3 py-2 text-right">{s.jobs_won || <span className="text-muted-foreground">0</span>}</td>
+                <td className="px-3 py-2 text-right">{s.spend ? money(s.spend) : <span className="text-muted-foreground">free</span>}</td>
+                <td className="px-5 py-2 text-right font-semibold">
+                  {s.cost_per_job != null ? money(s.cost_per_job) : s.spend ? <span className="font-normal text-muted-foreground">no job yet</span> : "—"}
+                </td>
+              </tr>
+            ))}
+            {data && data.marketing.sources.length === 0 && (
+              <tr><td colSpan={5} className="px-5 py-6 text-center text-muted-foreground">No leads in these dates.</td></tr>
+            )}
+          </tbody>
+        </table>
+      </section>
+
+      {/* 4. Action (collapsible, last) */}
+      <section className="rounded-xl border border-border bg-card overflow-hidden">
+        <button onClick={() => setShowActions(v => !v)} className="w-full flex items-center justify-between gap-3 px-5 py-4 text-left hover:bg-muted/40 transition-colors">
+          <span>
+            <span className="block font-semibold">Needs action</span>
+            <span className="block text-xs text-muted-foreground">Right now, whatever dates are picked above. Click a line to see who.</span>
+          </span>
+          <span className="flex items-center gap-2 shrink-0">
+            {urgentCount > 0 && <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-red-50 text-red-700 border border-red-200">{urgentCount} need attention</span>}
+            <ChevronDown className={`h-5 w-5 text-muted-foreground transition-transform ${showActions ? "rotate-180" : ""}`} />
+          </span>
+        </button>
+        {showActions && <div className="divide-y divide-border border-t border-border">
           {actions.map(a => (
             <button key={a.title} onClick={a.onClick} className="w-full flex items-center gap-4 px-5 py-3 text-left hover:bg-muted/40 transition-colors">
               <span className={`w-20 shrink-0 text-right text-xl font-bold ${a.urgent ? "text-red-600" : ""}`}>{a.n}</span>
@@ -323,43 +367,11 @@ export default function ManagementSummaryPage() {
               })}
             </div>
           )}
-        </div>
+        </div>}
       </section>
 
-      {/* 4. Sources */}
-      <section className="rounded-xl border border-border bg-card overflow-hidden">
-        <div className="px-5 pt-5 pb-2 flex items-baseline justify-between gap-2">
-          <h2 className="font-semibold">Where the leads came from</h2>
-          <button onClick={() => router.push("/kpi")} className="text-xs text-primary font-medium">Full KPI report →</button>
-        </div>
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="text-xs text-muted-foreground border-b border-border">
-              <th className="px-5 py-2 text-left font-medium">Source</th>
-              <th className="px-3 py-2 text-right font-medium">Leads</th>
-              <th className="px-3 py-2 text-right font-medium">Jobs won</th>
-              <th className="px-3 py-2 text-right font-medium">Ad spend</th>
-              <th className="px-5 py-2 text-right font-medium">Cost per job</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-border">
-            {(data?.marketing.sources || []).map(s => (
-              <tr key={s.source_id} className="hover:bg-muted/30 cursor-pointer" onClick={() => setDrill({ title: `${s.source} leads`, metrics: ["funnel_leads"], usePeriod: true, sourceId: s.source_id })}>
-                <td className="px-5 py-2 font-medium">{s.source}</td>
-                <td className="px-3 py-2 text-right">{s.leads}</td>
-                <td className="px-3 py-2 text-right">{s.jobs_won || <span className="text-muted-foreground">0</span>}</td>
-                <td className="px-3 py-2 text-right">{s.spend ? money(s.spend) : <span className="text-muted-foreground">free</span>}</td>
-                <td className="px-5 py-2 text-right font-semibold">
-                  {s.cost_per_job != null ? money(s.cost_per_job) : s.spend ? <span className="font-normal text-muted-foreground">no job yet</span> : "—"}
-                </td>
-              </tr>
-            ))}
-            {data && data.marketing.sources.length === 0 && (
-              <tr><td colSpan={5} className="px-5 py-6 text-center text-muted-foreground">No leads in these dates.</td></tr>
-            )}
-          </tbody>
-        </table>
-      </section>
+      {/* The signed-in person's own task queue (shows nothing if they have none) */}
+      <NeedsAttentionStrip />
 
       {/* Records panel */}
       {drill && (
