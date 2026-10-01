@@ -363,8 +363,14 @@ export default function ImportLeadsPage() {
     // ✅ Fetch all existing normalized names to catch name-only duplicates
     const existingNameSet = new Set<string>();
     {
-      const { data } = await supabase.from("leads").select("lead_name").neq("archived", true);
-      (data || []).forEach((r: any) => { if (r.lead_name) existingNameSet.add(normalizeName(r.lead_name)); });
+      // Page through: Supabase caps each request at 1,000 rows, so older names were
+      // never checked and their duplicates slipped through.
+      for (let from = 0; ; from += 1000) {
+        const { data } = await supabase.from("leads").select("lead_name")
+          .neq("archived", true).order("id", { ascending: true }).range(from, from + 999);
+        (data || []).forEach((r: any) => { if (r.lead_name) existingNameSet.add(normalizeName(r.lead_name)); });
+        if (!data || data.length < 1000) break;
+      }
     }
 
     // ── 5. Intra-batch dedup ──
