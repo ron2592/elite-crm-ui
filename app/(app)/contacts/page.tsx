@@ -149,16 +149,25 @@ export default function ContactsPage() {
   // ── Data fetching ─────────────────────────────────────────────────────────
   async function fetchLeads() {
     setLoading(true);
-    const { data, error } = await supabase
-      .from("leads")
-      .select("*, lead_sources(id, name)")
-      .neq("archived", true)
-      .order("created_at", { ascending: false });
-
-    if (error) {
-      console.error("Contacts fetchLeads error:", error.message);
-      setLoading(false);
-      return;
+    // Supabase returns at most 1,000 rows per request, so page through until a short
+    // page comes back. Past 1,000 leads the oldest ones were silently missing here.
+    const PAGE = 1000;
+    let data: any[] = [];
+    for (let from = 0; ; from += PAGE) {
+      const { data: page, error } = await supabase
+        .from("leads")
+        .select("*, lead_sources(id, name)")
+        .neq("archived", true)
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, from + PAGE - 1);
+      if (error) {
+        console.error("Contacts fetchLeads error:", error.message);
+        setLoading(false);
+        return;
+      }
+      data = data.concat(page || []);
+      if (!page || page.length < PAGE) break;
     }
 
     // Normalize status values from DB to match our UI labels
