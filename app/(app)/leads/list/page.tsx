@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import LeadDetailDialog from "@/components/leads/LeadDetailDialog";
 import { Lead } from "@/types";
+import { matchesSearch } from "@/lib/utils";
 
 type LeadRow = {
   id: string;
@@ -82,13 +83,24 @@ export default function ContactsPage() {
 
   const loadLeads = useCallback(async () => {
     setLoading(true);
-    const { data } = await supabase
-      .from("leads")
-      .select("*, lead_sources(name)")
-      .eq("archived", false)
-      .order("created_at", { ascending: false })
-      .limit(2000);
-    setLeads(data || []);
+    // Supabase returns at most 1,000 rows per request no matter what .limit() says,
+    // so page through until a short page comes back. Without this, the oldest leads
+    // silently disappeared from this list once the table passed 1,000 rows.
+    const PAGE = 1000;
+    let data: any[] = [];
+    for (let from = 0; ; from += PAGE) {
+      const { data: page, error } = await supabase
+        .from("leads")
+        .select("*, lead_sources(name)")
+        .eq("archived", false)
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, from + PAGE - 1);
+      if (error) { console.error("Error loading leads:", error.message); break; }
+      data = data.concat(page || []);
+      if (!page || page.length < PAGE) break;
+    }
+    setLeads(data);
     setLoading(false);
 
     const dates = [...new Set(
