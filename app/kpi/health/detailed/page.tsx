@@ -316,6 +316,34 @@ export default function CompanyHealthPage() {
         )}
       </Section>
 
+      {/* PRODUCTION STATUS */}
+      <Section title="Production Status" icon={<Hammer className="h-4 w-4 text-primary" />} badge={`${wonLeads.length} won jobs`}>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-3">
+          <div className="rounded-lg bg-muted/40 p-3"><p className="text-xs text-muted-foreground mb-1">Pending Start</p><p className="text-xl font-bold">{production.pending.length}</p></div>
+          <div className="rounded-lg bg-muted/40 p-3"><p className="text-xs text-muted-foreground mb-1">In Progress</p><p className="text-xl font-bold text-amber-600">{production.active.length}</p></div>
+          <div className="rounded-lg bg-muted/40 p-3"><p className="text-xs text-muted-foreground mb-1">Completed</p><p className="text-xl font-bold text-emerald-600">{production.completed.length}</p></div>
+          <div className="rounded-lg bg-muted/40 p-3"><p className="text-xs text-muted-foreground mb-1">No Stage Set</p><p className="text-xl font-bold text-muted-foreground">{production.noStage.length}</p></div>
+        </div>
+        {wonLeadsSorted.length > 0 && (
+          <div className="mb-3">
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Won jobs · client &amp; job type</p>
+            <div className="rounded-lg border border-border/60 divide-y divide-border/40 max-h-80 overflow-y-auto">
+              {wonLeadsSorted.map(l => (
+                <button key={l.id} onClick={() => openLead(l.id)}
+                  className="w-full flex items-center justify-between gap-3 px-4 py-2.5 hover:bg-muted/30 text-left">
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold truncate">{leadName(l)}</p>
+                    <p className="text-xs text-muted-foreground">{l.metadata?.job_type || 'No job type set'} · {l.production_stage || 'No stage set'}</p>
+                  </div>
+                  <span className="text-xs font-bold text-emerald-600 shrink-0">{fmt$(Number(l.initial_contract_value || 0))}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+        <button onClick={() => router.push('/production')} className="text-xs text-primary hover:underline font-medium">View full Production tracker →</button>
+      </Section>
+
       {/* PIPELINE AGING & BOTTLENECKS */}
       <Section title="Pipeline Aging & Bottlenecks" icon={<Clock className="h-4 w-4 text-primary" />} badge={`${allAged.length} stuck 14+ days`}>
         <p className="text-xs text-muted-foreground mb-4">Based on how long a lead has sat in an open stage since it came in. A healthy pipeline keeps this low — a growing pile here means leads are being quoted and then forgotten.</p>
@@ -360,34 +388,6 @@ export default function CompanyHealthPage() {
             </div>
           </div>
         )}
-      </Section>
-
-      {/* PRODUCTION STATUS */}
-      <Section title="Production Status" icon={<Hammer className="h-4 w-4 text-primary" />} badge={`${wonLeads.length} won jobs`}>
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-3">
-          <div className="rounded-lg bg-muted/40 p-3"><p className="text-xs text-muted-foreground mb-1">Pending Start</p><p className="text-xl font-bold">{production.pending.length}</p></div>
-          <div className="rounded-lg bg-muted/40 p-3"><p className="text-xs text-muted-foreground mb-1">In Progress</p><p className="text-xl font-bold text-amber-600">{production.active.length}</p></div>
-          <div className="rounded-lg bg-muted/40 p-3"><p className="text-xs text-muted-foreground mb-1">Completed</p><p className="text-xl font-bold text-emerald-600">{production.completed.length}</p></div>
-          <div className="rounded-lg bg-muted/40 p-3"><p className="text-xs text-muted-foreground mb-1">No Stage Set</p><p className="text-xl font-bold text-muted-foreground">{production.noStage.length}</p></div>
-        </div>
-        {wonLeadsSorted.length > 0 && (
-          <div className="mb-3">
-            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Won jobs · client &amp; job type</p>
-            <div className="rounded-lg border border-border/60 divide-y divide-border/40 max-h-80 overflow-y-auto">
-              {wonLeadsSorted.map(l => (
-                <button key={l.id} onClick={() => openLead(l.id)}
-                  className="w-full flex items-center justify-between gap-3 px-4 py-2.5 hover:bg-muted/30 text-left">
-                  <div className="min-w-0">
-                    <p className="text-sm font-semibold truncate">{leadName(l)}</p>
-                    <p className="text-xs text-muted-foreground">{l.metadata?.job_type || 'No job type set'} · {l.production_stage || 'No stage set'}</p>
-                  </div>
-                  <span className="text-xs font-bold text-emerald-600 shrink-0">{fmt$(Number(l.initial_contract_value || 0))}</span>
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-        <button onClick={() => router.push('/production')} className="text-xs text-primary hover:underline font-medium">View full Production tracker →</button>
       </Section>
 
       {/* TIME TO CLOSE */}
