@@ -146,6 +146,8 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
   const [savingCOEdit,                 setSavingCOEdit]                 = useState(false);
   const [closedAtDraft,                setClosedAtDraft]                = useState("");
   const [savingClosedAt,               setSavingClosedAt]               = useState(false);
+  const [showFinishedJobs,             setShowFinishedJobs]             = useState(false);
+  const [showMoreJobFields,            setShowMoreJobFields]            = useState(false);
 
   const leadId = (lead as any)?.id;
   const inlineJobTypeDropdownVal = STANDARD_JOB_TYPES.includes(inlineJobType) ? inlineJobType : inlineJobType ? "Other" : "";
@@ -928,159 +930,205 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
             </div>
           )}
 
-          {/* ── CHANGE ORDERS ── */}
-          {!editMode && showFullContract && (
-            <>
-              {changeOrders.map((co) => {
-                const coCollected = co.payments.reduce((sum, p) => sum + Number(p.amount), 0);
-                const coBalance   = Number(co.amount) - coCollected;
-                const isExpanded  = expandedChangeOrders.has(co.id);
-                return (
-                  <div key={co.id} className="rounded-lg border border-border p-4 space-y-3">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Change Order #{co.order_number}</p>
-                        <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${coStatusColors[co.status]}`}>{co.status.charAt(0).toUpperCase() + co.status.slice(1)}</span>
-                        <select
-                          value={co.record_type || "change_order"}
-                          onChange={(e) => handleUpdateCORecordType(co.id, e.target.value as any)}
-                          title="Is this a scope change to an active job, or the client coming back later for a separate job?"
-                          className={`text-xs rounded-full font-medium px-2 py-0.5 border-none focus:outline-none focus:ring-2 focus:ring-primary/40 cursor-pointer ${co.record_type === "repeat_job" ? "bg-purple-100 text-purple-700" : "bg-slate-100 text-slate-600"}`}>
-                          <option value="change_order">Change Order</option>
-                          <option value="repeat_job">Repeat Job</option>
-                        </select>
+          {/* ── OTHER JOBS (change orders + repeat jobs) ──
+              One compact line per job. Unfinished or unpaid jobs show first; finished, paid
+              jobs fold away under "Show N finished jobs". Click a line for payments and edits. */}
+          {!editMode && showFullContract && (() => {
+            const isCancelledCO = (co: ChangeOrder) => (co.production_stage || "").startsWith("Cancelled");
+            const coPaid = (co: ChangeOrder) => co.payments.reduce((s, p) => s + Number(p.amount), 0);
+            const coDue  = (co: ChangeOrder) => (co.status === "won" && !isCancelledCO(co)) ? Math.max(0, Number(co.amount) - coPaid(co)) : 0;
+            const isFinished = (co: ChangeOrder) =>
+              co.status === "lost" || isCancelledCO(co) ||
+              (co.status === "won" && coDue(co) <= 0.01 && (co.production_stage === "Completed" || co.production_stage === "Completed with Balance"));
+            const jobDate = (co: ChangeOrder) => (co.signed_at || co.date_added || "").slice(0, 10);
+            const sorted   = [...changeOrders].sort((a, b) => jobDate(b).localeCompare(jobDate(a)));
+            const active   = sorted.filter(co => !isFinished(co));
+            const finished = sorted.filter(isFinished);
+            const live     = changeOrders.filter(co => co.status === "won" && !isCancelledCO(co));
+            const allSigned    = currentContract + live.reduce((s, co) => s + Number(co.amount), 0);
+            const allCollected = totalCollected + changeOrders.reduce((s, co) => s + coPaid(co), 0);
+            const allDue       = Math.max(0, balance) + changeOrders.reduce((s, co) => s + coDue(co), 0);
+
+            const renderJob = (co: ChangeOrder) => {
+              const paid = coPaid(co), due = coDue(co), cancelled = isCancelledCO(co);
+              const isExpanded = expandedChangeOrders.has(co.id);
+              const badge = cancelled ? { t: "Cancelled", c: "bg-slate-100 text-slate-500" }
+                : co.status === "lost" ? { t: "Lost", c: "bg-slate-100 text-slate-500" }
+                : co.status === "pending" ? { t: "Not signed yet", c: "bg-amber-100 text-amber-700" }
+                : due > 0.01 ? { t: `$${due.toLocaleString()} due`, c: "bg-red-100 text-red-700" }
+                : { t: "Paid", c: "bg-emerald-100 text-emerald-700" };
+              return (
+                <div key={co.id} className={`border-b border-border last:border-b-0 ${isExpanded ? "bg-muted/20" : ""}`}>
+                  <button onClick={() => toggleCOExpand(co.id)} className="w-full flex items-center gap-3 px-3 py-2 text-left hover:bg-muted/40 transition-colors">
+                    {isExpanded ? <ChevronUp className="h-3.5 w-3.5 shrink-0 text-muted-foreground" /> : <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />}
+                    <span className="min-w-0 flex-1">
+                      <span className={`block text-sm font-medium truncate ${cancelled || co.status === "lost" ? "line-through text-muted-foreground" : ""}`}>
+                        {co.description || co.job_type || `Job #${co.order_number}`}
+                      </span>
+                      <span className="block text-xs text-muted-foreground truncate">
+                        #{co.order_number} · {co.record_type === "repeat_job" ? "Repeat job" : "Change order"}
+                        {jobDate(co) && ` · ${fmtStoredDate(jobDate(co))}`}
+                        {co.production_stage && !cancelled && ` · ${co.production_stage}`}
+                      </span>
+                    </span>
+                    <span className="text-sm font-bold shrink-0">${Number(co.amount).toLocaleString()}</span>
+                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium shrink-0 ${badge.c}`}>{badge.t}</span>
+                  </button>
+
+                  {isExpanded && (
+                    <div className="px-3 pb-3 pt-1 space-y-3">
+                      {editingCOId === co.id ? (
+                        <div className="rounded-md border border-primary/30 bg-primary/5 p-3 space-y-2">
+                          <div><label className="text-xs text-muted-foreground block mb-1">What is the job?</label><input type="text" value={editCODraft.description} onChange={(e) => setEditCODraft({ ...editCODraft, description: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" /></div>
+                          <div className="grid grid-cols-2 gap-2">
+                            <div><label className="text-xs text-muted-foreground block mb-1">Amount</label><input type="number" placeholder="0" value={editCODraft.amount} onChange={(e) => setEditCODraft({ ...editCODraft, amount: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" /></div>
+                            <div><label className="text-xs text-muted-foreground block mb-1">Job type</label><select value={editCODraft.job_type} onChange={(e) => setEditCODraft({ ...editCODraft, job_type: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"><option value="">— Select type —</option>{STANDARD_JOB_TYPES.map(t => <option key={t}>{t}</option>)}<option value="Other">Other</option></select></div>
+                          </div>
+                          <div className="grid grid-cols-2 gap-2">
+                            <div><label className="text-xs text-muted-foreground block mb-1">Work starts</label><input type="date" value={editCODraft.job_start_date} onChange={(e) => setEditCODraft({ ...editCODraft, job_start_date: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" /></div>
+                            <div><label className="text-xs text-muted-foreground block mb-1">Work ends</label><input type="date" value={editCODraft.job_end_date} onChange={(e) => setEditCODraft({ ...editCODraft, job_end_date: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" /></div>
+                          </div>
+                          <div className="flex gap-2">
+                            <button onClick={() => handleSaveCOEdit(co.id)} disabled={savingCOEdit || !editCODraft.amount} className="flex-1 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-40 transition-colors">{savingCOEdit ? "Saving..." : "Save changes"}</button>
+                            <button onClick={() => setEditingCOId(null)} className="rounded-md border border-border px-3 py-1.5 text-xs hover:bg-muted transition-colors">Cancel</button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-2 gap-2 text-xs">
+                          <label className="flex flex-col gap-1">
+                            <span className="text-muted-foreground">Signed?</span>
+                            <select value={co.status} onChange={(e) => handleUpdateCOStatus(co.id, e.target.value as any)} className="rounded-md border border-border bg-background px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-primary/40">
+                              <option value="pending">Not signed yet</option><option value="won">Signed (won)</option><option value="lost">Lost</option>
+                            </select>
+                          </label>
+                          <label className="flex flex-col gap-1">
+                            <span className="text-muted-foreground" title="Change order = extra work on a job in progress. Repeat job = the client came back for a new, separate job.">Kind of job</span>
+                            <select value={co.record_type || "change_order"} onChange={(e) => handleUpdateCORecordType(co.id, e.target.value as any)} className="rounded-md border border-border bg-background px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-primary/40">
+                              <option value="change_order">Change order (extra work, same job)</option><option value="repeat_job">Repeat job (new, separate job)</option>
+                            </select>
+                          </label>
+                          <label className="flex flex-col gap-1">
+                            <span className="text-muted-foreground">Date added</span>
+                            <input type="date" value={co.date_added ? co.date_added.slice(0, 10) : ""} onChange={(e) => handleUpdateCODate(co.id, e.target.value)} disabled={savingCODate === co.id} className="rounded-md border border-border bg-background px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-primary/40 disabled:opacity-50" />
+                          </label>
+                          <div className="flex items-end justify-end gap-3 pb-1.5">
+                            {co.job_type && <span className="mr-auto px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 font-medium">{co.job_type}</span>}
+                            <button onClick={() => handleStartCOEdit(co)} className="flex items-center gap-1 text-muted-foreground hover:text-primary"><Pencil className="h-3.5 w-3.5" /> Edit</button>
+                            {isManager && <button onClick={() => handleDeleteChangeOrder(co.id)} className="flex items-center gap-1 text-muted-foreground hover:text-red-500"><Trash2 className="h-3.5 w-3.5" /> Delete</button>}
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="grid grid-cols-3 gap-2 text-center">
+                        <div className="rounded-md bg-muted/50 p-2"><p className="text-xs text-muted-foreground">Contract</p><p className="font-bold text-sm">${Number(co.amount).toLocaleString()}</p></div>
+                        <div className="rounded-md bg-emerald-500/10 p-2"><p className="text-xs text-muted-foreground">Collected</p><p className="font-bold text-sm text-emerald-600">${paid.toLocaleString()}</p></div>
+                        <div className={`rounded-md p-2 ${due > 0.01 ? "bg-red-500/10" : "bg-emerald-500/10"}`}><p className="text-xs text-muted-foreground">Balance</p><p className={`font-bold text-sm ${due > 0.01 ? "text-red-500" : "text-emerald-600"}`}>${due.toLocaleString()}</p></div>
                       </div>
-                      <div className="flex items-center gap-2">
-                        <select value={co.status} onChange={(e) => handleUpdateCOStatus(co.id, e.target.value as any)} className="text-xs rounded-md border border-border bg-background px-2 py-1 focus:outline-none focus:ring-2 focus:ring-primary/40"><option value="pending">Pending</option><option value="won">Won</option><option value="lost">Lost</option></select>
-                        <button onClick={() => toggleCOExpand(co.id)} className="text-muted-foreground hover:text-foreground transition-colors">{isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}</button>
-                        <button onClick={() => editingCOId === co.id ? setEditingCOId(null) : handleStartCOEdit(co)} title="Edit job details" className="text-muted-foreground hover:text-primary transition-colors"><Pencil className="h-3.5 w-3.5" /></button>
-                        {isManager && (
-                          <button onClick={() => handleDeleteChangeOrder(co.id)} title="Delete change order" className="text-muted-foreground hover:text-red-500 transition-colors"><Trash2 className="h-3.5 w-3.5" /></button>
-                        )}
+
+                      <div className="flex items-center justify-between">
+                        <p className="text-xs font-medium text-muted-foreground">Payments</p>
+                        {co.status === "won" && !cancelled && <button onClick={() => setShowAddCOPayment(showAddCOPayment === co.id ? null : co.id)} className="flex items-center gap-1 text-xs text-primary hover:underline font-medium"><Plus className="h-3 w-3" /> Add payment</button>}
                       </div>
+                      {showAddCOPayment === co.id && (
+                        <div className="rounded-md border border-border p-3 space-y-2 bg-background">
+                          <div className="grid grid-cols-2 gap-2">
+                            <div><label className="text-xs text-muted-foreground block mb-1">Amount</label><input type="number" placeholder="0" value={newCOPayment.amount} onChange={(e) => setNewCOPayment({ ...newCOPayment, amount: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" /></div>
+                            <div><label className="text-xs text-muted-foreground block mb-1">Date</label><input type="date" value={newCOPayment.paid_at} onChange={(e) => setNewCOPayment({ ...newCOPayment, paid_at: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" /></div>
+                          </div>
+                          <div className="grid grid-cols-2 gap-2">
+                            <div><label className="text-xs text-muted-foreground block mb-1">Type</label><select value={newCOPayment.payment_type} onChange={(e) => setNewCOPayment({ ...newCOPayment, payment_type: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40">{PAYMENT_TYPES.map(t => <option key={t}>{t}</option>)}</select></div>
+                            <div><label className="text-xs text-muted-foreground block mb-1">Method</label><select value={newCOPayment.payment_method} onChange={(e) => setNewCOPayment({ ...newCOPayment, payment_method: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40">{PAYMENT_METHODS.map(m => <option key={m}>{m}</option>)}</select></div>
+                          </div>
+                          <input type="text" placeholder="Notes (optional)" value={newCOPayment.notes} onChange={(e) => setNewCOPayment({ ...newCOPayment, notes: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" />
+                          <div className="flex gap-2">
+                            <button onClick={() => handleAddCOPayment(co.id)} disabled={addingCOPayment || !newCOPayment.amount} className="flex-1 rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-40 transition-colors">{addingCOPayment ? "Saving..." : "Save payment"}</button>
+                            <button onClick={() => setShowAddCOPayment(null)} className="rounded-md border border-border px-3 py-1.5 text-xs hover:bg-muted transition-colors">Cancel</button>
+                          </div>
+                        </div>
+                      )}
+                      {co.payments.length > 0 ? (
+                        <div className="space-y-1">
+                          {co.payments.map((p) => (
+                            <div key={p.id} className="flex items-center justify-between rounded-md bg-background border border-border px-2.5 py-1.5 text-xs">
+                              <span><b className="text-emerald-600">${Number(p.amount).toLocaleString()}</b> · {p.payment_type} · {p.payment_method} · {fmtStoredDate(p.paid_at)}{p.notes && ` · ${p.notes}`}</span>
+                              {isManager && <button onClick={() => handleDeleteCOPayment(p.id)} className="text-muted-foreground hover:text-red-500 ml-2"><X className="h-3.5 w-3.5" /></button>}
+                            </div>
+                          ))}
+                        </div>
+                      ) : <p className="text-xs text-muted-foreground">No payments yet</p>}
                     </div>
-                    {editingCOId === co.id ? (
-                      <div className="rounded-md border border-primary/30 bg-primary/5 p-3 space-y-2">
-                        <div className="grid grid-cols-2 gap-2">
-                          <div><label className="text-xs text-muted-foreground block mb-1">Job Type</label><select value={editCODraft.job_type} onChange={(e) => setEditCODraft({ ...editCODraft, job_type: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"><option value="">— Select type —</option>{STANDARD_JOB_TYPES.map(t => <option key={t}>{t}</option>)}<option value="Other">Other</option></select></div>
-                          <div><label className="text-xs text-muted-foreground block mb-1">Amount</label><input type="number" placeholder="0" value={editCODraft.amount} onChange={(e) => setEditCODraft({ ...editCODraft, amount: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" /></div>
-                        </div>
-                        <div className="grid grid-cols-2 gap-2">
-                          <div><label className="text-xs text-muted-foreground block mb-1">Job Start Date</label><input type="date" value={editCODraft.job_start_date} onChange={(e) => setEditCODraft({ ...editCODraft, job_start_date: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" /></div>
-                          <div><label className="text-xs text-muted-foreground block mb-1">Job End Date</label><input type="date" value={editCODraft.job_end_date} onChange={(e) => setEditCODraft({ ...editCODraft, job_end_date: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" /></div>
-                        </div>
-                        <div><label className="text-xs text-muted-foreground block mb-1">Description</label><input type="text" value={editCODraft.description} onChange={(e) => setEditCODraft({ ...editCODraft, description: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" /></div>
-                        <div className="flex gap-2">
-                          <button onClick={() => handleSaveCOEdit(co.id)} disabled={savingCOEdit || !editCODraft.amount} className="flex-1 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-40 transition-colors">{savingCOEdit ? "Saving..." : "Save Changes"}</button>
-                          <button onClick={() => setEditingCOId(null)} className="rounded-md border border-border px-3 py-1.5 text-xs hover:bg-muted transition-colors">Cancel</button>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="flex items-center gap-3 flex-wrap">
-                        {co.job_type && <span className="text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 font-medium">{co.job_type}</span>}
-                        {co.description && <span className="text-xs text-muted-foreground">{co.description}</span>}
-                        <div className="flex items-center gap-1">
-                          <span className="text-xs text-muted-foreground">Added</span>
-                          <input type="date" value={co.date_added ? co.date_added.slice(0, 10) : ""} onChange={(e) => handleUpdateCODate(co.id, e.target.value)} disabled={savingCODate === co.id} title="Date this change order was added" className="text-xs rounded-md border border-border bg-background px-1.5 py-1 focus:outline-none focus:ring-2 focus:ring-primary/40 disabled:opacity-50" />
-                          {savingCODate === co.id && <span className="text-xs text-blue-400">saving...</span>}
-                        </div>
-                        {(co.job_start_date || co.job_end_date) && (
-                          <span className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium">
-                            {co.job_start_date ? new Date(co.job_start_date + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "?"}
-                            {" - "}
-                            {co.job_end_date ? new Date(co.job_end_date + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "?"}
-                          </span>
-                        )}
-                        <span className="text-sm font-bold ml-auto">${Number(co.amount).toLocaleString()}</span>
-                      </div>
-                    )}
-                    {isExpanded && (
-                      <div className="space-y-2 pt-1">
-                        <div className="grid grid-cols-3 gap-2 text-center">
-                          <div className="rounded-md bg-muted/50 p-2"><p className="text-xs text-muted-foreground">Contract</p><p className="font-bold text-sm">${Number(co.amount).toLocaleString()}</p></div>
-                          <div className="rounded-md bg-emerald-500/10 p-2"><p className="text-xs text-muted-foreground">Collected</p><p className="font-bold text-sm text-emerald-600">${coCollected.toLocaleString()}</p></div>
-                          <div className={`rounded-md p-2 ${coBalance > 0 ? "bg-red-500/10" : "bg-emerald-500/10"}`}><p className="text-xs text-muted-foreground">Balance</p><p className={`font-bold text-sm ${coBalance > 0 ? "text-red-500" : "text-emerald-600"}`}>${coBalance.toLocaleString()}</p></div>
-                        </div>
-                        <div className="flex items-center justify-between">
-                          <p className="text-xs font-medium text-muted-foreground">Payment History</p>
-                          {co.status === "won" && <button onClick={() => setShowAddCOPayment(showAddCOPayment === co.id ? null : co.id)} className="flex items-center gap-1 text-xs text-primary hover:underline font-medium"><Plus className="h-3 w-3" /> Add Payment</button>}
-                        </div>
-                        {showAddCOPayment === co.id && (
-                          <div className="rounded-md border border-border p-3 space-y-2 bg-muted/20">
-                            <div className="grid grid-cols-2 gap-2">
-                              <div><label className="text-xs text-muted-foreground block mb-1">Amount</label><input type="number" placeholder="0" value={newCOPayment.amount} onChange={(e) => setNewCOPayment({ ...newCOPayment, amount: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" /></div>
-                              <div><label className="text-xs text-muted-foreground block mb-1">Date</label><input type="date" value={newCOPayment.paid_at} onChange={(e) => setNewCOPayment({ ...newCOPayment, paid_at: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" /></div>
-                            </div>
-                            <div className="grid grid-cols-2 gap-2">
-                              <div><label className="text-xs text-muted-foreground block mb-1">Type</label><select value={newCOPayment.payment_type} onChange={(e) => setNewCOPayment({ ...newCOPayment, payment_type: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40">{PAYMENT_TYPES.map(t => <option key={t}>{t}</option>)}</select></div>
-                              <div><label className="text-xs text-muted-foreground block mb-1">Method</label><select value={newCOPayment.payment_method} onChange={(e) => setNewCOPayment({ ...newCOPayment, payment_method: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40">{PAYMENT_METHODS.map(m => <option key={m}>{m}</option>)}</select></div>
-                            </div>
-                            <input type="text" placeholder="Notes (optional)" value={newCOPayment.notes} onChange={(e) => setNewCOPayment({ ...newCOPayment, notes: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" />
-                            <div className="flex gap-2">
-                              <button onClick={() => handleAddCOPayment(co.id)} disabled={addingCOPayment || !newCOPayment.amount} className="flex-1 rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-40 transition-colors">{addingCOPayment ? "Saving..." : "Save Payment"}</button>
-                              <button onClick={() => setShowAddCOPayment(null)} className="rounded-md border border-border px-3 py-1.5 text-xs hover:bg-muted transition-colors">Cancel</button>
-                            </div>
-                          </div>
-                        )}
-                        {co.payments.length > 0 ? (
-                          <div className="space-y-1.5">
-                            {co.payments.map((p) => (
-                              <div key={p.id} className="rounded-md border border-border bg-muted/20 p-2.5 flex items-center justify-between">
-                                <div>
-                                  <div className="flex items-center gap-2"><span className="text-sm font-bold text-emerald-600">${Number(p.amount).toLocaleString()}</span><span className="text-xs px-1.5 py-0.5 rounded bg-secondary text-secondary-foreground">{p.payment_type}</span><span className="text-xs px-1.5 py-0.5 rounded bg-secondary text-secondary-foreground">{p.payment_method}</span></div>
-                                  <p className="text-xs text-muted-foreground mt-0.5">{fmtStoredDate(p.paid_at)}{p.notes && ` · ${p.notes}`}</p>
-                                </div>
-                                {isManager && (
-                                  <button onClick={() => handleDeleteCOPayment(p.id)} className="text-muted-foreground hover:text-red-500 transition-colors ml-2"><X className="h-3.5 w-3.5" /></button>
-                                )}
-                              </div>
-                            ))}
-                          </div>
-                        ) : <p className="text-xs text-muted-foreground text-center py-1">No payments recorded yet</p>}
-                      </div>
-                    )}
+                  )}
+                </div>
+              );
+            };
+
+            return (
+              <div className="rounded-lg border border-border overflow-hidden">
+                <div className="px-3 py-2.5 bg-muted/30 border-b border-border">
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Other jobs for this client</p>
+                    <span className="text-xs text-muted-foreground">{changeOrders.length} {changeOrders.length === 1 ? "job" : "jobs"}</span>
                   </div>
-                );
-              })}
-              {!showAddChangeOrder ? (
-                <button onClick={() => { setNewChangeOrder(prev => ({ ...prev, record_type: suggestRecordType(), date_added: new Date().toISOString().slice(0, 10) })); setShowAddChangeOrder(true); }} className="w-full flex items-center justify-center gap-2 rounded-lg border border-dashed border-border py-2.5 text-xs text-muted-foreground hover:border-primary/40 hover:text-primary transition-colors"><Plus className="h-3.5 w-3.5" /> Add Job</button>
-              ) : (
-                <div className="rounded-lg border border-primary/30 bg-primary/5 p-4 space-y-3">
-                  <p className="text-xs font-semibold text-primary uppercase tracking-wide">New Job</p>
-                  <div>
-                    <label className="text-xs text-muted-foreground block mb-1">Is this a scope change to an active job, or a separate job the client is coming back for?</label>
-                    <div className="flex gap-2">
+                  {changeOrders.length > 0 && (
+                    <p className="text-xs mt-1">
+                      All jobs together: <b>${allSigned.toLocaleString()}</b> signed · <b className="text-emerald-600">${allCollected.toLocaleString()}</b> collected ·{" "}
+                      <b className={allDue > 0.01 ? "text-red-600" : "text-emerald-600"}>{allDue > 0.01 ? `$${allDue.toLocaleString()} due` : "nothing due"}</b>
+                    </p>
+                  )}
+                </div>
+
+                {active.map(renderJob)}
+                {finished.length > 0 && (
+                  <>
+                    <button onClick={() => setShowFinishedJobs(v => !v)} className="w-full flex items-center gap-2 px-3 py-2 text-xs text-muted-foreground hover:bg-muted/40 border-b border-border">
+                      {showFinishedJobs ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+                      {showFinishedJobs ? "Hide" : "Show"} {finished.length} finished {finished.length === 1 ? "job" : "jobs"} (done and paid, cancelled or lost)
+                    </button>
+                    {showFinishedJobs && finished.map(renderJob)}
+                  </>
+                )}
+
+                {!showAddChangeOrder ? (
+                  <button onClick={() => { setNewChangeOrder(prev => ({ ...prev, record_type: suggestRecordType(), date_added: new Date().toISOString().slice(0, 10) })); setShowAddChangeOrder(true); }}
+                    className="w-full flex items-center justify-center gap-2 py-2.5 text-xs text-muted-foreground hover:text-primary hover:bg-muted/40 transition-colors"><Plus className="h-3.5 w-3.5" /> Add a job</button>
+                ) : (
+                  <div className="p-3 space-y-3 bg-primary/5">
+                    <p className="text-xs font-semibold text-primary uppercase tracking-wide">New job</p>
+                    <div className="grid grid-cols-2 gap-2">
                       <button type="button" onClick={() => setNewChangeOrder({ ...newChangeOrder, record_type: "change_order" })}
-                        className={`flex-1 text-xs px-3 py-2 rounded-md border font-medium transition-colors ${newChangeOrder.record_type === "change_order" ? "bg-primary text-primary-foreground border-primary" : "border-border hover:bg-muted text-muted-foreground"}`}>
-                        Change Order <span className="opacity-70">(active job)</span>
+                        className={`text-left text-xs px-3 py-2 rounded-md border transition-colors ${newChangeOrder.record_type === "change_order" ? "bg-primary text-primary-foreground border-primary" : "border-border hover:bg-muted text-muted-foreground"}`}>
+                        <b>Change order</b><br /><span className="opacity-80">Extra work on a job we&apos;re doing now</span>
                       </button>
                       <button type="button" onClick={() => setNewChangeOrder({ ...newChangeOrder, record_type: "repeat_job" })}
-                        className={`flex-1 text-xs px-3 py-2 rounded-md border font-medium transition-colors ${newChangeOrder.record_type === "repeat_job" ? "bg-purple-600 text-white border-purple-600" : "border-border hover:bg-muted text-muted-foreground"}`}>
-                        Repeat Job <span className="opacity-70">(client's back)</span>
+                        className={`text-left text-xs px-3 py-2 rounded-md border transition-colors ${newChangeOrder.record_type === "repeat_job" ? "bg-purple-600 text-white border-purple-600" : "border-border hover:bg-muted text-muted-foreground"}`}>
+                        <b>Repeat job</b><br /><span className="opacity-80">Client came back for a new, separate job</span>
                       </button>
                     </div>
+                    <div><label className="text-xs text-muted-foreground block mb-1">What is the job?</label><input type="text" placeholder="e.g. Replace gutters, add deck…" value={newChangeOrder.description} onChange={(e) => setNewChangeOrder({ ...newChangeOrder, description: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" /></div>
+                    <div className="grid grid-cols-3 gap-2">
+                      <div><label className="text-xs text-muted-foreground block mb-1">Amount</label><input type="number" placeholder="0" value={newChangeOrder.amount} onChange={(e) => setNewChangeOrder({ ...newChangeOrder, amount: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" /></div>
+                      <div><label className="text-xs text-muted-foreground block mb-1">Date</label><input type="date" value={newChangeOrder.date_added} onChange={(e) => setNewChangeOrder({ ...newChangeOrder, date_added: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" /></div>
+                      <div><label className="text-xs text-muted-foreground block mb-1">Signed?</label><select value={newChangeOrder.status} onChange={(e) => setNewChangeOrder({ ...newChangeOrder, status: e.target.value as any })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"><option value="pending">Not yet</option><option value="won">Yes, signed</option><option value="lost">Lost</option></select></div>
+                    </div>
+                    <button type="button" onClick={() => setShowMoreJobFields(v => !v)} className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
+                      {showMoreJobFields ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />} Job type and work dates (optional)
+                    </button>
+                    {showMoreJobFields && (
+                      <div className="grid grid-cols-3 gap-2">
+                        <div><label className="text-xs text-muted-foreground block mb-1">Job type</label><select value={newChangeOrder.job_type} onChange={(e) => setNewChangeOrder({ ...newChangeOrder, job_type: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"><option value="">— Select —</option>{STANDARD_JOB_TYPES.map(t => <option key={t}>{t}</option>)}<option value="Other">Other</option></select></div>
+                        <div><label className="text-xs text-muted-foreground block mb-1">Work starts</label><input type="date" value={newChangeOrder.job_start_date} onChange={(e) => setNewChangeOrder({ ...newChangeOrder, job_start_date: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" /></div>
+                        <div><label className="text-xs text-muted-foreground block mb-1">Work ends</label><input type="date" value={newChangeOrder.job_end_date} onChange={(e) => setNewChangeOrder({ ...newChangeOrder, job_end_date: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" /></div>
+                      </div>
+                    )}
+                    <div className="flex gap-2">
+                      <button onClick={handleAddChangeOrder} disabled={addingChangeOrder || !newChangeOrder.amount} className="flex-1 flex items-center justify-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-40 transition-colors"><Save className="h-4 w-4" />{addingChangeOrder ? "Saving..." : "Save job"}</button>
+                      <button onClick={() => setShowAddChangeOrder(false)} className="rounded-md border border-border px-4 py-2 text-sm hover:bg-muted transition-colors">Cancel</button>
+                    </div>
                   </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    <div><label className="text-xs text-muted-foreground block mb-1">Job Type</label><select value={newChangeOrder.job_type} onChange={(e) => setNewChangeOrder({ ...newChangeOrder, job_type: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"><option value="">— Select type —</option>{STANDARD_JOB_TYPES.map(t => <option key={t}>{t}</option>)}<option value="Other">Other</option></select></div>
-                    <div><label className="text-xs text-muted-foreground block mb-1">Amount</label><input type="number" placeholder="0" value={newChangeOrder.amount} onChange={(e) => setNewChangeOrder({ ...newChangeOrder, amount: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" /></div>
-                  </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    <div><label className="text-xs text-muted-foreground block mb-1">Date</label><input type="date" value={newChangeOrder.date_added} onChange={(e) => setNewChangeOrder({ ...newChangeOrder, date_added: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" /></div>
-                    <div><label className="text-xs text-muted-foreground block mb-1">Status</label><select value={newChangeOrder.status} onChange={(e) => setNewChangeOrder({ ...newChangeOrder, status: e.target.value as any })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"><option value="pending">Pending</option><option value="won">Won</option><option value="lost">Lost</option></select></div>
-                  </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    <div><label className="text-xs text-muted-foreground block mb-1">Job Start Date</label><input type="date" value={newChangeOrder.job_start_date} onChange={(e) => setNewChangeOrder({ ...newChangeOrder, job_start_date: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" /></div>
-                    <div><label className="text-xs text-muted-foreground block mb-1">Job End Date</label><input type="date" value={newChangeOrder.job_end_date} onChange={(e) => setNewChangeOrder({ ...newChangeOrder, job_end_date: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" /></div>
-                  </div>
-                  <div><label className="text-xs text-muted-foreground block mb-1">Description</label><input type="text" placeholder="e.g. Add deck, replace gutters..." value={newChangeOrder.description} onChange={(e) => setNewChangeOrder({ ...newChangeOrder, description: e.target.value })} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" /></div>
-                  <div className="flex gap-2">
-                    <button onClick={handleAddChangeOrder} disabled={addingChangeOrder || !newChangeOrder.amount} className="flex-1 flex items-center justify-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-40 transition-colors"><Save className="h-4 w-4" />{addingChangeOrder ? "Saving..." : "Save Job"}</button>
-                    <button onClick={() => setShowAddChangeOrder(false)} className="rounded-md border border-border px-4 py-2 text-sm hover:bg-muted transition-colors">Cancel</button>
-                  </div>
-                </div>
-              )}
-            </>
-          )}
+                )}
+              </div>
+            );
+          })()}
 
           {/* ── REASON LOST ── */}
           {!editMode && isLost && (
