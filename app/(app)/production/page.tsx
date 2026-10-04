@@ -194,6 +194,7 @@ export default function ProductionPage() {
 
   // ── Lead detail dialog ────────────────────────────────────────────────────
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
+  const [focusJobId, setFocusJobId] = useState<string | null>(null);
   const [dialogOpen,   setDialogOpen]   = useState(false);
 
   // ── Cancel-job dialog ─────────────────────────────────────────────────────
@@ -619,6 +620,8 @@ export default function ProductionPage() {
       .eq("id", row.leadId)
       .single();
     if (data) {
+      // Edit on a change-order row opens that job only; Edit on the client row opens the original contract.
+      setFocusJobId(row.type === "change_order" ? row.id : "initial");
       setSelectedLead(data as Lead);
       setDialogOpen(true);
     }
@@ -1528,6 +1531,7 @@ export default function ProductionPage() {
       <LeadDetailDialog
         lead={selectedLead}
         open={dialogOpen}
+        focusJobId={focusJobId}
         onOpenChange={(open) => { setDialogOpen(open); if (!open) fetchJobs(); }}
         onStageChange={async (leadId, newStatus) => {
           await supabase.from("leads").update({ status: newStatus }).eq("id", leadId);

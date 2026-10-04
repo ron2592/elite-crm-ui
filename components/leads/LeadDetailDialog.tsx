@@ -79,9 +79,12 @@ interface LeadDetailDialogProps {
   onStageChange?: (leadId: string, newStatus: any) => void;
   onLeadUpdated?: (leadId: string) => void;
   onLeadDeleted?: () => void;
+  /** Open straight to one job: "initial" = the original contract, or a change_orders.id.
+   *  Other jobs stay hidden behind "Show all jobs" so a client with many jobs never means scrolling. */
+  focusJobId?: string | null;
 }
 
-export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChange, onLeadUpdated, onLeadDeleted }: LeadDetailDialogProps) {
+export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChange, onLeadUpdated, onLeadDeleted, focusJobId = null }: LeadDetailDialogProps) {
   const { deleteLead, archiveLead, isAdmin, isManager } = useRole();
   const router = useRouter();
 
@@ -148,6 +151,18 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
   const [savingClosedAt,               setSavingClosedAt]               = useState(false);
   const [showFinishedJobs,             setShowFinishedJobs]             = useState(false);
   const [showMoreJobFields,            setShowMoreJobFields]            = useState(false);
+  const [jobFocus,                     setJobFocus]                     = useState<string | null>(null);
+  const [jobSearch,                    setJobSearch]                    = useState("");
+  const [activeJobsLimit,              setActiveJobsLimit]              = useState(10);
+
+  // Each time the dialog opens, start where the caller pointed (e.g. the Edit button on one
+  // production row) and open that job's details.
+  useEffect(() => {
+    if (!open) return;
+    setJobFocus(focusJobId ?? null);
+    setJobSearch(""); setActiveJobsLimit(10); setShowFinishedJobs(false);
+    if (focusJobId && focusJobId !== "initial") setExpandedChangeOrders(new Set([focusJobId]));
+  }, [open, focusJobId, (lead as any)?.id]);
 
   const leadId = (lead as any)?.id;
   const inlineJobTypeDropdownVal = STANDARD_JOB_TYPES.includes(inlineJobType) ? inlineJobType : inlineJobType ? "Other" : "";
@@ -858,7 +873,7 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
           )}
 
           {/* ── FULL CONTRACT ── */}
-          {!editMode && showFullContract && (
+          {!editMode && showFullContract && (jobFocus === null || jobFocus === "initial") && (
             <div className="rounded-lg border border-border p-4 space-y-3">
               <div className="flex items-center justify-between">
                 <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1"><DollarSign className="h-3 w-3" /> Initial Contract</p>
@@ -941,9 +956,13 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
               co.status === "lost" || isCancelledCO(co) ||
               (co.status === "won" && coDue(co) <= 0.01 && (co.production_stage === "Completed" || co.production_stage === "Completed with Balance"));
             const jobDate = (co: ChangeOrder) => (co.signed_at || co.date_added || "").slice(0, 10);
-            const sorted   = [...changeOrders].sort((a, b) => jobDate(b).localeCompare(jobDate(a)));
+            const q = jobSearch.trim().toLowerCase();
+            const matches = (co: ChangeOrder) => !q || [co.description, co.job_type, `#${co.order_number}`, String(co.order_number)]
+              .some(v => (v || "").toLowerCase().includes(q));
+            const sorted   = [...changeOrders].filter(matches).sort((a, b) => jobDate(b).localeCompare(jobDate(a)));
             const active   = sorted.filter(co => !isFinished(co));
             const finished = sorted.filter(isFinished);
+            const focusedCO = jobFocus && jobFocus !== "initial" ? changeOrders.find(co => co.id === jobFocus) : null;
             const live     = changeOrders.filter(co => co.status === "won" && !isCancelledCO(co));
             const allSigned    = currentContract + live.reduce((s, co) => s + Number(co.amount), 0);
             const allCollected = totalCollected + changeOrders.reduce((s, co) => s + coPaid(co), 0);
@@ -1062,6 +1081,32 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
               );
             };
 
+            // Opened from one job's Edit button: show only that job.
+            if (focusedCO) {
+              return (
+                <div className="rounded-lg border border-primary/40 overflow-hidden">
+                  <div className="flex items-center justify-between gap-2 px-3 py-2 bg-primary/5 border-b border-border">
+                    <p className="text-xs font-semibold text-primary uppercase tracking-wide">Editing job #{focusedCO.order_number}</p>
+                    <button onClick={() => setJobFocus(null)} className="text-xs font-medium text-primary hover:underline">
+                      Show all {changeOrders.length + 1} jobs for this client →
+                    </button>
+                  </div>
+                  {renderJob(focusedCO)}
+                </div>
+              );
+            }
+            // Opened from the original job's Edit button: keep the other jobs folded away.
+            if (jobFocus === "initial") {
+              return changeOrders.length > 0 ? (
+                <button onClick={() => setJobFocus(null)}
+                  className="w-full flex items-center justify-between rounded-lg border border-dashed border-border px-3 py-2.5 text-xs text-muted-foreground hover:text-primary hover:border-primary/40">
+                  <span>{changeOrders.length} other {changeOrders.length === 1 ? "job" : "jobs"} for this client (hidden)</span>
+                  <span className="font-medium">Show all jobs →</span>
+                </button>
+              ) : null;
+            }
+
+            const shownActive = active.slice(0, activeJobsLimit);
             return (
               <div className="rounded-lg border border-border overflow-hidden">
                 <div className="px-3 py-2.5 bg-muted/30 border-b border-border">
@@ -1077,14 +1122,27 @@ export default function LeadDetailDialog({ lead, open, onOpenChange, onStageChan
                   )}
                 </div>
 
-                {active.map(renderJob)}
+                {changeOrders.length > 8 && (
+                  <div className="px-3 py-2 border-b border-border">
+                    <input type="text" value={jobSearch} onChange={(e) => setJobSearch(e.target.value)}
+                      placeholder={`Find a job (name, type or #) among ${changeOrders.length}…`}
+                      className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-primary/40" />
+                  </div>
+                )}
+                {q && sorted.length === 0 && <p className="px-3 py-3 text-xs text-muted-foreground">No job matches &ldquo;{jobSearch}&rdquo;.</p>}
+                {shownActive.map(renderJob)}
+                {active.length > shownActive.length && (
+                  <button onClick={() => setActiveJobsLimit(n => n + 10)} className="w-full px-3 py-2 text-xs text-primary hover:bg-muted/40 border-b border-border">
+                    Show {Math.min(10, active.length - shownActive.length)} more of {active.length - shownActive.length} open jobs
+                  </button>
+                )}
                 {finished.length > 0 && (
                   <>
                     <button onClick={() => setShowFinishedJobs(v => !v)} className="w-full flex items-center gap-2 px-3 py-2 text-xs text-muted-foreground hover:bg-muted/40 border-b border-border">
                       {showFinishedJobs ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
                       {showFinishedJobs ? "Hide" : "Show"} {finished.length} finished {finished.length === 1 ? "job" : "jobs"} (done and paid, cancelled or lost)
                     </button>
-                    {showFinishedJobs && finished.map(renderJob)}
+                    {(showFinishedJobs || !!q) && finished.map(renderJob)}
                   </>
                 )}
 
